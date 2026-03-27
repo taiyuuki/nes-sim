@@ -23,7 +23,7 @@ impl NESBus {
         self.ram = data;
     }
 
-    pub fn run_dma(&mut self, addr: u16) {
+    pub fn run_dma(&mut self, _addr: u16) {
         // DMA transfer from CPU memory to PPU OAM
     }
 }

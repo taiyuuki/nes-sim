@@ -14,11 +14,37 @@ pub enum AddrMode {
     IND,
     IZX,
     IZY,
-    JAM, // Illegal addressing mode
 }
 
 #[derive(Clone, Copy)]
-pub enum OpCode {
+struct ResolvedOperand {
+    addr: u16,
+    page_crossed: bool,
+}
+
+impl ResolvedOperand {
+    fn new(addr: u16) -> Self {
+        Self {
+            addr,
+            page_crossed: false,
+        }
+    }
+
+    fn with_page_cross(addr: u16, page_crossed: bool) -> Self {
+        Self { addr, page_crossed }
+    }
+}
+
+impl AddrMode {
+    fn read_page_cross_penalty(self, operand: ResolvedOperand) -> u64 {
+        u64::from(
+            matches!(self, AddrMode::ABX | AddrMode::ABY | AddrMode::IZY) && operand.page_crossed,
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+enum OpCode {
     BRK,
     ORA,
     XXX,
@@ -89,7 +115,7 @@ pub enum OpCode {
 }
 
 #[derive(Clone, Copy)]
-pub struct Inst(OpCode, AddrMode, u8); // opcode, addressing mode, cycles
+struct Inst(OpCode, AddrMode, u8); // opcode, addressing mode, cycles
 
 const INST_SET: [Inst; 256] = [
     Inst(OpCode::BRK, AddrMode::IMP, 7),
@@ -137,7 +163,7 @@ const INST_SET: [Inst; 256] = [
     Inst(OpCode::ROL, AddrMode::IMP, 2),
     Inst(OpCode::XXX, AddrMode::IMP, 2),
     Inst(OpCode::BIT, AddrMode::ABS, 4),
-    Inst(OpCode::AND, AddrMode::ABS, 2),
+    Inst(OpCode::AND, AddrMode::ABS, 4),
     Inst(OpCode::ROL, AddrMode::ABS, 6),
     Inst(OpCode::RLA, AddrMode::ABS, 6),
     Inst(OpCode::BMI, AddrMode::REL, 2),
@@ -350,12 +376,23 @@ const INST_SET: [Inst; 256] = [
     Inst(OpCode::INS, AddrMode::ABX, 7),
 ];
 
+///  7  bit  0
+/// ---- ----
+/// NV1B DIZC
+/// |||| ||||
+/// |||| |||+- Carry
+/// |||| ||+-- Zero
+/// |||| |+--- Interrupt Disable
+/// |||| +---- Decimal
+/// |||+------ (No CPU effect; see: the B flag)
+/// ||+------- (No CPU effect; always pushed as 1)
+/// |+-------- Overflow
+/// +--------- Negative
 struct Flag {
     c: bool, // Carry
     z: bool, // Zero
     i: bool, // Interrutps Disable
-    b: bool,
-    o: bool, // Overflow
+    v: bool, // Overflow
     n: bool, // Nagative
 }
 
@@ -365,8 +402,7 @@ impl Flag {
             c: false,
             z: false,
             i: false,
-            b: false,
-            o: false,
+            v: false,
             n: false,
         }
     }
@@ -411,8 +447,27 @@ impl CPU {
         bus.cpu_read_u16(0xFFFC)
     }
 
-    fn set_zn(&mut self, val: u8) {
-        self.p.z = val == 0;
+    fn set_zn(&mut self, data: u8) {
+        self.p.z = data == 0;
+        self.p.n = (data & 0x80) != 0;
+    }
+
+    fn status_byte_for_push(&self, break_flag: bool) -> u8 {
+        let c: u8 = if self.p.c { 0x01 } else { 0 };
+        let z: u8 = if self.p.z { 0x02 } else { 0 };
+        let i: u8 = if self.p.i { 0x04 } else { 0 };
+        let b: u8 = if break_flag { 0x10 } else { 0 };
+        let v: u8 = if self.p.v { 0x40 } else { 0 };
+        let n: u8 = if self.p.n { 0x80 } else { 0 };
+        c | z | i | b | v | n | 0x20
+    }
+
+    fn set_byte_to_p(&mut self, val: u8) {
+        self.p.c = (val & 0x01) != 0;
+        self.p.z = (val & 0x02) != 0;
+        self.p.i = (val & 0x04) != 0;
+        // Bit 4 (B) and bit 5 are artifacts of how the status is pushed.
+        self.p.v = (val & 0x40) != 0;
         self.p.n = (val & 0x80) != 0;
     }
 
@@ -442,25 +497,51 @@ impl CPU {
         (hi << 8) | lo
     }
 
-    fn resolve_operand_addr(&mut self, mode: AddrMode, bus: &mut impl CPUBus) -> Option<u16> {
+    fn resolve_operand(
+        &mut self,
+        mode: AddrMode,
+        bus: &mut impl CPUBus,
+    ) -> Option<ResolvedOperand> {
         match mode {
-            AddrMode::IMM => Some(self.imm(bus)),
-            AddrMode::IMP | AddrMode::JAM => None,
-            AddrMode::ZP0 => Some(self.zp0(bus)),
-            AddrMode::ZPX => Some(self.zpx(bus)),
-            AddrMode::ZPY => Some(self.zpy(bus)),
-            AddrMode::REL => Some(self.rel(bus)),
-            AddrMode::ABS => Some(self.abs(bus)),
-            AddrMode::ABX => Some(self.abx(bus)),
-            AddrMode::ABY => Some(self.aby(bus)),
-            AddrMode::IND => Some(self.ind(bus)),
-            AddrMode::IZX => Some(self.izx(bus)),
-            AddrMode::IZY => Some(self.izy(bus)),
+            AddrMode::IMM => Some(ResolvedOperand::new(self.imm(bus))),
+            AddrMode::IMP => None,
+            AddrMode::ZP0 => Some(ResolvedOperand::new(self.zp0(bus))),
+            AddrMode::ZPX => Some(ResolvedOperand::new(self.zpx(bus))),
+            AddrMode::ZPY => Some(ResolvedOperand::new(self.zpy(bus))),
+            AddrMode::REL => Some(ResolvedOperand::new(self.rel(bus))),
+            AddrMode::ABS => Some(ResolvedOperand::new(self.abs(bus))),
+            AddrMode::ABX => {
+                let base = self.fetch_u16(bus);
+                let addr = base.wrapping_add(self.x as u16);
+                Some(ResolvedOperand::with_page_cross(
+                    addr,
+                    Self::page_crossed(base, addr),
+                ))
+            }
+            AddrMode::ABY => {
+                let base = self.fetch_u16(bus);
+                let addr = base.wrapping_add(self.y as u16);
+                Some(ResolvedOperand::with_page_cross(
+                    addr,
+                    Self::page_crossed(base, addr),
+                ))
+            }
+            AddrMode::IND => Some(ResolvedOperand::new(self.ind(bus))),
+            AddrMode::IZX => Some(ResolvedOperand::new(self.izx(bus))),
+            AddrMode::IZY => {
+                let ptr = self.fetch_byte(bus);
+                let base = self.read_u16_zero_page(ptr, bus);
+                let addr = base.wrapping_add(self.y as u16);
+                Some(ResolvedOperand::with_page_cross(
+                    addr,
+                    Self::page_crossed(base, addr),
+                ))
+            }
         }
     }
 
-    fn require_operand_addr(&mut self, mode: AddrMode, bus: &mut impl CPUBus) -> u16 {
-        self.resolve_operand_addr(mode, bus)
+    fn require_operand(&mut self, mode: AddrMode, bus: &mut impl CPUBus) -> ResolvedOperand {
+        self.resolve_operand(mode, bus)
             .expect("Instruction requires an operand address")
     }
 
@@ -472,63 +553,198 @@ impl CPU {
 
     pub fn exe_inst(&mut self, inst_byte: u8, bus: &mut impl CPUBus) {
         let inst = INST_SET[inst_byte as usize];
+        let mut extra_cycles = 0_u64;
         match inst.0 {
+            // Do nothing.
             OpCode::NOP => {
-                let _ = self.resolve_operand_addr(inst.1, bus);
-            } // Do nothing.
+                let _ = self.resolve_operand(inst.1, bus);
+            }
+            // Bitwise
             OpCode::ORA => {
-                let addr = self.require_operand_addr(inst.1, bus);
-                self.ora(addr, bus);
+                let operand = self.require_operand(inst.1, bus);
+                self.ora(operand.addr, bus);
+                extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::AND => {
-                let addr = self.require_operand_addr(inst.1, bus);
-                self.and(addr, bus);
+                let operand = self.require_operand(inst.1, bus);
+                self.and(operand.addr, bus);
+                extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
+            OpCode::BIT => {
+                let operand = self.require_operand(inst.1, bus);
+                self.bit(operand.addr, bus);
+            }
+            // Shift
             OpCode::EOR => {
-                let addr = self.require_operand_addr(inst.1, bus);
-                self.eor(addr, bus);
+                let operand = self.require_operand(inst.1, bus);
+                self.eor(operand.addr, bus);
+                extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
+            OpCode::ASL => {
+                if matches!(inst.1, AddrMode::IMP) {
+                    self.a = self.op_asl(self.a);
+                } else {
+                    let operand = self.require_operand(inst.1, bus);
+                    self.asl(operand.addr, bus);
+                }
+            }
+            OpCode::ROL => {
+                if matches!(inst.1, AddrMode::IMP) {
+                    self.a = self.op_rol(self.a);
+                } else {
+                    let operand = self.require_operand(inst.1, bus);
+                    self.rol(operand.addr, bus);
+                }
+            }
+            OpCode::LSR => {
+                if matches!(inst.1, AddrMode::IMP) {
+                    self.a = self.op_lsr(self.a);
+                } else {
+                    let operand = self.require_operand(inst.1, bus);
+                    self.lsr(operand.addr, bus);
+                }
+            }
+            OpCode::ROR => {
+                if matches!(inst.1, AddrMode::IMP) {
+                    self.a = self.op_ror(self.a);
+                } else {
+                    let operand = self.require_operand(inst.1, bus);
+                    self.ror(operand.addr, bus);
+                }
+            }
+            // Access
             OpCode::LDA => {
-                let addr = self.require_operand_addr(inst.1, bus);
-                self.lda(addr, bus);
+                let operand = self.require_operand(inst.1, bus);
+                self.lda(operand.addr, bus);
+                extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::LDX => {
-                let addr = self.require_operand_addr(inst.1, bus);
-                self.ldx(addr, bus);
+                let operand = self.require_operand(inst.1, bus);
+                self.ldx(operand.addr, bus);
+                extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::LDY => {
-                let addr = self.require_operand_addr(inst.1, bus);
-                self.ldy(addr, bus);
+                let operand = self.require_operand(inst.1, bus);
+                self.ldy(operand.addr, bus);
+                extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::STA => {
-                let addr = self.require_operand_addr(inst.1, bus);
-                self.sta(addr, bus);
+                let operand = self.require_operand(inst.1, bus);
+                self.sta(operand.addr, bus);
             }
             OpCode::STX => {
-                let addr = self.require_operand_addr(inst.1, bus);
-                self.stx(addr, bus);
+                let operand = self.require_operand(inst.1, bus);
+                self.stx(operand.addr, bus);
             }
             OpCode::STY => {
-                let addr = self.require_operand_addr(inst.1, bus);
-                self.sty(addr, bus);
+                let operand = self.require_operand(inst.1, bus);
+                self.sty(operand.addr, bus);
             }
+            // Transfer
             OpCode::TAX => self.tax(),
             OpCode::TXA => self.txa(),
             OpCode::TAY => self.tay(),
             OpCode::TYA => self.tya(),
+            // Jump
+            OpCode::JMP => {
+                let operand = self.require_operand(inst.1, bus);
+                self.jmp(operand.addr);
+            }
+            OpCode::JSR => {
+                let operand = self.require_operand(inst.1, bus);
+                self.jsr(operand.addr, bus);
+            }
+            OpCode::RTS => self.rts(bus),
+            // Flags
+            OpCode::CLC => self.clc(),
+            OpCode::SEC => self.sec(),
+            OpCode::CLI => self.cli(),
+            OpCode::SEI => self.sei(),
+            OpCode::CLD => self.cld(),
+            OpCode::SED => self.sed(),
+            OpCode::CLV => self.clv(),
+            // Stack
+            OpCode::PHA => self.pha(bus),
+            OpCode::PLA => self.pla(bus),
+            OpCode::PHP => self.php(bus),
+            OpCode::PLP => self.plp(bus),
+            OpCode::TXS => self.txs(),
+            OpCode::TSX => self.tsx(),
+            // Compare
+            OpCode::CMP => {
+                let operand = self.require_operand(inst.1, bus);
+                self.cmp(operand.addr, bus);
+                extra_cycles += inst.1.read_page_cross_penalty(operand);
+            }
+            OpCode::CPX => {
+                let operand = self.require_operand(inst.1, bus);
+                self.cpx(operand.addr, bus);
+            }
+            OpCode::CPY => {
+                let operand = self.require_operand(inst.1, bus);
+                self.cpy(operand.addr, bus);
+            }
+            // Branch
+            OpCode::BEQ => {
+                let operand = self.require_operand(inst.1, bus);
+                extra_cycles += self.beq(operand.addr);
+            }
+            OpCode::BNE => {
+                let operand = self.require_operand(inst.1, bus);
+                extra_cycles += self.bne(operand.addr);
+            }
+            OpCode::BCS => {
+                let operand = self.require_operand(inst.1, bus);
+                extra_cycles += self.bcs(operand.addr);
+            }
+            OpCode::BCC => {
+                let operand = self.require_operand(inst.1, bus);
+                extra_cycles += self.bcc(operand.addr);
+            }
+            OpCode::BMI => {
+                let operand = self.require_operand(inst.1, bus);
+                extra_cycles += self.bmi(operand.addr);
+            }
+            OpCode::BPL => {
+                let operand = self.require_operand(inst.1, bus);
+                extra_cycles += self.bpl(operand.addr);
+            }
+            OpCode::BVS => {
+                let operand = self.require_operand(inst.1, bus);
+                extra_cycles += self.bvs(operand.addr);
+            }
+            OpCode::BVC => {
+                let operand = self.require_operand(inst.1, bus);
+                extra_cycles += self.bvc(operand.addr);
+            }
+            // Arithmetic
             OpCode::INX => self.inx(),
             OpCode::INY => self.iny(),
             OpCode::DEX => self.dex(),
             OpCode::DEY => self.dey(),
-            OpCode::JMP => {
-                let addr = self.require_operand_addr(inst.1, bus);
-                self.jmp(addr);
+            OpCode::INC => {
+                let operand = self.require_operand(inst.1, bus);
+                self.inc(operand.addr, bus);
+            }
+            OpCode::DEC => {
+                let operand = self.require_operand(inst.1, bus);
+                self.dec(operand.addr, bus);
+            }
+            OpCode::ADC => {
+                let operand = self.require_operand(inst.1, bus);
+                self.adc(operand.addr, bus);
+                extra_cycles += inst.1.read_page_cross_penalty(operand);
+            }
+            OpCode::SBC => {
+                let operand = self.require_operand(inst.1, bus);
+                self.sbc(operand.addr, bus);
+                extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             _ => {
-                let _ = self.resolve_operand_addr(inst.1, bus);
+                let _ = self.resolve_operand(inst.1, bus);
             } // Illegal opcode, do nothing
         }
-        self.cycles += inst.2 as u64;
+        self.cycles += inst.2 as u64 + extra_cycles;
     }
 
     pub fn cpu_step(&mut self, bus: &mut impl CPUBus) {
@@ -536,6 +752,22 @@ impl CPU {
         self.pc += 1;
         self.clocks += 1;
         self.exe_inst(inst_byte, bus);
+    }
+
+    fn stack_push(&mut self, val: u8, bus: &mut impl CPUBus) {
+        let addr = 0x100 | self.sp as u16;
+        bus.cpu_write(addr, val);
+        self.sp = self.sp.wrapping_sub(1);
+    }
+
+    fn stack_pop(&mut self, bus: &mut impl CPUBus) -> u8 {
+        self.sp = self.sp.wrapping_add(1);
+        let addr = 0x100 | self.sp as u16;
+        bus.cpu_read(addr)
+    }
+
+    fn page_crossed(base: u16, target: u16) -> bool {
+        (base & 0xFF00) != (target & 0xFF00)
     }
 
     // === Addressing mode implementations ===
@@ -570,14 +802,6 @@ impl CPU {
         self.fetch_u16(bus)
     }
 
-    fn abx(&mut self, bus: &mut impl CPUBus) -> u16 {
-        self.fetch_u16(bus).wrapping_add(self.x as u16)
-    }
-
-    fn aby(&mut self, bus: &mut impl CPUBus) -> u16 {
-        self.fetch_u16(bus).wrapping_add(self.y as u16)
-    }
-
     fn ind(&mut self, bus: &mut impl CPUBus) -> u16 {
         let ptr = self.fetch_u16(bus);
         self.read_u16_indirect(ptr, bus)
@@ -586,13 +810,6 @@ impl CPU {
     fn izx(&mut self, bus: &mut impl CPUBus) -> u16 {
         let ptr = self.fetch_byte(bus).wrapping_add(self.x);
         self.read_u16_zero_page(ptr, bus)
-    }
-
-    fn izy(&mut self, bus: &mut impl CPUBus) -> u16 {
-        let ptr = self.fetch_byte(bus);
-
-        self.read_u16_zero_page(ptr, bus)
-            .wrapping_add(self.y as u16)
     }
 
     // === Instruction implementations ===
@@ -678,248 +895,278 @@ impl CPU {
         self.set_zn(self.y);
     }
 
+    fn inc(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let val = bus.cpu_read(addr).wrapping_add(1);
+        bus.cpu_write(addr, val);
+        self.set_zn(val);
+    }
+
+    fn dec(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let val = bus.cpu_read(addr).wrapping_sub(1);
+        bus.cpu_write(addr, val);
+        self.set_zn(val);
+    }
+
+    // 直接跳到目标地址
     fn jmp(&mut self, addr: u16) {
         self.pc = addr;
+    }
+
+    // 跳到目标地址，但要先将当前地址压入栈，栈方向是向下的，所以要先减一
+    fn jsr(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        self.pc = self.pc.wrapping_sub(1);
+        self.stack_push((self.pc >> 8 & 0xFF) as u8, bus);
+        self.stack_push((self.pc & 0xFF) as u8, bus);
+        self.pc = addr;
+    }
+
+    // 从栈中弹出之前的地址并返回该地址
+    fn rts(&mut self, bus: &mut impl CPUBus) {
+        let lo = self.stack_pop(bus) as u16;
+        let hi = self.stack_pop(bus) as u16;
+        self.pc = ((hi << 8) | lo).wrapping_add(1);
+    }
+
+    fn clc(&mut self) {
+        self.p.c = false;
+    }
+
+    fn sec(&mut self) {
+        self.p.c = true;
+    }
+
+    fn cli(&mut self) {
+        self.p.i = false;
+    }
+
+    fn sei(&mut self) {
+        self.p.i = true;
+    }
+
+    fn cld(&mut self) {
+        // Invalid in 2A03
+    }
+
+    fn sed(&mut self) {
+        // Invalid in 2A03
+    }
+
+    fn clv(&mut self) {
+        self.p.v = false;
+    }
+
+    fn pha(&mut self, bus: &mut impl CPUBus) {
+        self.stack_push(self.a, bus);
+    }
+
+    fn pla(&mut self, bus: &mut impl CPUBus) {
+        self.a = self.stack_pop(bus);
+        self.set_zn(self.a);
+    }
+
+    fn php(&mut self, bus: &mut impl CPUBus) {
+        let val = self.status_byte_for_push(true);
+        self.stack_push(val, bus);
+    }
+
+    fn plp(&mut self, bus: &mut impl CPUBus) {
+        let val = self.stack_pop(bus);
+        self.set_byte_to_p(val);
+    }
+
+    fn txs(&mut self) {
+        self.sp = self.x;
+    }
+
+    fn tsx(&mut self) {
+        self.x = self.sp;
+        self.set_zn(self.x);
+    }
+
+    fn cmp_core(&mut self, reg: u8, data: u8) {
+        self.p.c = reg >= data;
+        self.p.z = reg == data;
+        self.p.n = (reg.wrapping_sub(data) & 0x80) != 0;
+    }
+
+    fn cmp(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let data = bus.cpu_read(addr);
+        self.cmp_core(self.a, data);
+    }
+
+    fn cpx(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let data = bus.cpu_read(addr);
+        self.cmp_core(self.x, data);
+    }
+
+    fn cpy(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let data = bus.cpu_read(addr);
+        self.cmp_core(self.y, data);
+    }
+
+    fn beq(&mut self, addr: u16) -> u64 {
+        if self.p.z {
+            let old_pc = self.pc;
+            self.pc = addr;
+            return 1 + u64::from(Self::page_crossed(old_pc, addr));
+        }
+        0
+    }
+
+    fn bne(&mut self, addr: u16) -> u64 {
+        if !self.p.z {
+            let old_pc = self.pc;
+            self.pc = addr;
+            return 1 + u64::from(Self::page_crossed(old_pc, addr));
+        }
+        0
+    }
+
+    fn bcs(&mut self, addr: u16) -> u64 {
+        if self.p.c {
+            let old_pc = self.pc;
+            self.pc = addr;
+            return 1 + u64::from(Self::page_crossed(old_pc, addr));
+        }
+        0
+    }
+
+    fn bcc(&mut self, addr: u16) -> u64 {
+        if !self.p.c {
+            let old_pc = self.pc;
+            self.pc = addr;
+            return 1 + u64::from(Self::page_crossed(old_pc, addr));
+        }
+        0
+    }
+
+    fn bmi(&mut self, addr: u16) -> u64 {
+        if self.p.n {
+            let old_pc = self.pc;
+            self.pc = addr;
+            return 1 + u64::from(Self::page_crossed(old_pc, addr));
+        }
+        0
+    }
+
+    fn bpl(&mut self, addr: u16) -> u64 {
+        if !self.p.n {
+            let old_pc = self.pc;
+            self.pc = addr;
+            return 1 + u64::from(Self::page_crossed(old_pc, addr));
+        }
+        0
+    }
+
+    fn bvs(&mut self, addr: u16) -> u64 {
+        if self.p.v {
+            let old_pc = self.pc;
+            self.pc = addr;
+            return 1 + u64::from(Self::page_crossed(old_pc, addr));
+        }
+        0
+    }
+
+    fn bvc(&mut self, addr: u16) -> u64 {
+        if !self.p.v {
+            let old_pc = self.pc;
+            self.pc = addr;
+            return 1 + u64::from(Self::page_crossed(old_pc, addr));
+        }
+        0
+    }
+
+    fn adc(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let val = bus.cpu_read(addr);
+        let carry_in = u8::from(self.p.c);
+
+        let sum = self.a as u16 + val as u16 + carry_in as u16;
+        let result = sum as u8;
+
+        self.p.c = sum > 0xFF;
+        self.p.z = result == 0;
+        self.p.n = (result & 0x80) != 0;
+
+        self.p.v = ((self.a ^ result) & (val ^ result) & 0x80) != 0;
+
+        self.a = result;
+    }
+
+    fn sbc(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let val = bus.cpu_read(addr) ^ 0xFF;
+        let carry_in = u8::from(self.p.c);
+        let sum = self.a as u16 + val as u16 + carry_in as u16;
+        let result = sum as u8;
+
+        self.p.c = sum > 0xFF;
+        self.p.z = result == 0;
+        self.p.n = (result & 0x80) != 0;
+        self.p.v = ((self.a ^ result) & (val ^ result) & 0x80) != 0;
+
+        self.a = result;
+    }
+
+    fn op_asl(&mut self, val: u8) -> u8 {
+        self.p.c = val & 0x80 != 0;
+        let result = val << 1;
+        self.set_zn(result);
+        result
+    }
+
+    fn op_lsr(&mut self, val: u8) -> u8 {
+        self.p.c = val & 0x01 != 0;
+        let result = val >> 1;
+        self.set_zn(result);
+        result
+    }
+
+    fn op_rol(&mut self, val: u8) -> u8 {
+        let c_in = u8::from(self.p.c);
+        self.p.c = val & 0x80 != 0;
+        let result = (val << 1) | c_in;
+        self.set_zn(result);
+        result
+    }
+
+    fn op_ror(&mut self, val: u8) -> u8 {
+        let c_in = u8::from(self.p.c) << 7;
+        self.p.c = val & 0x01 != 0;
+        let result = (val >> 1) | c_in;
+        self.set_zn(result);
+        result
+    }
+
+    fn asl(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let val = bus.cpu_read(addr);
+        let result = self.op_asl(val);
+        bus.cpu_write(addr, result);
+    }
+
+    fn lsr(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let val = bus.cpu_read(addr);
+        let result = self.op_lsr(val);
+        bus.cpu_write(addr, result);
+    }
+
+    fn rol(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let val = bus.cpu_read(addr);
+        let result = self.op_rol(val);
+        bus.cpu_write(addr, result);
+    }
+
+    fn ror(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let val = bus.cpu_read(addr);
+        let result = self.op_ror(val);
+        bus.cpu_write(addr, result);
+    }
+
+    fn bit(&mut self, addr: u16, bus: &mut impl CPUBus) {
+        let val = bus.cpu_read(addr);
+        self.p.z = self.a & val == 0;
+        self.p.n = val & 0x80 != 0;
+        self.p.v = val & 0x40 != 0;
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct TestBus {
-        mem: [u8; 0x10000],
-    }
-
-    impl TestBus {
-        fn new() -> Self {
-            Self { mem: [0; 0x10000] }
-        }
-
-        fn write_u16(&mut self, addr: u16, value: u16) {
-            self.cpu_write(addr, value as u8);
-            self.cpu_write(addr.wrapping_add(1), (value >> 8) as u8);
-        }
-    }
-
-    impl CPUBus for TestBus {
-        fn cpu_read(&mut self, addr: u16) -> u8 {
-            self.mem[addr as usize]
-        }
-
-        fn cpu_write(&mut self, addr: u16, data: u8) {
-            self.mem[addr as usize] = data;
-        }
-    }
-
-    mod reset {
-        use super::*;
-
-        #[test]
-        fn sets_pc_stack_pointer_and_interrupt_disable_from_reset_vector() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            bus.write_u16(0xFFFC, 0x1234);
-
-            cpu.reset(&mut bus);
-
-            assert_eq!(cpu.pc, 0x1234);
-            assert_eq!(cpu.sp, 0xFA);
-            assert!(cpu.p.i, "interrupt disable flag should be set after reset");
-        }
-    }
-
-    mod addressing {
-        use super::*;
-
-        #[test]
-        fn rel_returns_signed_target_and_advances_pc() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            cpu.pc = 0x2000;
-            bus.cpu_write(0x2000, 0xFE);
-
-            let addr = cpu.resolve_operand_addr(AddrMode::REL, &mut bus);
-
-            assert_eq!(addr, Some(0x1FFF));
-            assert_eq!(cpu.pc, 0x2001);
-        }
-
-        #[test]
-        fn izx_wraps_zero_page_pointer_before_reading_effective_address() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            cpu.pc = 0x3000;
-            cpu.x = 0x20;
-            bus.cpu_write(0x3000, 0xF0);
-            bus.cpu_write(0x0010, 0xCD);
-            bus.cpu_write(0x0011, 0xAB);
-
-            let addr = cpu.resolve_operand_addr(AddrMode::IZX, &mut bus);
-
-            assert_eq!(addr, Some(0xABCD));
-            assert_eq!(cpu.pc, 0x3001);
-        }
-
-        #[test]
-        fn ind_emulates_6502_page_wrap_bug() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            cpu.pc = 0x4000;
-            bus.write_u16(0x4000, 0x12FF);
-            bus.cpu_write(0x12FF, 0x78);
-            bus.cpu_write(0x1200, 0x56);
-            bus.cpu_write(0x1300, 0x99);
-
-            let addr = cpu.resolve_operand_addr(AddrMode::IND, &mut bus);
-
-            assert_eq!(addr, Some(0x5678));
-            assert_eq!(cpu.pc, 0x4002);
-        }
-    }
-
-    mod execution {
-        use super::*;
-
-        #[test]
-        fn cpu_step_executes_ora_immediate_and_updates_flags_and_timing() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            cpu.pc = 0x0200;
-            cpu.a = 0x80;
-            bus.cpu_write(0x0200, 0x09);
-            bus.cpu_write(0x0201, 0x01);
-
-            cpu.cpu_step(&mut bus);
-
-            assert_eq!(cpu.a, 0x81);
-            assert_eq!(cpu.pc, 0x0202);
-            assert!(!cpu.p.z, "accumulator should not be zero");
-            assert!(cpu.p.n, "bit 7 should set the negative flag");
-            assert_eq!(cpu.cycles, 2);
-            assert_eq!(cpu.clocks, 1);
-        }
-
-        #[test]
-        fn cpu_step_executes_lda_immediate_and_sets_zero_flag() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            cpu.pc = 0x0200;
-            bus.cpu_write(0x0200, 0xA9);
-            bus.cpu_write(0x0201, 0x00);
-
-            cpu.cpu_step(&mut bus);
-
-            assert_eq!(cpu.a, 0x00);
-            assert!(cpu.p.z, "loading zero should set the zero flag");
-            assert!(!cpu.p.n, "loading zero should clear the negative flag");
-            assert_eq!(cpu.pc, 0x0202);
-        }
-
-        #[test]
-        fn cpu_step_executes_sta_zero_page_and_writes_accumulator_to_bus() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            cpu.pc = 0x0200;
-            cpu.a = 0x5A;
-            bus.cpu_write(0x0200, 0x85);
-            bus.cpu_write(0x0201, 0x10);
-
-            cpu.cpu_step(&mut bus);
-
-            assert_eq!(bus.cpu_read(0x0010), 0x5A);
-            assert_eq!(cpu.pc, 0x0202);
-        }
-
-        #[test]
-        fn cpu_step_executes_tax_and_updates_zero_and_negative_flags() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            cpu.pc = 0x0200;
-            cpu.a = 0x80;
-            bus.cpu_write(0x0200, 0xAA);
-
-            cpu.cpu_step(&mut bus);
-
-            assert_eq!(cpu.x, 0x80);
-            assert!(!cpu.p.z, "copied value is not zero");
-            assert!(cpu.p.n, "copied value has bit 7 set");
-            assert_eq!(cpu.pc, 0x0201);
-        }
-
-        #[test]
-        fn cpu_step_executes_jmp_absolute() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            cpu.pc = 0x0200;
-            bus.cpu_write(0x0200, 0x4C);
-            bus.write_u16(0x0201, 0x3456);
-
-            cpu.cpu_step(&mut bus);
-
-            assert_eq!(cpu.pc, 0x3456);
-            assert_eq!(cpu.cycles, 3);
-            assert_eq!(cpu.clocks, 1);
-        }
-
-        #[test]
-        fn cpu_step_executes_nop_zero_page_and_consumes_operand_byte() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            cpu.pc = 0x0200;
-            cpu.a = 0x3C;
-            cpu.x = 0x12;
-            cpu.y = 0x34;
-            bus.cpu_write(0x0200, 0x04);
-            bus.cpu_write(0x0201, 0x99);
-
-            cpu.cpu_step(&mut bus);
-
-            assert_eq!(cpu.pc, 0x0202);
-            assert_eq!(cpu.a, 0x3C);
-            assert_eq!(cpu.x, 0x12);
-            assert_eq!(cpu.y, 0x34);
-            assert_eq!(cpu.cycles, 3);
-            assert_eq!(cpu.clocks, 1);
-        }
-
-        #[test]
-        fn cpu_step_unimplemented_opcode_with_absolute_mode_still_advances_pc() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            cpu.pc = 0x0200;
-            cpu.a = 0x11;
-            cpu.x = 0x22;
-            cpu.y = 0x33;
-            bus.cpu_write(0x0200, 0x0E);
-            bus.write_u16(0x0201, 0x4567);
-
-            cpu.cpu_step(&mut bus);
-
-            assert_eq!(cpu.pc, 0x0203);
-            assert_eq!(cpu.a, 0x11);
-            assert_eq!(cpu.x, 0x22);
-            assert_eq!(cpu.y, 0x33);
-            assert_eq!(cpu.cycles, 6);
-            assert_eq!(cpu.clocks, 1);
-        }
-
-        #[test]
-        fn cpu_step_executes_jmp_indirect_using_wrapped_high_byte() {
-            let mut cpu = CPU::new();
-            let mut bus = TestBus::new();
-            cpu.pc = 0x0200;
-            bus.cpu_write(0x0200, 0x6C);
-            bus.write_u16(0x0201, 0x12FF);
-            bus.cpu_write(0x12FF, 0x34);
-            bus.cpu_write(0x1200, 0x12);
-            bus.cpu_write(0x1300, 0x99);
-
-            cpu.cpu_step(&mut bus);
-
-            assert_eq!(cpu.pc, 0x1234);
-            assert_eq!(cpu.cycles, 5);
-            assert_eq!(cpu.clocks, 1);
-        }
-    }
-}
+mod tests;
