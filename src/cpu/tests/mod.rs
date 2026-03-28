@@ -25,6 +25,7 @@ impl CPUBus for TestBus {
     }
 }
 
-mod reset;
 mod addressing;
+mod dma;
 mod execution;
+mod reset;

@@ -770,7 +770,7 @@ impl CPU {
     }
 
     pub fn cpu_clock(&mut self, bus: &mut impl CPUBus) {
-        bus.cpu_read(0x4000); // 同步APU，暂时无用，但提前写好
+        bus.cpu_read(0x4000); // 同步APU，暂时无用，后续可能要移动到BUS或NES
         self.clocks += 1;
 
         // Latch NMI edge every CPU clock.
@@ -785,6 +785,10 @@ impl CPU {
             if self.cycles > 0 {
                 return;
             }
+        }
+
+        if bus.try_dma() {
+            return;
         }
 
         if self.nmi_next {
