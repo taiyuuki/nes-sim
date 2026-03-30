@@ -41,7 +41,7 @@ impl NES {
         self.cpu.set_nmi(self.bus.ppu_nmi_line());
 
         if self.master_clock % 3 == 0 {
-            self.cpu.cpu_clock(&mut self.bus);
+            self.cpu.clock(&mut self.bus);
             self.cpu.set_nmi(self.bus.ppu_nmi_line());
         }
     }

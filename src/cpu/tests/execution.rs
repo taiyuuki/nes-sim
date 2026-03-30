@@ -9,7 +9,7 @@ fn cpu_step_executes_ora_immediate_and_updates_flags_and_timing() {
     bus.cpu_write(0x0200, 0x09);
     bus.cpu_write(0x0201, 0x01);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0x81);
     assert_eq!(cpu.pc, 0x0202);
@@ -30,7 +30,7 @@ fn cpu_step_executes_bit_zero_page_and_clears_zero_when_a_and_m_is_non_zero() {
     bus.cpu_write(0x0201, 0x10);
     bus.cpu_write(0x0010, 0b0000_0001);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert!(!cpu.p.z, "A & M != 0 should clear zero");
     assert_eq!(cpu.pc, 0x0202);
@@ -49,7 +49,7 @@ fn cpu_step_executes_bit_zero_page_and_sets_zero_when_a_and_m_is_zero() {
     bus.cpu_write(0x0201, 0x10);
     bus.cpu_write(0x0010, 0b0000_0010);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert!(cpu.p.z, "A & M == 0 should set zero");
     assert_eq!(cpu.pc, 0x0202);
@@ -69,7 +69,7 @@ fn cpu_step_executes_bit_absolute_and_sets_negative_and_overflow_from_memory_bit
     bus.write_u16(0x0201, 0x1234);
     bus.cpu_write(0x1234, 0b1100_0000);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert!(cpu.p.n, "memory bit7 should set negative");
     assert!(cpu.p.v, "memory bit6 should set overflow");
@@ -85,7 +85,7 @@ fn cpu_step_executes_lda_immediate_and_sets_zero_flag() {
     bus.cpu_write(0x0200, 0xA9);
     bus.cpu_write(0x0201, 0x00);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0x00);
     assert!(cpu.p.z, "loading zero should set the zero flag");
@@ -102,7 +102,7 @@ fn cpu_step_executes_sta_zero_page_and_writes_accumulator_to_bus() {
     bus.cpu_write(0x0200, 0x85);
     bus.cpu_write(0x0201, 0x10);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(bus.cpu_read(0x0010), 0x5A);
     assert_eq!(cpu.pc, 0x0202);
@@ -116,7 +116,7 @@ fn cpu_step_executes_tax_and_updates_zero_and_negative_flags() {
     cpu.a = 0x80;
     bus.cpu_write(0x0200, 0xAA);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.x, 0x80);
     assert!(!cpu.p.z, "copied value is not zero");
@@ -133,7 +133,7 @@ fn cpu_step_executes_pha_and_pushes_accumulator_to_stack() {
     cpu.sp = 0xFD;
     bus.cpu_write(0x0200, 0x48);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(bus.cpu_read(0x01FD), 0x5A);
     assert_eq!(cpu.sp, 0xFC);
@@ -154,7 +154,7 @@ fn cpu_step_executes_pla_and_restores_accumulator_and_zero_flag() {
     bus.cpu_write(0x0200, 0x68);
     bus.cpu_write(0x01FD, 0x00);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0x00);
     assert_eq!(cpu.sp, 0xFD);
@@ -178,7 +178,7 @@ fn cpu_step_executes_php_and_pushes_status_with_break_and_unused_bits_set() {
     cpu.p.n = true;
     bus.cpu_write(0x0200, 0x08);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(bus.cpu_read(0x01FD), 0xF3);
     assert_eq!(cpu.sp, 0xFC);
@@ -196,7 +196,7 @@ fn cpu_step_executes_php_and_includes_decimal_flag_in_pushed_status() {
     cpu.p.d = true;
     bus.cpu_write(0x0200, 0x08);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(bus.cpu_read(0x01FD), 0x38);
 }
@@ -215,7 +215,7 @@ fn cpu_step_executes_plp_and_restores_status_flags_from_stack() {
     bus.cpu_write(0x0200, 0x28);
     bus.cpu_write(0x01FD, 0xD7);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert!(cpu.p.c);
     assert!(cpu.p.z);
@@ -238,7 +238,7 @@ fn cpu_step_executes_plp_and_restores_decimal_flag() {
     bus.cpu_write(0x0200, 0x28);
     bus.cpu_write(0x01FD, 0x08);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert!(cpu.p.d);
 }
@@ -257,7 +257,7 @@ fn cpu_step_executes_plp_and_ignores_break_and_unused_bits() {
     bus.cpu_write(0x0200, 0x28);
     bus.cpu_write(0x01FD, 0x30);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert!(!cpu.p.c);
     assert!(!cpu.p.z);
@@ -277,13 +277,13 @@ fn cpu_step_executes_sed_and_cld_and_updates_decimal_flag() {
     bus.cpu_write(0x0200, 0xF8); // SED
     bus.cpu_write(0x0201, 0xD8); // CLD
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
     assert!(cpu.p.d);
     assert_eq!(cpu.pc, 0x0201);
     assert_eq!(cpu.cycles, 2);
 
-    cpu.cpu_clock(&mut bus);
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
+    cpu.clock(&mut bus);
     assert!(!cpu.p.d);
     assert_eq!(cpu.pc, 0x0202);
     assert_eq!(cpu.cycles, 2);
@@ -300,7 +300,7 @@ fn cpu_step_executes_txs_and_copies_x_to_stack_pointer_without_touching_flags() 
     cpu.p.n = false;
     bus.cpu_write(0x0200, 0x9A);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.sp, 0x80);
     assert_eq!(cpu.x, 0x80);
@@ -322,7 +322,7 @@ fn cpu_step_executes_tsx_and_updates_zero_and_negative_flags() {
     cpu.p.n = true;
     bus.cpu_write(0x0200, 0xBA);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.x, 0x00);
     assert_eq!(cpu.sp, 0x00);
@@ -345,7 +345,7 @@ fn cpu_step_executes_cmp_immediate_and_sets_carry_zero_and_negative_flags() {
     bus.cpu_write(0x0200, 0xC9);
     bus.cpu_write(0x0201, 0x40);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert!(cpu.p.c, "equal compare should set carry");
     assert!(cpu.p.z, "equal compare should set zero");
@@ -363,7 +363,7 @@ fn cpu_step_executes_cpx_immediate_and_sets_negative_when_register_is_smaller() 
     bus.cpu_write(0x0200, 0xE0);
     bus.cpu_write(0x0201, 0x20);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert!(!cpu.p.c, "smaller compare should clear carry");
     assert!(!cpu.p.z, "different compare should clear zero");
@@ -382,7 +382,7 @@ fn cpu_step_executes_cpy_absolute_and_sets_carry_without_zero() {
     bus.write_u16(0x0201, 0x3456);
     bus.cpu_write(0x3456, 0x10);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert!(cpu.p.c, "larger compare should set carry");
     assert!(!cpu.p.z, "different compare should clear zero");
@@ -402,7 +402,7 @@ fn cpu_step_executes_cmp_absolute_x_and_adds_cycle_when_page_is_crossed() {
     bus.write_u16(0x0201, 0x12FF);
     bus.cpu_write(0x1300, 0x77);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert!(cpu.p.c);
     assert!(cpu.p.z);
@@ -423,7 +423,7 @@ fn cpu_step_executes_cmp_indirect_y_and_adds_cycle_when_page_is_crossed() {
     bus.cpu_write(0x0081, 0x12);
     bus.cpu_write(0x1300, 0x10);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert!(cpu.p.c);
     assert!(!cpu.p.z);
@@ -442,7 +442,7 @@ fn cpu_step_executes_adc_immediate_and_sets_carry_and_zero() {
     bus.cpu_write(0x0200, 0x69);
     bus.cpu_write(0x0201, 0x01);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0x00);
     assert!(cpu.p.c, "0xFF + 0x01 should set carry");
@@ -461,7 +461,7 @@ fn cpu_step_executes_asl_accumulator_and_updates_flags() {
     cpu.a = 0x80;
     bus.cpu_write(0x0200, 0x0A);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0x00);
     assert!(cpu.p.c, "bit 7 should move into carry");
@@ -480,7 +480,7 @@ fn cpu_step_executes_rol_accumulator_and_rotates_old_carry_in() {
     cpu.p.c = true;
     bus.cpu_write(0x0200, 0x2A);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0x01);
     assert!(cpu.p.c, "bit 7 should move into carry");
@@ -499,7 +499,7 @@ fn cpu_step_executes_lsr_zero_page_and_writes_result_back_to_memory() {
     bus.cpu_write(0x0201, 0x10);
     bus.cpu_write(0x0010, 0x01);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(bus.cpu_read(0x0010), 0x00);
     assert!(cpu.p.c, "bit 0 should move into carry");
@@ -519,7 +519,7 @@ fn cpu_step_executes_ror_absolute_and_rotates_old_carry_into_bit_seven() {
     bus.write_u16(0x0201, 0x1234);
     bus.cpu_write(0x1234, 0x01);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(bus.cpu_read(0x1234), 0x80);
     assert!(cpu.p.c, "bit 0 should move into carry");
@@ -539,7 +539,7 @@ fn cpu_step_executes_adc_immediate_and_sets_overflow_for_signed_addition() {
     bus.cpu_write(0x0200, 0x69);
     bus.cpu_write(0x0201, 0x50);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0xA0);
     assert!(!cpu.p.c, "0x50 + 0x50 should not set carry");
@@ -564,7 +564,7 @@ fn cpu_step_executes_adc_absolute_x_and_adds_cycle_when_page_is_crossed() {
     bus.write_u16(0x0201, 0x12FF);
     bus.cpu_write(0x1300, 0x01);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0x02);
     assert_eq!(cpu.pc, 0x0203);
@@ -581,7 +581,7 @@ fn cpu_step_executes_sbc_immediate_without_borrow() {
     bus.cpu_write(0x0200, 0xE9);
     bus.cpu_write(0x0201, 0x01);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0x0F);
     assert!(cpu.p.c, "no borrow should keep carry set");
@@ -602,7 +602,7 @@ fn cpu_step_executes_sbc_immediate_and_clears_carry_when_borrow_occurs() {
     bus.cpu_write(0x0200, 0xE9);
     bus.cpu_write(0x0201, 0x01);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0xFF);
     assert!(!cpu.p.c, "borrow should clear carry");
@@ -622,7 +622,7 @@ fn cpu_step_executes_sbc_immediate_and_sets_overflow_for_signed_subtraction() {
     bus.cpu_write(0x0200, 0xE9);
     bus.cpu_write(0x0201, 0x01);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0x7F);
     assert!(cpu.p.c);
@@ -649,7 +649,7 @@ fn cpu_step_executes_sbc_indirect_y_and_adds_cycle_when_page_is_crossed() {
     bus.cpu_write(0x0081, 0x12);
     bus.cpu_write(0x1300, 0x01);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.a, 0x04);
     assert_eq!(cpu.pc, 0x0202);
@@ -665,7 +665,7 @@ fn cpu_step_executes_beq_without_branch_when_zero_flag_is_clear() {
     bus.cpu_write(0x0200, 0xF0);
     bus.cpu_write(0x0201, 0x05);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x0202);
     assert_eq!(cpu.cycles, 2);
@@ -680,7 +680,7 @@ fn cpu_step_executes_beq_and_adds_cycle_when_branch_is_taken() {
     bus.cpu_write(0x0200, 0xF0);
     bus.cpu_write(0x0201, 0x05);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x0207);
     assert_eq!(cpu.cycles, 3);
@@ -695,7 +695,7 @@ fn cpu_step_executes_beq_and_adds_two_cycles_when_branch_crosses_page() {
     bus.cpu_write(0x20FD, 0xF0);
     bus.cpu_write(0x20FE, 0x02);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x2101);
     assert_eq!(cpu.cycles, 4);
@@ -710,7 +710,7 @@ fn cpu_step_executes_bne_when_zero_flag_is_clear() {
     bus.cpu_write(0x0200, 0xD0);
     bus.cpu_write(0x0201, 0x05);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x0207);
     assert_eq!(cpu.cycles, 3);
@@ -725,7 +725,7 @@ fn cpu_step_does_not_branch_on_bne_when_zero_flag_is_set() {
     bus.cpu_write(0x0200, 0xD0);
     bus.cpu_write(0x0201, 0x05);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x0202);
     assert_eq!(cpu.cycles, 2);
@@ -740,7 +740,7 @@ fn cpu_step_executes_jsr_absolute_and_pushes_return_address_to_stack() {
     bus.cpu_write(0x80FE, 0x20);
     bus.write_u16(0x80FF, 0x3456);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x3456);
     assert_eq!(bus.cpu_read(0x01FD), 0x81);
@@ -760,7 +760,7 @@ fn cpu_step_executes_rts_and_restores_pc_from_stack() {
     bus.cpu_write(0x01FC, 0x34);
     bus.cpu_write(0x01FD, 0x12);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x1235);
     assert_eq!(cpu.sp, 0xFD);
@@ -783,7 +783,7 @@ fn cpu_step_executes_brk_and_pushes_pc_and_status_then_jumps_to_irq_vector() {
     bus.cpu_write(0x12FF, 0xAA);
     bus.write_u16(0xFFFE, 0x3456);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x3456);
     assert_eq!(cpu.sp, 0xFA);
@@ -817,7 +817,7 @@ fn cpu_step_executes_brk_and_pushes_decimal_flag_in_status() {
     bus.cpu_write(0x0200, 0x00);
     bus.write_u16(0xFFFE, 0x3456);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(bus.cpu_read(0x01FB), 0x38);
 }
@@ -838,7 +838,7 @@ fn cpu_step_executes_rti_and_restores_status_and_program_counter_from_stack() {
     bus.cpu_write(0x01FC, 0x34);
     bus.cpu_write(0x01FD, 0x12);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x1234);
     assert_eq!(cpu.sp, 0xFD);
@@ -866,7 +866,7 @@ fn cpu_step_executes_brk_then_rti_and_restores_pc_plus_two_and_flags() {
     bus.write_u16(0xFFFE, 0x4000);
     bus.cpu_write(0x4000, 0x40);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
     assert_eq!(cpu.pc, 0x4000);
     assert_eq!(cpu.sp, 0xFA);
     assert!(cpu.p.i, "BRK should set interrupt disable");
@@ -879,7 +879,7 @@ fn cpu_step_executes_brk_then_rti_and_restores_pc_plus_two_and_flags() {
     cpu.p.n = false;
 
     for _ in 0..7 {
-        cpu.cpu_clock(&mut bus);
+        cpu.clock(&mut bus);
     }
 
     assert_eq!(
@@ -913,7 +913,7 @@ fn cpu_step_services_nmi_before_fetching_next_opcode() {
     bus.write_u16(0xFFFA, 0x3456);
 
     cpu.set_nmi(true);
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x3456);
     assert_eq!(cpu.sp, 0xFA);
@@ -942,7 +942,7 @@ fn cpu_step_services_irq_when_enabled_before_fetching_next_opcode() {
     bus.write_u16(0xFFFE, 0x4567);
 
     cpu.set_irq(true);
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x4567);
     assert_eq!(cpu.sp, 0xFA);
@@ -967,11 +967,11 @@ fn cpu_step_delays_irq_one_instruction_after_cli_when_i_was_set() {
     bus.write_u16(0xFFFE, 0x4000);
 
     cpu.set_irq(true);
-    cpu.cpu_clock(&mut bus); // Execute CLI.
-    cpu.cpu_clock(&mut bus); // Cycle wait.
-    cpu.cpu_clock(&mut bus); // Execute LDA before IRQ due to one-instruction delay.
-    cpu.cpu_clock(&mut bus); // Cycle wait.
-    cpu.cpu_clock(&mut bus); // IRQ should trigger now.
+    cpu.clock(&mut bus); // Execute CLI.
+    cpu.clock(&mut bus); // Cycle wait.
+    cpu.clock(&mut bus); // Execute LDA before IRQ due to one-instruction delay.
+    cpu.clock(&mut bus); // Cycle wait.
+    cpu.clock(&mut bus); // IRQ should trigger now.
 
     assert_eq!(cpu.a, 0x42);
     assert_eq!(cpu.pc, 0x4000);
@@ -991,9 +991,9 @@ fn cpu_step_applies_previous_i_for_irq_poll_after_sei() {
     bus.write_u16(0xFFFE, 0x4000);
 
     cpu.set_irq(true);
-    cpu.cpu_clock(&mut bus); // Execute SEI.
-    cpu.cpu_clock(&mut bus); // Cycle wait.
-    cpu.cpu_clock(&mut bus); // IRQ should trigger using old I=0.
+    cpu.clock(&mut bus); // Execute SEI.
+    cpu.clock(&mut bus); // Cycle wait.
+    cpu.clock(&mut bus); // IRQ should trigger using old I=0.
 
     assert_eq!(
         cpu.a, 0x00,
@@ -1010,7 +1010,7 @@ fn cpu_step_executes_jmp_absolute() {
     bus.cpu_write(0x0200, 0x4C);
     bus.write_u16(0x0201, 0x3456);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x3456);
     assert_eq!(cpu.cycles, 3);
@@ -1028,7 +1028,7 @@ fn cpu_step_executes_nop_zero_page_and_consumes_operand_byte() {
     bus.cpu_write(0x0200, 0x04);
     bus.cpu_write(0x0201, 0x99);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x0202);
     assert_eq!(cpu.a, 0x3C);
@@ -1049,7 +1049,7 @@ fn cpu_step_unimplemented_opcode_with_absolute_mode_still_advances_pc() {
     bus.cpu_write(0x0200, 0x0E);
     bus.write_u16(0x0201, 0x4567);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x0203);
     assert_eq!(cpu.a, 0x11);
@@ -1070,7 +1070,7 @@ fn cpu_step_executes_jmp_indirect_using_wrapped_high_byte() {
     bus.cpu_write(0x1200, 0x12);
     bus.cpu_write(0x1300, 0x99);
 
-    cpu.cpu_clock(&mut bus);
+    cpu.clock(&mut bus);
 
     assert_eq!(cpu.pc, 0x1234);
     assert_eq!(cpu.cycles, 5);

@@ -846,7 +846,7 @@ impl CPU {
         self.cycles += inst.2 as u64 + extra_cycles;
     }
 
-    pub fn cpu_clock(&mut self, bus: &mut impl CPUBus) {
+    pub fn clock(&mut self, bus: &mut impl CPUBus) {
         bus.cpu_read(0x4000); // 同步APU，暂时无用，后续可能要移动到BUS或NES
         self.clocks += 1;
 

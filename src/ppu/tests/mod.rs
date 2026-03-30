@@ -10,7 +10,7 @@ impl TestPpuBus {
     }
 }
 
-impl PpuBus for TestPpuBus {
+impl PPUBus for TestPpuBus {
     fn ppu_read(&mut self, addr: u16) -> u8 {
         self.mem[(addr & 0x3FFF) as usize]
     }
@@ -42,13 +42,13 @@ fn reading_ppustatus_clears_vblank_and_resets_write_toggle() {
 
     ppu.status = STATUS_VBLANK;
     ppu.open_bus = 0x1B;
-    ppu.write_toggle = true;
+    ppu.write_latch = true;
 
     let status = ppu.cpu_read_register(&mut bus, 0x2002);
 
     assert_eq!(status, 0x9B);
     assert!(!ppu.in_vblank());
-    assert!(!ppu.write_toggle);
+    assert!(!ppu.write_latch);
 }
 
 #[test]

@@ -4,7 +4,7 @@ const STATUS_VBLANK: u8 = 0x80;
 const CTRL_VRAM_INCREMENT: u8 = 0x04;
 const CTRL_NMI_ENABLE: u8 = 0x80;
 
-pub trait PpuBus {
+pub trait PPUBus {
     fn ppu_read(&mut self, addr: u16) -> u8;
     fn ppu_write(&mut self, addr: u16, data: u8);
 }
@@ -19,7 +19,7 @@ pub struct PPU {
     vram_addr: u16,
     temp_vram_addr: u16,
     fine_x: u8,
-    write_toggle: bool,
+    write_latch: bool,
     read_buffer: u8,
     scanline: i16,
     dot: u16,
@@ -38,7 +38,7 @@ impl PPU {
             vram_addr: 0,
             temp_vram_addr: 0,
             fine_x: 0,
-            write_toggle: false,
+            write_latch: false,
             read_buffer: 0,
             scanline: 261,
             dot: 0,
@@ -54,14 +54,14 @@ impl PPU {
         self.vram_addr = 0;
         self.temp_vram_addr = 0;
         self.fine_x = 0;
-        self.write_toggle = false;
+        self.write_latch = false;
         self.read_buffer = 0;
         self.scanline = 261;
         self.dot = 0;
         self.odd_frame = false;
     }
 
-    pub fn cpu_read_register<B: PpuBus>(&mut self, bus: &mut B, addr: u16) -> u8 {
+    pub fn cpu_read_register<B: PPUBus>(&mut self, bus: &mut B, addr: u16) -> u8 {
         match addr {
             0x2002 => self.read_status(),
             0x2004 => {
@@ -74,7 +74,7 @@ impl PPU {
         }
     }
 
-    pub fn cpu_write_register<B: PpuBus>(&mut self, bus: &mut B, addr: u16, data: u8) {
+    pub fn cpu_write_register<B: PPUBus>(&mut self, bus: &mut B, addr: u16, data: u8) {
         self.open_bus = data;
 
         match addr {
@@ -93,7 +93,7 @@ impl PPU {
         }
     }
 
-    pub fn clock<B: PpuBus>(&mut self, _bus: &mut B) {
+    pub fn clock<B: PPUBus>(&mut self, _bus: &mut B) {
         self.dot += 1;
         if self.dot > 340 {
             self.dot = 0;
@@ -144,12 +144,12 @@ impl PPU {
     fn read_status(&mut self) -> u8 {
         let status = (self.status & 0xE0) | (self.open_bus & 0x1F);
         self.status &= !STATUS_VBLANK;
-        self.write_toggle = false;
+        self.write_latch = false;
         self.open_bus = status;
         status
     }
 
-    fn read_data<B: PpuBus>(&mut self, bus: &mut B) -> u8 {
+    fn read_data<B: PPUBus>(&mut self, bus: &mut B) -> u8 {
         let addr = self.vram_addr & 0x3FFF;
         let data = if addr >= 0x3F00 {
             self.read_buffer = bus.ppu_read(addr.wrapping_sub(0x1000));
@@ -165,33 +165,33 @@ impl PPU {
         data
     }
 
-    fn write_data<B: PpuBus>(&mut self, bus: &mut B, data: u8) {
+    fn write_data<B: PPUBus>(&mut self, bus: &mut B, data: u8) {
         let addr = self.vram_addr & 0x3FFF;
         bus.ppu_write(addr, data);
         self.increment_vram_addr();
     }
 
     fn write_scroll(&mut self, data: u8) {
-        if !self.write_toggle {
+        if !self.write_latch {
             self.fine_x = data & 0x07;
             self.temp_vram_addr = (self.temp_vram_addr & !0x001F) | ((data as u16) >> 3);
-            self.write_toggle = true;
+            self.write_latch = true;
         } else {
             self.temp_vram_addr = (self.temp_vram_addr & !0x73E0)
                 | ((((data as u16) >> 3) & 0x1F) << 5)
                 | (((data as u16) & 0x07) << 12);
-            self.write_toggle = false;
+            self.write_latch = false;
         }
     }
 
     fn write_addr(&mut self, data: u8) {
-        if !self.write_toggle {
+        if !self.write_latch {
             self.temp_vram_addr = (self.temp_vram_addr & 0x00FF) | (((data as u16) & 0x3F) << 8);
-            self.write_toggle = true;
+            self.write_latch = true;
         } else {
             self.temp_vram_addr = (self.temp_vram_addr & 0x7F00) | data as u16;
             self.vram_addr = self.temp_vram_addr;
-            self.write_toggle = false;
+            self.write_latch = false;
         }
     }
 

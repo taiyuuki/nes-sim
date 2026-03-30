@@ -1,6 +1,6 @@
 use crate::cartridge::{Cartridge, CartridgeError, Mirroring};
 use crate::dma::DmaController;
-use crate::ppu::{PPU, PpuBus};
+use crate::ppu::{PPU, PPUBus};
 
 pub trait CPUBus {
     fn cpu_read(&mut self, addr: u16) -> u8;
@@ -16,14 +16,14 @@ pub trait CPUBus {
     }
 }
 
-struct PpuMemory {
+struct PPUMemory {
     chr_ram: [u8; 0x2000],
     vram: [u8; 0x1000],
     palette: [u8; 0x20],
     cartridge: Option<Cartridge>,
 }
 
-impl PpuMemory {
+impl PPUMemory {
     fn new() -> Self {
         Self {
             chr_ram: [0; 0x2000],
@@ -77,7 +77,9 @@ impl PpuMemory {
     }
 
     fn cartridge_cpu_read(&mut self, addr: u16) -> Option<u8> {
-        self.cartridge.as_mut().and_then(|cartridge| cartridge.cpu_read(addr))
+        self.cartridge
+            .as_mut()
+            .and_then(|cartridge| cartridge.cpu_read(addr))
     }
 
     fn cartridge_cpu_write(&mut self, addr: u16, data: u8) -> bool {
@@ -87,13 +89,13 @@ impl PpuMemory {
     }
 }
 
-impl Default for PpuMemory {
+impl Default for PPUMemory {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PpuBus for PpuMemory {
+impl PPUBus for PPUMemory {
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = Self::normalize_addr(addr);
         match addr {
@@ -130,7 +132,7 @@ impl PpuBus for PpuMemory {
 pub struct NESBus {
     pub ram: [u8; 0x800],
     ppu: PPU,
-    ppu_memory: PpuMemory,
+    ppu_memory: PPUMemory,
     dma: DmaController,
     // Additional components: APU, cartridge, etc. can be added here
 }
@@ -140,7 +142,7 @@ impl NESBus {
         NESBus {
             ram: [0; 0x800],
             ppu: PPU::new(),
-            ppu_memory: PpuMemory::new(),
+            ppu_memory: PPUMemory::new(),
             dma: DmaController::new(),
         }
     }
@@ -289,9 +291,21 @@ mod tests {
         bus.cpu_write(0x2006, 0x00);
         bus.cpu_write(0x2006, 0x00);
 
-        assert_eq!(bus.cpu_read(0x2007), 0x00, "first read should return the old buffer");
-        assert_eq!(bus.cpu_read(0x2007), 0x80, "second read should return CHR byte 0");
-        assert_eq!(bus.cpu_read(0x2007), 0x81, "buffer should advance through CHR");
+        assert_eq!(
+            bus.cpu_read(0x2007),
+            0x00,
+            "first read should return the old buffer"
+        );
+        assert_eq!(
+            bus.cpu_read(0x2007),
+            0x80,
+            "second read should return CHR byte 0"
+        );
+        assert_eq!(
+            bus.cpu_read(0x2007),
+            0x81,
+            "buffer should advance through CHR"
+        );
     }
 
     #[test]
