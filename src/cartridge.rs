@@ -11,6 +11,8 @@ pub enum Mirroring {
     Horizontal,
     Vertical,
     FourScreen,
+    SS_MIRROR_0,
+    SS_MIRROR_1,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -197,8 +199,14 @@ mod tests {
         rom[5] = chr_banks;
         rom[6] = flags6;
 
-        rom.extend(std::iter::repeat_n(prg_fill, prg_banks as usize * PRG_BANK_LEN));
-        rom.extend(std::iter::repeat_n(chr_fill, chr_banks as usize * CHR_BANK_LEN));
+        rom.extend(std::iter::repeat_n(
+            prg_fill,
+            prg_banks as usize * PRG_BANK_LEN,
+        ));
+        rom.extend(std::iter::repeat_n(
+            chr_fill,
+            chr_banks as usize * CHR_BANK_LEN,
+        ));
         rom
     }
 

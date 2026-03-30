@@ -61,6 +61,8 @@ impl PPUMemory {
                 1 | 3 => 0x0400 + inner,
                 _ => unreachable!(),
             },
+            Mirroring::SS_MIRROR_0 => inner,
+            Mirroring::SS_MIRROR_1 => 0x0400 + inner,
             Mirroring::FourScreen => offset as usize,
         }
     }
@@ -160,7 +162,7 @@ impl NESBus {
     }
 
     pub fn load_cartridge_ines(&mut self, rom: &[u8]) -> Result<(), CartridgeError> {
-        let cartridge = Cartridge::from_ines(rom)?;
+        let cartridge: Cartridge = Cartridge::from_ines(rom)?;
         self.insert_cartridge(cartridge);
         Ok(())
     }

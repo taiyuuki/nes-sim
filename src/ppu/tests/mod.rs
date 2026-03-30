@@ -1,16 +1,16 @@
 use super::*;
 
-struct TestPpuBus {
+struct TestPPUBus {
     mem: [u8; 0x4000],
 }
 
-impl TestPpuBus {
+impl TestPPUBus {
     fn new() -> Self {
         Self { mem: [0; 0x4000] }
     }
 }
 
-impl PPUBus for TestPpuBus {
+impl PPUBus for TestPPUBus {
     fn ppu_read(&mut self, addr: u16) -> u8 {
         self.mem[(addr & 0x3FFF) as usize]
     }
@@ -23,7 +23,7 @@ impl PPUBus for TestPpuBus {
 #[test]
 fn ppudata_write_uses_configured_increment() {
     let mut ppu = PPU::new();
-    let mut bus = TestPpuBus::new();
+    let mut bus = TestPPUBus::new();
 
     ppu.cpu_write_register(&mut bus, 0x2000, CTRL_VRAM_INCREMENT);
     ppu.cpu_write_register(&mut bus, 0x2006, 0x20);
@@ -36,25 +36,65 @@ fn ppudata_write_uses_configured_increment() {
 }
 
 #[test]
-fn reading_ppustatus_clears_vblank_and_resets_write_toggle() {
+fn writing_ppuctrl_with_nmi_enabled_should_assert_nmi_during_vblank() {
     let mut ppu = PPU::new();
-    let mut bus = TestPpuBus::new();
+    let mut bus = TestPPUBus::new();
+
+    ppu.status = STATUS_VBLANK;
+
+    ppu.cpu_write_register(&mut bus, 0x2000, CTRL_NMI_ENABLE);
+
+    assert!(ppu.nmi_line(), "NMI line should be asserted during VBlank");
+}
+
+#[test]
+fn writing_ppuctrl_with_nmi_disabled_should_not_assert_nmi_during_vblank() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
+
+    ppu.status = STATUS_VBLANK;
+
+    ppu.cpu_write_register(&mut bus, 0x2000, 0x00);
+
+    assert!(
+        !ppu.nmi_line(),
+        "NMI line should remain low when PPUCTRL bit 7 is clear"
+    );
+}
+
+#[test]
+fn reading_ppustatus_should_clear_vblank_flag() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
 
     ppu.status = STATUS_VBLANK;
     ppu.open_bus = 0x1B;
-    ppu.write_latch = true;
 
     let status = ppu.cpu_read_register(&mut bus, 0x2002);
 
     assert_eq!(status, 0x9B);
-    assert!(!ppu.in_vblank());
-    assert!(!ppu.write_latch);
+    assert!(!ppu.in_vblank(), "reading PPUSTATUS should clear VBlank");
+}
+
+#[test]
+fn reading_ppustatus_should_reset_write_toggle() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
+
+    ppu.write_latch = true;
+
+    let _ = ppu.cpu_read_register(&mut bus, 0x2002);
+
+    assert!(
+        !ppu.write_latch,
+        "reading PPUSTATUS should clear the write toggle"
+    );
 }
 
 #[test]
 fn clock_enters_vblank_and_asserts_nmi_line_when_enabled() {
     let mut ppu = PPU::new();
-    let mut bus = TestPpuBus::new();
+    let mut bus = TestPPUBus::new();
 
     ppu.cpu_write_register(&mut bus, 0x2000, CTRL_NMI_ENABLE);
 
