@@ -146,8 +146,12 @@ impl Cartridge {
         self.mapper.ppu_write(addr, data)
     }
 
-    pub fn check_a12(&mut self, addr: u16) {
-        self.mapper.check_a12(addr);
+    pub fn check_a12(&mut self, addr: u16, ppu_cycle: u64) {
+        self.mapper.check_a12(addr, ppu_cycle);
+    }
+
+    pub fn irq_line(&self) -> bool {
+        self.mapper.irq_line()
     }
 
     pub(crate) fn save_state(&self, writer: &mut StateWriter) {

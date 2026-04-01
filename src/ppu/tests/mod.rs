@@ -3,6 +3,7 @@ use super::*;
 struct TestPPUBus {
     mem: [u8; 0x4000],
     read_log: Vec<u16>,
+    a12_log: Vec<u16>,
 }
 
 impl TestPPUBus {
@@ -10,6 +11,7 @@ impl TestPPUBus {
         Self {
             mem: [0; 0x4000],
             read_log: Vec::new(),
+            a12_log: Vec::new(),
         }
     }
 }
@@ -23,6 +25,10 @@ impl PPUBus for TestPPUBus {
 
     fn ppu_write(&mut self, addr: u16, data: u8) {
         self.mem[(addr & 0x3FFF) as usize] = data;
+    }
+
+    fn check_a12(&mut self, addr: u16, _ppu_cycle: u64) {
+        self.a12_log.push(addr & 0x3FFF);
     }
 }
 
@@ -65,6 +71,60 @@ fn ppudata_write_uses_configured_increment() {
 
     assert_eq!(bus.mem[0x2000], 0x12);
     assert_eq!(bus.mem[0x2020], 0x34);
+}
+
+#[test]
+fn palette_ppudata_accesses_do_not_clock_mapper_a12() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
+
+    bus.mem[0x3F00] = 0x2A;
+    ppu.cpu_write_register(&mut bus, 0x2006, 0x3F);
+    ppu.cpu_write_register(&mut bus, 0x2006, 0x00);
+
+    let data = ppu.cpu_read_register(&mut bus, 0x2007);
+    assert_eq!(data, 0x2A);
+    assert!(
+        bus.a12_log.iter().all(|&addr| addr < 0x3F00),
+        "palette reads may refresh the internal buffer from nametable space, but must not expose palette addresses to mapper A12 filtering"
+    );
+
+    bus.a12_log.clear();
+    ppu.cpu_write_register(&mut bus, 0x2006, 0x3F);
+    ppu.cpu_write_register(&mut bus, 0x2006, 0x01);
+    ppu.cpu_write_register(&mut bus, 0x2007, 0x17);
+
+    assert_eq!(bus.mem[0x3F01], 0x17);
+    assert!(
+        bus.a12_log.is_empty(),
+        "palette writes should not be exposed to mapper A12 filtering"
+    );
+}
+
+#[test]
+fn rendered_palette_reads_do_not_clock_mapper_a12() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
+
+    ppu.cpu_write_register(&mut bus, 0x2001, MASK_SHOW_BG | MASK_SHOW_BG_LEFTMOST);
+
+    bus.mem[0x2000] = 0x01;
+    bus.mem[0x23C0] = 0x00;
+    bus.mem[0x0010] = 0b1000_0000;
+    bus.mem[0x0018] = 0x00;
+    bus.mem[0x3F00] = 0x09;
+    bus.mem[0x3F01] = 0x12;
+
+    run_ppu_cycles(&mut ppu, &mut bus, 341 + 1);
+
+    assert!(
+        bus.read_log.iter().any(|&addr| addr == 0x3F01),
+        "rendering should still read palette RAM for final colors"
+    );
+    assert!(
+        bus.a12_log.iter().all(|&addr| addr < 0x3F00),
+        "palette fetches must not reach mapper A12 tracking"
+    );
 }
 
 #[test]
@@ -689,6 +749,32 @@ fn sprite_pattern_fetches_happen_during_sprite_fetch_phase_not_during_evaluation
 
     assert!(bus.read_log.contains(&0x1010));
     assert!(bus.read_log.contains(&0x1018));
+}
+
+#[test]
+fn sprite_fetch_phase_still_reads_pattern_bytes_for_empty_sprite_slots() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
+
+    ppu.cpu_write_register(&mut bus, 0x2000, CTRL_SPRITE_TABLE);
+    ppu.cpu_write_register(&mut bus, 0x2001, MASK_SHOW_SPRITES);
+    set_sprite(&mut ppu.oam, 0, 0xFF, 0x01, 0x00, 8);
+    ppu.scanline = 261;
+    ppu.cycles = 256;
+
+    for _ in 0..64 {
+        ppu.clock(&mut bus);
+    }
+
+    let empty_slot_pattern_reads = bus
+        .read_log
+        .iter()
+        .filter(|&&addr| (0x1FF0..=0x1FFF).contains(&addr))
+        .count();
+    assert!(
+        empty_slot_pattern_reads >= 2,
+        "sprite fetch phase should keep reading pattern bytes for empty sprite slots so mapper timing stays stable"
+    );
 }
 
 #[test]

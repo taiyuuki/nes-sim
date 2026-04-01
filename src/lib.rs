@@ -76,8 +76,11 @@ impl NES {
             self.cpu_ppu_counter = 0;
             self.cpu_schedule_index = (self.cpu_schedule_index + 1) % cpu_schedule.len();
             self.bus.tick_apu_cpu_cycle();
+            self.cpu.irq_set_level(0x01, self.bus.apu_irq_line());
+            self.cpu.irq_set_level(0x02, self.bus.cartridge_irq_line());
             self.cpu.clock(&mut self.bus);
             self.cpu.irq_set_level(0x01, self.bus.apu_irq_line());
+            self.cpu.irq_set_level(0x02, self.bus.cartridge_irq_line());
             self.cpu.set_nmi(self.bus.ppu_nmi_line());
             self.bus.advance_dma_cpu_phase();
         }

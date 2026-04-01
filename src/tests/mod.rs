@@ -464,6 +464,17 @@ fn ducktales_uxrom_rom_boot_frame_matches_reference_hash() {
 }
 
 #[test]
+#[ignore = "ROM smoke test for MMC3 game boot output"]
+fn supercontra_mmc3_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mmc3/SuperContra(U).nes",
+        180,
+        0xA1C967E9F594C010,
+        "out/failed-supercontra-boot.ppm",
+    );
+}
+
+#[test]
 #[ignore = "long-running nestest automation ROM validation"]
 fn nestest_automation_mode_reports_zero_error_bytes() {
     let Some(rom) = read_optional_binary_fixture("roms/nestest/nestest.nes") else {

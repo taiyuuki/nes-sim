@@ -101,6 +101,12 @@ impl PPUMemory {
             .is_some_and(|cartridge| cartridge.cpu_write(addr, data))
     }
 
+    fn cartridge_irq_line(&self) -> bool {
+        self.cartridge
+            .as_ref()
+            .is_some_and(|cartridge| cartridge.irq_line())
+    }
+
     fn save_state(&self, writer: &mut StateWriter) -> Result<(), SaveStateError> {
         writer.write_bytes(&self.chr_ram);
         writer.write_bytes(&self.vram);
@@ -169,9 +175,9 @@ impl PPUBus for PPUMemory {
         }
     }
 
-    fn check_a12(&mut self, addr: u16) {
+    fn check_a12(&mut self, addr: u16, ppu_cycle: u64) {
         if let Some(cartridge) = &mut self.cartridge {
-            cartridge.check_a12(addr);
+            cartridge.check_a12(addr, ppu_cycle);
         }
     }
 }
@@ -264,6 +270,10 @@ impl NESBus {
 
     pub fn apu_irq_line(&self) -> bool {
         self.apu.irq_line()
+    }
+
+    pub fn cartridge_irq_line(&self) -> bool {
+        self.ppu_memory.cartridge_irq_line()
     }
 
     pub fn dma_in_progress(&self) -> bool {

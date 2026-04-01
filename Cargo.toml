@@ -6,8 +6,10 @@ edition = "2024"
 [package.metadata.scripts]
 export-rockman2-frame = 'cargo run --example export_frame -- "roms/mmc1/Rockman2(J).nes" "out/rockman2.ppm" 180'
 export-ducktales-frame = 'cargo run --example export_frame -- "roms/uxrom/DuckTales(E).nes" "out/ducktales.ppm" 180'
+export-supercontra-frame = 'cargo run --example export_frame -- "roms/mmc3/SuperContra(U).nes" "out/supercontra.ppm" 180'
 hash-rockman2-frame = 'cargo run --example hash_frame -- "roms/mmc1/Rockman2(J).nes" 180 "out/rockman2-current.ppm"'
 hash-ducktales-frame = 'cargo run --example hash_frame -- "roms/uxrom/DuckTales(E).nes" 180 "out/ducktales-current.ppm"'
+hash-supercontra-frame = 'cargo run --example hash_frame -- "roms/mmc3/SuperContra(U).nes" 180 "out/supercontra-current.ppm"'
 run-desktop = 'cargo run --features desktop --example desktop_frontend -- "roms/mmc1/Rockman2(J).nes"'
 test-boot-frame-hashes = 'cargo test boot_frame_matches_reference_hash -- --ignored'
 test-all = "cargo test"

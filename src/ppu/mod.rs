@@ -99,10 +99,10 @@ const NES_RGB_PALETTE: [[u8; 3]; 64] = [
 pub trait PPUBus {
     fn ppu_read(&mut self, addr: u16) -> u8;
     fn ppu_write(&mut self, addr: u16, data: u8);
-    fn check_a12(&mut self, _addr: u16) {}
+    fn check_a12(&mut self, _addr: u16, _ppu_cycle: u64) {}
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct SpriteRenderData {
     tile_id: u8,
     row: u8,
@@ -111,6 +111,20 @@ struct SpriteRenderData {
     pattern_lo: u8,
     pattern_hi: u8,
     sprite_zero: bool,
+}
+
+impl Default for SpriteRenderData {
+    fn default() -> Self {
+        Self {
+            tile_id: 0xFF,
+            row: 0,
+            x: 0xFF,
+            attributes: 0xFF,
+            pattern_lo: 0,
+            pattern_hi: 0,
+            sprite_zero: false,
+        }
+    }
 }
 
 pub struct PPU {
@@ -155,6 +169,7 @@ pub struct PPU {
     suppress_vblank: bool,
 
     even: bool,
+    dot_clock: u64,
 }
 
 impl PPU {
@@ -197,6 +212,7 @@ impl PPU {
             suppress_vblank: false,
 
             even: false,
+            dot_clock: 0,
         }
     }
 
@@ -228,6 +244,7 @@ impl PPU {
         self.scanline_sprites = [SpriteRenderData::default(); 8];
         self.scanline_sprite_count = 0;
         self.suppress_vblank = false;
+        self.dot_clock = 0;
     }
 
     pub fn set_parameters(&mut self, tv_system: TVSystem) {
@@ -330,6 +347,7 @@ impl PPU {
         }
 
         if self.should_skip_odd_frame_cycle(pre_render_scanline) {
+            self.dot_clock = self.dot_clock.wrapping_add(1);
             self.start_next_frame();
             return;
         }
@@ -343,6 +361,7 @@ impl PPU {
                 self.start_next_frame();
             }
         }
+        self.dot_clock = self.dot_clock.wrapping_add(1);
     }
 
     pub fn bg_on(&self) -> bool {
@@ -453,6 +472,7 @@ impl PPU {
         writer.write_u8(self.scanline_sprite_count);
         writer.write_bool(self.suppress_vblank);
         writer.write_bool(self.even);
+        writer.write_u64(self.dot_clock);
     }
 
     pub(crate) fn load_state(
@@ -511,6 +531,7 @@ impl PPU {
         self.scanline_sprite_count = reader.read_u8()?;
         self.suppress_vblank = reader.read_bool()?;
         self.even = reader.read_bool()?;
+        self.dot_clock = reader.read_u64()?;
         Ok(())
     }
 
@@ -757,13 +778,13 @@ impl PPU {
             0 | 2 => {
                 let _ = self.ppu_read_bus(bus, 0x2000 | (self.loopy_v & 0x0FFF));
             }
-            4 if slot < self.scanline_sprite_count as usize => {
+            4 => {
                 let sprite = self.scanline_sprites[slot];
                 let (pattern_lo, _) =
                     self.fetch_sprite_pattern(bus, sprite.tile_id, sprite.attributes, sprite.row);
                 self.scanline_sprites[slot].pattern_lo = pattern_lo;
             }
-            6 if slot < self.scanline_sprite_count as usize => {
+            6 => {
                 let sprite = self.scanline_sprites[slot];
                 let (_, pattern_hi) =
                     self.fetch_sprite_pattern(bus, sprite.tile_id, sprite.attributes, sprite.row);
@@ -896,13 +917,17 @@ impl PPU {
 
     fn ppu_read_bus(&mut self, bus: &mut impl PPUBus, addr: u16) -> u8 {
         let addr = addr & 0x3FFF;
-        bus.check_a12(addr);
+        if addr < 0x3F00 {
+            bus.check_a12(addr, self.dot_clock);
+        }
         bus.ppu_read(addr)
     }
 
     fn ppu_write_bus(&mut self, bus: &mut impl PPUBus, addr: u16, data: u8) {
         let addr = addr & 0x3FFF;
-        bus.check_a12(addr);
+        if addr < 0x3F00 {
+            bus.check_a12(addr, self.dot_clock);
+        }
         bus.ppu_write(addr, data);
     }
 
