@@ -1,10 +1,20 @@
+use crate::apu::APU;
 use crate::cartridge::{Cartridge, CartridgeError, Mirroring};
 use crate::dma::DmaController;
+use crate::input::{ControllerState, Joypad};
 use crate::ppu::{PPU, PPUBus};
 
 pub trait CPUBus {
     fn cpu_read(&mut self, addr: u16) -> u8;
     fn cpu_write(&mut self, addr: u16, data: u8);
+    fn cpu_read_timed(&mut self, addr: u16, cycle_offset: u8) -> u8 {
+        let _ = cycle_offset;
+        self.cpu_read(addr)
+    }
+    fn cpu_write_timed(&mut self, addr: u16, data: u8, cycle_offset: u8) {
+        let _ = cycle_offset;
+        self.cpu_write(addr, data);
+    }
     fn try_dma(&mut self) -> bool {
         false
     }
@@ -141,7 +151,10 @@ pub struct NESBus {
     pub ram: [u8; 0x800],
     ppu: PPU,
     ppu_memory: PPUMemory,
+    apu: APU,
     dma: DmaController,
+    controllers: [Joypad; 2],
+    cpu_open_bus: u8,
     // Additional components: APU, cartridge, etc. can be added here
 }
 
@@ -151,7 +164,10 @@ impl NESBus {
             ram: [0; 0x800],
             ppu: PPU::new(),
             ppu_memory: PPUMemory::new(),
+            apu: APU::new(),
             dma: DmaController::new(),
+            controllers: [Joypad::new(), Joypad::new()],
+            cpu_open_bus: 0,
         }
     }
 
@@ -161,6 +177,12 @@ impl NESBus {
 
     pub fn ppu(&self) -> &PPU {
         &self.ppu
+    }
+
+    pub fn set_controller_state(&mut self, port: usize, state: ControllerState) {
+        if let Some(controller) = self.controllers.get_mut(port) {
+            controller.set_state(state);
+        }
     }
 
     pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
@@ -176,7 +198,9 @@ impl NESBus {
 
     pub fn reset(&mut self) {
         self.ppu.reset();
+        self.apu.reset();
         self.dma = DmaController::new();
+        self.cpu_open_bus = 0;
     }
 
     pub fn tick_ppu(&mut self) {
@@ -193,33 +217,64 @@ impl NESBus {
         self.ppu.frame()
     }
 
+    pub fn tick_apu_cpu_cycle(&mut self) {
+        self.apu.tick_cpu_cycle();
+    }
+
+    pub fn apu_irq_line(&self) -> bool {
+        self.apu.irq_line()
+    }
+
     pub fn dma_in_progress(&self) -> bool {
         self.dma.in_progress()
     }
 
+    pub fn advance_dma_cpu_phase(&mut self) {
+        self.dma.advance_cpu_phase();
+    }
+
     pub(crate) fn dma_read(&mut self, addr: u16) -> u8 {
-        self.cpu_read_internal(addr)
+        self.cpu_read_internal(addr, 0)
     }
 
     pub(crate) fn dma_write_oam(&mut self, data: u8) {
         self.ppu.write_oam_dma(data);
     }
 
-    fn cpu_read_internal(&mut self, addr: u16) -> u8 {
+    fn latched_cpu_read(&mut self, data: u8) -> u8 {
+        self.cpu_open_bus = data;
+        data
+    }
+
+    fn cpu_read_internal(&mut self, addr: u16, cycle_offset: u8) -> u8 {
         match addr {
-            0x0000..=0x1FFF => self.ram[(addr & 0x7FF) as usize],
+            0x0000..=0x1FFF => self.latched_cpu_read(self.ram[(addr & 0x7FF) as usize]),
             0x2000..=0x3FFF => {
                 let ppu = &mut self.ppu;
                 let ppu_memory = &mut self.ppu_memory;
-                ppu.cpu_read_register(ppu_memory, 0x2000 | (addr & 0x0007))
+                let data = ppu.cpu_read_register(ppu_memory, 0x2000 | (addr & 0x0007));
+                self.latched_cpu_read(data)
             }
-            0x4020..=0xFFFF => self.ppu_memory.cartridge_cpu_read(addr).unwrap_or(0),
+            0x4015 => self.apu.read_status_at_offset(cycle_offset) | (self.cpu_open_bus & 0x20),
+            0x4016 => {
+                let data = (self.cpu_open_bus & 0xE0) | self.controllers[0].read();
+                self.latched_cpu_read(data)
+            }
+            0x4017 => {
+                let data = (self.cpu_open_bus & 0xE0) | self.controllers[1].read();
+                self.latched_cpu_read(data)
+            }
+            0x4020..=0xFFFF => {
+                let data = self.ppu_memory.cartridge_cpu_read(addr).unwrap_or(self.cpu_open_bus);
+                self.latched_cpu_read(data)
+            }
             // Handle other address ranges (APU, cartridge, etc.)
-            _ => 0,
+            _ => self.cpu_open_bus,
         }
     }
 
-    fn cpu_write_internal(&mut self, addr: u16, data: u8) {
+    fn cpu_write_internal(&mut self, addr: u16, data: u8, cycle_offset: u8) {
+        self.cpu_open_bus = data;
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x7FF) as usize] = data,
             0x2000..=0x3FFF => {
@@ -228,6 +283,12 @@ impl NESBus {
                 ppu.cpu_write_register(ppu_memory, 0x2000 | (addr & 0x0007), data);
             }
             0x4014 => self.dma.request_oam_dma(data),
+            0x4015 => self.apu.write_status(data),
+            0x4016 => {
+                self.controllers[0].write(data);
+                self.controllers[1].write(data);
+            }
+            0x4017 => self.apu.write_frame_counter_at_offset(data, cycle_offset),
             0x4020..=0xFFFF => {
                 let _ = self.ppu_memory.cartridge_cpu_write(addr, data);
             }
@@ -246,11 +307,19 @@ impl NESBus {
 
 impl CPUBus for NESBus {
     fn cpu_read(&mut self, addr: u16) -> u8 {
-        self.cpu_read_internal(addr)
+        self.cpu_read_internal(addr, 0)
     }
 
     fn cpu_write(&mut self, addr: u16, data: u8) {
-        self.cpu_write_internal(addr, data);
+        self.cpu_write_internal(addr, data, 0);
+    }
+
+    fn cpu_read_timed(&mut self, addr: u16, cycle_offset: u8) -> u8 {
+        self.cpu_read_internal(addr, cycle_offset)
+    }
+
+    fn cpu_write_timed(&mut self, addr: u16, data: u8, cycle_offset: u8) {
+        self.cpu_write_internal(addr, data, cycle_offset);
     }
 
     fn try_dma(&mut self) -> bool {
@@ -267,6 +336,13 @@ impl Default for NESBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::{ControllerButton, ControllerState};
+
+    fn write_mmc1_register(bus: &mut NESBus, addr: u16, value: u8) {
+        for bit in 0..5 {
+            bus.cpu_write(addr, (value >> bit) & 0x01);
+        }
+    }
 
     fn make_ines(prg_banks: u8, chr_banks: u8, flags6: u8) -> Vec<u8> {
         let mut rom = vec![0; 16];
@@ -337,5 +413,130 @@ mod tests {
         bus.cpu_write(0x2006, 0x00);
         assert_eq!(bus.cpu_read(0x2007), 0x00);
         assert_eq!(bus.cpu_read(0x2007), 0x3C);
+    }
+
+    #[test]
+    fn nametable_access_tracks_mmc1_runtime_mirroring_changes() {
+        let mut bus = NESBus::new();
+        let rom = make_ines(2, 0, 0x10);
+
+        bus.load_cartridge_ines(&rom).expect("MMC1 should load");
+
+        bus.cpu_write(0x2006, 0x20);
+        bus.cpu_write(0x2006, 0x00);
+        bus.cpu_write(0x2007, 0x5A);
+
+        bus.cpu_write(0x2006, 0x24);
+        bus.cpu_write(0x2006, 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0x5A);
+
+        write_mmc1_register(&mut bus, 0x8000, 0x02);
+
+        bus.cpu_write(0x2006, 0x20);
+        bus.cpu_write(0x2006, 0x00);
+        bus.cpu_write(0x2007, 0xA5);
+
+        bus.cpu_write(0x2006, 0x28);
+        bus.cpu_write(0x2006, 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0xA5);
+    }
+
+    #[test]
+    fn controller_reads_shift_latched_buttons_in_standard_order() {
+        let mut bus = NESBus::new();
+        let mut state = ControllerState::new();
+        state.set_pressed(ControllerButton::A, true);
+        state.set_pressed(ControllerButton::Select, true);
+        state.set_pressed(ControllerButton::Left, true);
+        bus.set_controller_state(0, state);
+
+        bus.cpu_write(0x4016, 0x01);
+        bus.cpu_write(0x4016, 0x00);
+
+        let reads: Vec<u8> = (0..8).map(|_| bus.cpu_read(0x4016)).collect();
+
+        assert_eq!(reads, vec![1, 0, 1, 0, 0, 0, 1, 0]);
+        assert_eq!(bus.cpu_read(0x4016), 1);
+        assert_eq!(bus.cpu_read(0x4016), 1);
+    }
+
+    #[test]
+    fn controller_strobe_high_keeps_reporting_live_a_button_without_advancing() {
+        let mut bus = NESBus::new();
+        bus.set_controller_state(0, ControllerState::from_bits(0x01));
+        bus.cpu_write(0x4016, 0x01);
+
+        assert_eq!(bus.cpu_read(0x4016), 1);
+        assert_eq!(bus.cpu_read(0x4016), 1);
+
+        bus.set_controller_state(0, ControllerState::from_bits(0x00));
+
+        assert_eq!(bus.cpu_read(0x4016), 0);
+    }
+
+    #[test]
+    fn second_controller_reads_from_4017() {
+        let mut bus = NESBus::new();
+        let mut state = ControllerState::new();
+        state.set_pressed(ControllerButton::B, true);
+        bus.set_controller_state(1, state);
+
+        bus.cpu_write(0x4016, 0x01);
+        bus.cpu_write(0x4016, 0x00);
+
+        assert_eq!(bus.cpu_read(0x4017), 0);
+        assert_eq!(bus.cpu_read(0x4017), 1);
+    }
+
+    #[test]
+    fn unmapped_cpu_reads_return_the_open_bus_value() {
+        let mut bus = NESBus::new();
+
+        bus.cpu_write(0x0000, 0x5A);
+
+        assert_eq!(bus.cpu_read(0x4018), 0x5A);
+    }
+
+    #[test]
+    fn controller_reads_preserve_open_bus_in_upper_bits() {
+        let mut bus = NESBus::new();
+        bus.set_controller_state(0, ControllerState::from_bits(0x01));
+        bus.cpu_write(0x4016, 0x01);
+        bus.cpu_write(0x4016, 0x00);
+        bus.cpu_write(0x0000, 0xE0);
+
+        assert_eq!(bus.cpu_read(0x4016), 0xE1);
+    }
+
+    #[test]
+    fn apu_frame_irq_flag_is_visible_in_4015_and_clears_on_read() {
+        let mut bus = NESBus::new();
+        bus.cpu_write(0x4017, 0x00);
+
+        for _ in 0..30_000 {
+            bus.tick_apu_cpu_cycle();
+        }
+
+        assert_eq!(bus.cpu_read(0x4015) & 0x40, 0x40);
+        for _ in 0..8 {
+            bus.tick_apu_cpu_cycle();
+        }
+        assert_eq!(bus.cpu_read(0x4015) & 0x40, 0x00);
+    }
+
+    #[test]
+    fn apu_frame_irq_inhibit_write_clears_pending_flag() {
+        let mut bus = NESBus::new();
+        bus.cpu_write(0x4017, 0x00);
+
+        for _ in 0..29_832 {
+            bus.tick_apu_cpu_cycle();
+        }
+
+        bus.cpu_write(0x4017, 0x40);
+
+        assert_eq!(bus.cpu_read(0x4015) & 0x40, 0x00);
     }
 }

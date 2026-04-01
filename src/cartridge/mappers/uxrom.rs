@@ -2,20 +2,22 @@ use super::Mapper;
 use crate::cartridge::{CHR_BANK_LEN, Mirroring};
 
 const PRG_RAM_LEN: usize = 0x2000;
+const PRG_BANK_LEN: usize = 0x4000;
 
 enum ChrMemory {
     Rom(Vec<u8>),
     Ram(Vec<u8>),
 }
 
-pub(super) struct Nrom {
+pub(super) struct Uxrom {
     prg_rom: Vec<u8>,
     prg_ram: Vec<u8>,
     chr: ChrMemory,
+    selected_prg_bank: usize,
     mirroring: Mirroring,
 }
 
-impl Nrom {
+impl Uxrom {
     pub(super) fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: Mirroring) -> Self {
         let chr = if chr_rom.is_empty() {
             ChrMemory::Ram(vec![0; CHR_BANK_LEN])
@@ -27,21 +29,32 @@ impl Nrom {
             prg_rom,
             prg_ram: vec![0; PRG_RAM_LEN],
             chr,
+            selected_prg_bank: 0,
             mirroring,
         }
     }
 
-    fn prg_rom_index(&self, addr: u16) -> usize {
-        let offset = (addr - 0x8000) as usize;
-        offset % self.prg_rom.len()
+    fn prg_bank_count(&self) -> usize {
+        self.prg_rom.len() / PRG_BANK_LEN
+    }
+
+    fn switchable_prg_index(&self, addr: u16) -> usize {
+        let bank = self.selected_prg_bank % self.prg_bank_count();
+        bank * PRG_BANK_LEN + (addr as usize - 0x8000)
+    }
+
+    fn fixed_prg_index(&self, addr: u16) -> usize {
+        let last_bank = self.prg_bank_count() - 1;
+        last_bank * PRG_BANK_LEN + (addr as usize - 0xC000)
     }
 }
 
-impl Mapper for Nrom {
+impl Mapper for Uxrom {
     fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
             0x6000..=0x7FFF => Some(self.prg_ram[(addr - 0x6000) as usize]),
-            0x8000..=0xFFFF => Some(self.prg_rom[self.prg_rom_index(addr)]),
+            0x8000..=0xBFFF => Some(self.prg_rom[self.switchable_prg_index(addr)]),
+            0xC000..=0xFFFF => Some(self.prg_rom[self.fixed_prg_index(addr)]),
             _ => None,
         }
     }
@@ -52,7 +65,10 @@ impl Mapper for Nrom {
                 self.prg_ram[(addr - 0x6000) as usize] = data;
                 true
             }
-            0x8000..=0xFFFF => true,
+            0x8000..=0xFFFF => {
+                self.selected_prg_bank = data as usize;
+                true
+            }
             _ => false,
         }
     }

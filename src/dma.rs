@@ -105,9 +105,11 @@ impl DmaController {
                 }
             }
         }
-
-        self.cpu_phase = self.cpu_phase.toggle();
         consumed
+    }
+
+    pub fn advance_cpu_phase(&mut self) {
+        self.cpu_phase = self.cpu_phase.toggle();
     }
 }
 

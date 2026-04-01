@@ -502,6 +502,64 @@ fn ppudata_rendering_increment_ignores_ppuctrl_increment_bit() {
 }
 
 #[test]
+fn increment_x_should_toggle_horizontal_nametable_when_coarse_x_wraps_from_tile_31() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
+
+    ppu.cpu_write_register(&mut bus, 0x2001, MASK_SHOW_BG);
+    ppu.loopy_v = 0x5A3F;
+    ppu.vram_addr = 0x5A3F;
+
+    ppu.increment_x();
+
+    assert_eq!((ppu.loopy_v, ppu.vram_addr), (0x5E20, 0x5E20));
+}
+
+#[test]
+fn increment_y_should_apply_coarse_y_29_and_31_wrap_rules_when_fine_y_is_7() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
+
+    ppu.cpu_write_register(&mut bus, 0x2001, MASK_SHOW_BG);
+
+    ppu.loopy_v = 0x77A3;
+    ppu.vram_addr = 0x77A3;
+    ppu.increment_y();
+    assert_eq!((ppu.loopy_v, ppu.vram_addr), (0x0C03, 0x0C03));
+
+    ppu.loopy_v = 0x7FE5;
+    ppu.vram_addr = 0x7FE5;
+    ppu.increment_y();
+    assert_eq!((ppu.loopy_v, ppu.vram_addr), (0x0C05, 0x0C05));
+}
+
+#[test]
+fn frame_pixels_only_exposes_the_visible_256_by_240_region() {
+    let mut ppu = PPU::new();
+    ppu.bit_map[0] = 0x01;
+    ppu.bit_map[FRAME_WIDTH * FRAME_HEIGHT - 1] = 0x02;
+
+    let pixels = ppu.frame_pixels();
+
+    assert_eq!(pixels.len(), FRAME_WIDTH * FRAME_HEIGHT);
+    assert_eq!(pixels[0], 0x01);
+    assert_eq!(pixels[FRAME_WIDTH * FRAME_HEIGHT - 1], 0x02);
+}
+
+#[test]
+fn frame_rgb_converts_palette_indices_to_rgb_bytes() {
+    let mut ppu = PPU::new();
+    ppu.bit_map[0] = 0x00;
+    ppu.bit_map[1] = 0x01;
+    ppu.bit_map[2] = 0x21;
+
+    let rgb = ppu.frame_rgb();
+
+    assert_eq!(rgb.len(), FRAME_WIDTH * FRAME_HEIGHT * 3);
+    assert_eq!(&rgb[..9], &[84, 84, 84, 0, 30, 116, 76, 154, 236]);
+}
+
+#[test]
 fn interleaved_ppuaddr_and_ppuscroll_writes_follow_shared_write_toggle_rules() {
     let mut ppu = PPU::new();
     let mut bus = TestPPUBus::new();

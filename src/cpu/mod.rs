@@ -20,6 +20,7 @@ pub enum AddrMode {
 struct ResolvedOperand {
     addr: u16,
     page_crossed: bool,
+    dummy_addr: u16,
 }
 
 impl ResolvedOperand {
@@ -27,11 +28,16 @@ impl ResolvedOperand {
         Self {
             addr,
             page_crossed: false,
+            dummy_addr: addr,
         }
     }
 
-    fn with_page_cross(addr: u16, page_crossed: bool) -> Self {
-        Self { addr, page_crossed }
+    fn with_page_cross(base: u16, addr: u16) -> Self {
+        Self {
+            addr,
+            page_crossed: (base & 0xFF00) != (addr & 0xFF00),
+            dummy_addr: (base & 0xFF00) | (addr & 0x00FF),
+        }
     }
 }
 
@@ -256,14 +262,14 @@ const INST_SET: [Inst; 256] = [
     Inst(OpCode::RRA, AddrMode::ABX, 7),
     Inst(OpCode::NOP, AddrMode::IMM, 2),
     Inst(OpCode::STA, AddrMode::IZX, 6),
-    Inst(OpCode::NOP, AddrMode::IMP, 2),
+    Inst(OpCode::NOP, AddrMode::IMM, 2),
     Inst(OpCode::SAX, AddrMode::IZX, 6),
     Inst(OpCode::STY, AddrMode::ZP0, 3),
     Inst(OpCode::STA, AddrMode::ZP0, 3),
     Inst(OpCode::STX, AddrMode::ZP0, 3),
     Inst(OpCode::SAX, AddrMode::ZP0, 3),
     Inst(OpCode::DEY, AddrMode::IMP, 2),
-    Inst(OpCode::NOP, AddrMode::IMP, 2),
+    Inst(OpCode::NOP, AddrMode::IMM, 2),
     Inst(OpCode::TXA, AddrMode::IMP, 2),
     Inst(OpCode::XAA, AddrMode::IMP, 2),
     Inst(OpCode::STY, AddrMode::ABS, 4),
@@ -320,7 +326,7 @@ const INST_SET: [Inst; 256] = [
     Inst(OpCode::LAX, AddrMode::ABY, 4),
     Inst(OpCode::CPY, AddrMode::IMM, 2),
     Inst(OpCode::CMP, AddrMode::IZX, 6),
-    Inst(OpCode::NOP, AddrMode::IMP, 2),
+    Inst(OpCode::NOP, AddrMode::IMM, 2),
     Inst(OpCode::DCP, AddrMode::IZX, 8),
     Inst(OpCode::CPY, AddrMode::ZP0, 3),
     Inst(OpCode::CMP, AddrMode::ZP0, 3),
@@ -352,7 +358,7 @@ const INST_SET: [Inst; 256] = [
     Inst(OpCode::DCP, AddrMode::ABX, 7),
     Inst(OpCode::CPX, AddrMode::IMM, 2),
     Inst(OpCode::SBC, AddrMode::IZX, 6),
-    Inst(OpCode::NOP, AddrMode::IMP, 2),
+    Inst(OpCode::NOP, AddrMode::IMM, 2),
     Inst(OpCode::ISC, AddrMode::IZX, 8),
     Inst(OpCode::CPX, AddrMode::ZP0, 3),
     Inst(OpCode::SBC, AddrMode::ZP0, 3),
@@ -541,18 +547,12 @@ impl CPU {
             AddrMode::ABX => {
                 let base = self.fetch_u16(bus);
                 let addr = base.wrapping_add(self.x as u16);
-                Some(ResolvedOperand::with_page_cross(
-                    addr,
-                    Self::page_crossed(base, addr),
-                ))
+                Some(ResolvedOperand::with_page_cross(base, addr))
             }
             AddrMode::ABY => {
                 let base = self.fetch_u16(bus);
                 let addr = base.wrapping_add(self.y as u16);
-                Some(ResolvedOperand::with_page_cross(
-                    addr,
-                    Self::page_crossed(base, addr),
-                ))
+                Some(ResolvedOperand::with_page_cross(base, addr))
             }
             AddrMode::IND => Some(ResolvedOperand::new(self.ind(bus))),
             AddrMode::IZX => Some(ResolvedOperand::new(self.izx(bus))),
@@ -560,10 +560,7 @@ impl CPU {
                 let ptr = self.fetch_byte(bus);
                 let base = self.read_u16_zero_page(ptr, bus);
                 let addr = base.wrapping_add(self.y as u16);
-                Some(ResolvedOperand::with_page_cross(
-                    addr,
-                    Self::page_crossed(base, addr),
-                ))
+                Some(ResolvedOperand::with_page_cross(base, addr))
             }
         }
     }
@@ -573,38 +570,165 @@ impl CPU {
             .expect("Instruction requires an operand address")
     }
 
-    // fn fetch_operand(&mut self, addr: u16, bus: &mut impl CPUBus) -> u8 {
-    //     self.resolve_operand_addr(mode, bus)
-    //         .map(|addr| bus.cpu_read(addr))
-    //         .unwrap_or(0)
-    // }
+    fn issue_dummy_read_on_page_cross(
+        &mut self,
+        operand: ResolvedOperand,
+        bus: &mut impl CPUBus,
+    ) {
+        if operand.page_crossed {
+            let _ = bus.cpu_read(operand.dummy_addr);
+        }
+    }
+
+    fn issue_store_dummy_read(
+        &mut self,
+        mode: AddrMode,
+        operand: ResolvedOperand,
+        bus: &mut impl CPUBus,
+    ) {
+        if matches!(mode, AddrMode::ABX | AddrMode::ABY | AddrMode::IZY) {
+            let _ = bus.cpu_read(operand.dummy_addr);
+        }
+    }
+
+    fn issue_rmw_dummy_read(
+        &mut self,
+        mode: AddrMode,
+        operand: ResolvedOperand,
+        bus: &mut impl CPUBus,
+    ) {
+        if matches!(mode, AddrMode::ABX) {
+            let _ = bus.cpu_read_timed(operand.dummy_addr, 4);
+        }
+    }
+
+    fn issue_nop_bus_read(&mut self, mode: AddrMode, operand: Option<ResolvedOperand>, bus: &mut impl CPUBus) {
+        match mode {
+            AddrMode::IMP => {
+                let _ = bus.cpu_read(self.pc);
+            }
+            AddrMode::IMM => {}
+            _ => {
+                let operand = operand.expect("non-implied NOP should have an operand");
+                self.issue_dummy_read_on_page_cross(operand, bus);
+                let _ = bus.cpu_read(operand.addr);
+            }
+        }
+    }
+
+    fn rmw_memory<F>(&mut self, addr: u16, bus: &mut impl CPUBus, op: F) -> u8
+    where
+        F: FnOnce(&mut Self, u8) -> u8,
+    {
+        let value = bus.cpu_read(addr);
+        bus.cpu_write(addr, value);
+        let result = op(self, value);
+        bus.cpu_write(addr, result);
+        result
+    }
+
+    fn rmw_memory_timed<F>(
+        &mut self,
+        addr: u16,
+        bus: &mut impl CPUBus,
+        read_cycle_offset: u8,
+        write_old_cycle_offset: u8,
+        write_new_cycle_offset: u8,
+        op: F,
+    ) -> u8
+    where
+        F: FnOnce(&mut Self, u8) -> u8,
+    {
+        let value = bus.cpu_read_timed(addr, read_cycle_offset);
+        bus.cpu_write_timed(addr, value, write_old_cycle_offset);
+        let result = op(self, value);
+        bus.cpu_write_timed(addr, result, write_new_cycle_offset);
+        result
+    }
+
+    fn read_cycle_offset(mode: AddrMode, operand: ResolvedOperand) -> u8 {
+        match mode {
+            AddrMode::IMM => 1,
+            AddrMode::ZP0 => 2,
+            AddrMode::ZPX | AddrMode::ZPY => 3,
+            AddrMode::ABS => 3,
+            AddrMode::ABX | AddrMode::ABY => {
+                if operand.page_crossed {
+                    4
+                } else {
+                    3
+                }
+            }
+            AddrMode::IZX => 4,
+            AddrMode::IZY => {
+                if operand.page_crossed {
+                    5
+                } else {
+                    4
+                }
+            }
+            _ => 0,
+        }
+    }
+
+    fn store_cycle_offset(mode: AddrMode) -> u8 {
+        match mode {
+            AddrMode::ZP0 => 2,
+            AddrMode::ZPX | AddrMode::ZPY => 3,
+            AddrMode::ABS => 3,
+            AddrMode::ABX | AddrMode::ABY => 4,
+            AddrMode::IZX => 5,
+            AddrMode::IZY => 5,
+            _ => 0,
+        }
+    }
+
+    fn rmw_cycle_offsets(mode: AddrMode) -> (u8, u8, u8) {
+        match mode {
+            AddrMode::ZP0 => (2, 3, 4),
+            AddrMode::ZPX => (3, 4, 5),
+            AddrMode::ABS => (3, 4, 5),
+            AddrMode::ABX => (5, 6, 7),
+            _ => (0, 0, 0),
+        }
+    }
 
     pub fn exe_inst(&mut self, inst_byte: u8, bus: &mut impl CPUBus) {
         let inst = INST_SET[inst_byte as usize];
         let mut extra_cycles = 0_u64;
         match inst.0 {
             // Do nothing.
-            OpCode::NOP | OpCode::KIL => {
+            OpCode::NOP => {
+                let operand = self.resolve_operand(inst.1, bus);
+                if let Some(operand) = operand {
+                    extra_cycles += inst.1.read_page_cross_penalty(operand);
+                }
+                self.issue_nop_bus_read(inst.1, operand, bus);
+            }
+            OpCode::KIL => {
                 let _ = self.resolve_operand(inst.1, bus);
             }
             // Bitwise
             OpCode::ORA => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_dummy_read_on_page_cross(operand, bus);
                 self.ora(operand.addr, bus);
                 extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::AND => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_dummy_read_on_page_cross(operand, bus);
                 self.and(operand.addr, bus);
                 extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::BIT => {
                 let operand = self.require_operand(inst.1, bus);
-                self.bit(operand.addr, bus);
+                self.bit_timed(operand.addr, Self::read_cycle_offset(inst.1, operand), bus);
             }
             // Shift
             OpCode::EOR => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_dummy_read_on_page_cross(operand, bus);
                 self.eor(operand.addr, bus);
                 extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
@@ -613,6 +737,7 @@ impl CPU {
                     self.a = self.op_asl(self.a);
                 } else {
                     let operand = self.require_operand(inst.1, bus);
+                    self.issue_rmw_dummy_read(inst.1, operand, bus);
                     self.asl(operand.addr, bus);
                 }
             }
@@ -621,6 +746,7 @@ impl CPU {
                     self.a = self.op_rol(self.a);
                 } else {
                     let operand = self.require_operand(inst.1, bus);
+                    self.issue_rmw_dummy_read(inst.1, operand, bus);
                     self.rol(operand.addr, bus);
                 }
             }
@@ -629,6 +755,7 @@ impl CPU {
                     self.a = self.op_lsr(self.a);
                 } else {
                     let operand = self.require_operand(inst.1, bus);
+                    self.issue_rmw_dummy_read(inst.1, operand, bus);
                     self.lsr(operand.addr, bus);
                 }
             }
@@ -637,28 +764,33 @@ impl CPU {
                     self.a = self.op_ror(self.a);
                 } else {
                     let operand = self.require_operand(inst.1, bus);
+                    self.issue_rmw_dummy_read(inst.1, operand, bus);
                     self.ror(operand.addr, bus);
                 }
             }
             // Access
             OpCode::LDA => {
                 let operand = self.require_operand(inst.1, bus);
-                self.lda(operand.addr, bus);
+                self.issue_dummy_read_on_page_cross(operand, bus);
+                self.lda_timed(operand.addr, Self::read_cycle_offset(inst.1, operand), bus);
                 extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::LDX => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_dummy_read_on_page_cross(operand, bus);
                 self.ldx(operand.addr, bus);
                 extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::LDY => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_dummy_read_on_page_cross(operand, bus);
                 self.ldy(operand.addr, bus);
                 extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::STA => {
                 let operand = self.require_operand(inst.1, bus);
-                self.sta(operand.addr, bus);
+                self.issue_store_dummy_read(inst.1, operand, bus);
+                self.sta_timed(operand.addr, Self::store_cycle_offset(inst.1), bus);
             }
             OpCode::STX => {
                 let operand = self.require_operand(inst.1, bus);
@@ -703,6 +835,7 @@ impl CPU {
             // Compare
             OpCode::CMP => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_dummy_read_on_page_cross(operand, bus);
                 self.cmp(operand.addr, bus);
                 extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
@@ -754,26 +887,32 @@ impl CPU {
             OpCode::DEY => self.dey(),
             OpCode::INC => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_rmw_dummy_read(inst.1, operand, bus);
                 self.inc(operand.addr, bus);
             }
             OpCode::DEC => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_rmw_dummy_read(inst.1, operand, bus);
                 self.dec(operand.addr, bus);
             }
             OpCode::ADC => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_dummy_read_on_page_cross(operand, bus);
                 self.adc(operand.addr, bus);
                 extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::SBC => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_dummy_read_on_page_cross(operand, bus);
                 self.sbc(operand.addr, bus);
                 extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             // unofficial
             OpCode::LAX => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_dummy_read_on_page_cross(operand, bus);
                 self.lax(operand.addr, bus);
+                extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::AHX => {
                 let operand = self.require_operand(inst.1, bus);
@@ -797,30 +936,37 @@ impl CPU {
             }
             OpCode::DCP => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_rmw_dummy_read(inst.1, operand, bus);
                 self.dcp(operand.addr, bus);
             }
             OpCode::LAS => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_dummy_read_on_page_cross(operand, bus);
                 self.las(operand.addr, bus);
             }
             OpCode::ISC => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_rmw_dummy_read(inst.1, operand, bus);
                 self.isc(operand.addr, bus);
             }
             OpCode::RLA => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_rmw_dummy_read(inst.1, operand, bus);
                 self.rla(operand.addr, bus);
             }
             OpCode::RRA => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_rmw_dummy_read(inst.1, operand, bus);
                 self.rra(operand.addr, bus);
             }
             OpCode::SLO => {
                 let operand = self.require_operand(inst.1, bus);
-                self.slo(operand.addr, bus);
+                self.issue_rmw_dummy_read(inst.1, operand, bus);
+                self.slo_timed(operand.addr, inst.1, bus);
             }
             OpCode::SRE => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_rmw_dummy_read(inst.1, operand, bus);
                 self.sre(operand.addr, bus);
             }
             OpCode::TAS => {
@@ -847,7 +993,6 @@ impl CPU {
     }
 
     pub fn clock(&mut self, bus: &mut impl CPUBus) {
-        bus.cpu_read(0x4000); // 同步APU，暂时无用，后续可能要移动到BUS或NES
         self.clocks += 1;
 
         // Latch NMI edge every CPU clock.
@@ -905,6 +1050,44 @@ impl CPU {
         self.clocks
     }
 
+    pub fn pc(&self) -> u16 {
+        self.pc
+    }
+
+    #[cfg(test)]
+    pub(crate) fn init_nestest_state_for_test(&mut self) {
+        self.a = 0;
+        self.x = 0;
+        self.y = 0;
+        self.sp = 0xFD;
+        self.pc = 0xC000;
+        self.p = Flag::new();
+        self.p.i = true;
+        self.cycles = 0;
+        self.clocks = 7;
+        self.interrupt = 0;
+        self.interrupt_delay = false;
+        self.pre_interrupt_delay = false;
+        self.nmi = false;
+        self.nmi_prev = false;
+        self.nmi_next = false;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trace_state_for_test(&self) -> (u16, u8, u8, u8, u8, u8, u64) {
+        let p = self.status_byte_for_push(false) & !0x10;
+        (self.pc, self.a, self.x, self.y, p, self.sp, self.clocks)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn step_instruction_for_test(&mut self, bus: &mut impl CPUBus) {
+        let inst_byte = bus.cpu_read(self.pc);
+        self.pc = self.pc.wrapping_add(1);
+        self.exe_inst(inst_byte, bus);
+        self.clocks += self.cycles;
+        self.cycles = 0;
+    }
+
     pub fn set_irq(&mut self, irq: bool) {
         self.interrupt = u8::from(irq);
     }
@@ -929,6 +1112,16 @@ impl CPU {
         self.interrupt != 0
     }
 
+    #[cfg(test)]
+    fn trace_irq(args: std::fmt::Arguments<'_>) {
+        if std::env::var_os("NES_TRACE_IRQ").is_some() {
+            eprintln!("{args}");
+        }
+    }
+
+    #[cfg(not(test))]
+    fn trace_irq(_args: std::fmt::Arguments<'_>) {}
+
     fn nmi_interrupt(&mut self, bus: &mut impl CPUBus) {
         self.stack_push((self.pc >> 8) as u8, bus);
         self.stack_push(self.pc as u8, bus);
@@ -939,6 +1132,10 @@ impl CPU {
     }
 
     fn irq_interrupt(&mut self, bus: &mut impl CPUBus) {
+        Self::trace_irq(format_args!(
+            "irq pc={:04X} x={:02X} clocks={}",
+            self.pc, self.x, self.clocks
+        ));
         self.stack_push((self.pc >> 8) as u8, bus);
         self.stack_push(self.pc as u8, bus);
         let p = self.status_byte_for_push(true) & !0x10;
@@ -1012,22 +1209,39 @@ impl CPU {
 
     // === Instruction implementations ===
     fn ora(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        self.a |= bus.cpu_read(addr);
+        self.ora_value(bus.cpu_read(addr));
+    }
+
+    fn ora_value(&mut self, value: u8) {
+        self.a |= value;
         self.set_zn(self.a);
     }
 
     fn and(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        self.a &= bus.cpu_read(addr);
+        self.and_value(bus.cpu_read(addr));
+    }
+
+    fn and_value(&mut self, value: u8) {
+        self.a &= value;
         self.set_zn(self.a);
     }
 
     fn eor(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        self.a ^= bus.cpu_read(addr);
+        self.eor_value(bus.cpu_read(addr));
+    }
+
+    fn eor_value(&mut self, value: u8) {
+        self.a ^= value;
         self.set_zn(self.a);
     }
 
     fn lda(&mut self, addr: u16, bus: &mut impl CPUBus) {
         self.a = bus.cpu_read(addr);
+        self.set_zn(self.a);
+    }
+
+    fn lda_timed(&mut self, addr: u16, cycle_offset: u8, bus: &mut impl CPUBus) {
+        self.a = bus.cpu_read_timed(addr, cycle_offset);
         self.set_zn(self.a);
     }
 
@@ -1043,6 +1257,10 @@ impl CPU {
 
     fn sta(&mut self, addr: u16, bus: &mut impl CPUBus) {
         bus.cpu_write(addr, self.a);
+    }
+
+    fn sta_timed(&mut self, addr: u16, cycle_offset: u8, bus: &mut impl CPUBus) {
+        bus.cpu_write_timed(addr, self.a, cycle_offset);
     }
 
     fn stx(&mut self, addr: u16, bus: &mut impl CPUBus) {
@@ -1094,15 +1312,19 @@ impl CPU {
     }
 
     fn inc(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let val = bus.cpu_read(addr).wrapping_add(1);
-        bus.cpu_write(addr, val);
-        self.set_zn(val);
+        let _ = self.rmw_memory(addr, bus, |cpu, value| {
+            let result = value.wrapping_add(1);
+            cpu.set_zn(result);
+            result
+        });
     }
 
     fn dec(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let val = bus.cpu_read(addr).wrapping_sub(1);
-        bus.cpu_write(addr, val);
-        self.set_zn(val);
+        let _ = self.rmw_memory(addr, bus, |cpu, value| {
+            let result = value.wrapping_sub(1);
+            cpu.set_zn(result);
+            result
+        });
     }
 
     // 直接跳到目标地址
@@ -1112,9 +1334,11 @@ impl CPU {
 
     // 跳到目标地址，但要先将当前地址压入栈，栈方向是向下的，所以要先减一
     fn jsr(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        self.pc = self.pc.wrapping_sub(1);
-        self.stack_push((self.pc >> 8 & 0xFF) as u8, bus);
-        self.stack_push((self.pc & 0xFF) as u8, bus);
+        let return_addr = self.pc.wrapping_sub(1);
+        let _ = bus.cpu_read(0x0100 | self.sp as u16);
+        self.stack_push((return_addr >> 8) as u8, bus);
+        self.stack_push(return_addr as u8, bus);
+        let _ = bus.cpu_read(self.pc.wrapping_sub(1));
         self.pc = addr;
     }
 
@@ -1211,18 +1435,19 @@ impl CPU {
     }
 
     fn cmp(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let data = bus.cpu_read(addr);
-        self.cmp_core(self.a, data);
+        self.cmp_value(self.a, bus.cpu_read(addr));
     }
 
     fn cpx(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let data = bus.cpu_read(addr);
-        self.cmp_core(self.x, data);
+        self.cmp_value(self.x, bus.cpu_read(addr));
     }
 
     fn cpy(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let data = bus.cpu_read(addr);
-        self.cmp_core(self.y, data);
+        self.cmp_value(self.y, bus.cpu_read(addr));
+    }
+
+    fn cmp_value(&mut self, reg: u8, value: u8) {
+        self.cmp_core(reg, value);
     }
 
     fn op_branch(&mut self, addr: u16, flag: bool) -> u64 {
@@ -1267,7 +1492,10 @@ impl CPU {
     }
 
     fn adc(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let val = bus.cpu_read(addr);
+        self.adc_value(bus.cpu_read(addr));
+    }
+
+    fn adc_value(&mut self, val: u8) {
         let carry_in = u8::from(self.p.c);
 
         let sum = self.a as u16 + val as u16 + carry_in as u16;
@@ -1283,7 +1511,11 @@ impl CPU {
     }
 
     fn sbc(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let val = bus.cpu_read(addr) ^ 0xFF;
+        self.sbc_value(bus.cpu_read(addr));
+    }
+
+    fn sbc_value(&mut self, val: u8) {
+        let val = val ^ 0xFF;
         let carry_in = u8::from(self.p.c);
         let sum = self.a as u16 + val as u16 + carry_in as u16;
         let result = sum as u8;
@@ -1327,31 +1559,30 @@ impl CPU {
     }
 
     fn asl(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let val = bus.cpu_read(addr);
-        let result = self.op_asl(val);
-        bus.cpu_write(addr, result);
+        let _ = self.rmw_memory(addr, bus, |cpu, value| cpu.op_asl(value));
     }
 
     fn lsr(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let val = bus.cpu_read(addr);
-        let result = self.op_lsr(val);
-        bus.cpu_write(addr, result);
+        let _ = self.rmw_memory(addr, bus, |cpu, value| cpu.op_lsr(value));
     }
 
     fn rol(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let val = bus.cpu_read(addr);
-        let result = self.op_rol(val);
-        bus.cpu_write(addr, result);
+        let _ = self.rmw_memory(addr, bus, |cpu, value| cpu.op_rol(value));
     }
 
     fn ror(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let val = bus.cpu_read(addr);
-        let result = self.op_ror(val);
-        bus.cpu_write(addr, result);
+        let _ = self.rmw_memory(addr, bus, |cpu, value| cpu.op_ror(value));
     }
 
     fn bit(&mut self, addr: u16, bus: &mut impl CPUBus) {
         let val = bus.cpu_read(addr);
+        self.p.z = self.a & val == 0;
+        self.p.n = val & 0x80 != 0;
+        self.p.v = val & 0x40 != 0;
+    }
+
+    fn bit_timed(&mut self, addr: u16, cycle_offset: u8, bus: &mut impl CPUBus) {
+        let val = bus.cpu_read_timed(addr, cycle_offset);
         self.p.z = self.a & val == 0;
         self.p.n = val & 0x80 != 0;
         self.p.v = val & 0x40 != 0;
@@ -1388,8 +1619,12 @@ impl CPU {
     }
 
     fn dcp(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        self.dec(addr, bus);
-        self.cmp(addr, bus);
+        let result = self.rmw_memory(addr, bus, |cpu, value| {
+            let result = value.wrapping_sub(1);
+            cpu.set_zn(result);
+            result
+        });
+        self.cmp_value(self.a, result);
     }
 
     fn arr(&mut self, addr: u16, bus: &mut impl CPUBus) {
@@ -1409,18 +1644,22 @@ impl CPU {
     }
 
     fn isc(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        self.inc(addr, bus);
-        self.sbc(addr, bus);
+        let result = self.rmw_memory(addr, bus, |cpu, value| {
+            let result = value.wrapping_add(1);
+            cpu.set_zn(result);
+            result
+        });
+        self.sbc_value(result);
     }
 
     fn rla(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        self.rol(addr, bus);
-        self.and(addr, bus);
+        let result = self.rmw_memory(addr, bus, |cpu, value| cpu.op_rol(value));
+        self.and_value(result);
     }
 
     fn rra(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        self.ror(addr, bus);
-        self.adc(addr, bus);
+        let result = self.rmw_memory(addr, bus, |cpu, value| cpu.op_ror(value));
+        self.adc_value(result);
     }
 
     fn lax(&mut self, addr: u16, bus: &mut impl CPUBus) {
@@ -1436,13 +1675,27 @@ impl CPU {
     }
 
     fn slo(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        self.asl(addr, bus);
-        self.ora(addr, bus);
+        let result = self.rmw_memory(addr, bus, |cpu, value| cpu.op_asl(value));
+        self.ora_value(result);
+    }
+
+    fn slo_timed(&mut self, addr: u16, mode: AddrMode, bus: &mut impl CPUBus) {
+        let (read_cycle_offset, write_old_cycle_offset, write_new_cycle_offset) =
+            Self::rmw_cycle_offsets(mode);
+        let result = self.rmw_memory_timed(
+            addr,
+            bus,
+            read_cycle_offset,
+            write_old_cycle_offset,
+            write_new_cycle_offset,
+            |cpu, value| cpu.op_asl(value),
+        );
+        self.ora_value(result);
     }
 
     fn sre(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        self.lsr(addr, bus);
-        self.eor(addr, bus);
+        let result = self.rmw_memory(addr, bus, |cpu, value| cpu.op_lsr(value));
+        self.eor_value(result);
     }
 
     fn tas(&mut self, addr: u16, bus: &mut impl CPUBus) {

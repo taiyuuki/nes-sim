@@ -51,7 +51,6 @@ impl Error for CartridgeError {}
 
 pub struct Cartridge {
     mapper: Box<dyn Mapper>,
-    mirroring: Mirroring,
     has_sram: bool,
     has_trainer: bool,
     tv_system: TVSystem,
@@ -110,11 +109,10 @@ impl Cartridge {
         }
         let prg_rom = rom[data_start..data_start + prg_len].to_vec();
         let chr_rom = rom[data_start + prg_len..data_end].to_vec();
-        let mapper = from_mapper_id(mapper_id, prg_rom, chr_rom)?;
+        let mapper = from_mapper_id(mapper_id, mirroring, prg_rom, chr_rom)?;
 
         Ok(Self {
             mapper,
-            mirroring,
             submapper,
             has_sram,
             has_trainer,
@@ -124,7 +122,7 @@ impl Cartridge {
     }
 
     pub fn mirroring(&self) -> Mirroring {
-        self.mirroring
+        self.mapper.mirroring()
     }
 
     pub fn tv_system(&self) -> TVSystem {

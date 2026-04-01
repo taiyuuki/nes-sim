@@ -1,10 +1,17 @@
+mod apu;
 mod bus;
 pub mod cartridge;
 mod cpu;
 mod dma;
+mod input;
 mod ppu;
 
 pub use cartridge::{Cartridge, CartridgeError, Mirroring};
+pub use input::{ControllerButton, ControllerState};
+pub use ppu::{FRAME_HEIGHT, FRAME_WIDTH};
+use std::fs;
+use std::io;
+use std::path::Path;
 
 pub struct NES {
     pub cpu: cpu::CPU,
@@ -43,6 +50,10 @@ impl NES {
         Ok(())
     }
 
+    pub fn set_controller_state(&mut self, port: usize, state: ControllerState) {
+        self.bus.set_controller_state(port, state);
+    }
+
     pub fn clock(&mut self) {
         self.master_clock += 1;
         self.bus.tick_ppu();
@@ -53,8 +64,11 @@ impl NES {
         if self.cpu_ppu_counter >= cpu_schedule[self.cpu_schedule_index] {
             self.cpu_ppu_counter = 0;
             self.cpu_schedule_index = (self.cpu_schedule_index + 1) % cpu_schedule.len();
+            self.bus.tick_apu_cpu_cycle();
             self.cpu.clock(&mut self.bus);
+            self.cpu.irq_set_level(0x01, self.bus.apu_irq_line());
             self.cpu.set_nmi(self.bus.ppu_nmi_line());
+            self.bus.advance_dma_cpu_phase();
         }
     }
 
@@ -67,6 +81,26 @@ impl NES {
 
     pub fn master_clock(&self) -> u64 {
         self.master_clock
+    }
+
+    pub fn frame_pixels(&self) -> &[u8] {
+        self.bus.ppu().frame_pixels()
+    }
+
+    pub fn frame_rgb(&self) -> Vec<u8> {
+        self.bus.ppu().frame_rgb()
+    }
+
+    pub fn frame_ppm(&self) -> Vec<u8> {
+        let rgb = self.frame_rgb();
+        let mut ppm = Vec::with_capacity(16 + rgb.len());
+        ppm.extend_from_slice(format!("P6\n{} {}\n255\n", FRAME_WIDTH, FRAME_HEIGHT).as_bytes());
+        ppm.extend_from_slice(&rgb);
+        ppm
+    }
+
+    pub fn write_frame_ppm<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        fs::write(path, self.frame_ppm())
     }
 
     fn reset_cpu_schedule(&mut self) {
@@ -82,52 +116,4 @@ impl Default for NES {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::NES;
-
-    fn make_ines_with_tv(flags9: u8) -> Vec<u8> {
-        let mut rom = vec![0; 16];
-        rom[0..4].copy_from_slice(b"NES\x1A");
-        rom[4] = 1;
-        rom[5] = 1;
-        rom[9] = flags9;
-        rom.extend(std::iter::repeat_n(0, 0x4000));
-        rom.extend(std::iter::repeat_n(0, 0x2000));
-        rom
-    }
-
-    #[test]
-    fn run_frame_advances_exactly_one_ppu_frame() {
-        let mut nes = NES::new();
-        let start_clock = nes.master_clock();
-        let start_frame = nes.bus.ppu().frame();
-
-        nes.run_frame();
-
-        assert_eq!(nes.bus.ppu().frame(), start_frame + 1);
-        assert!(nes.master_clock() > start_clock);
-    }
-
-    #[test]
-    fn pal_cpu_schedule_uses_33334_pattern() {
-        let mut nes = NES::new();
-        let rom = make_ines_with_tv(0x01);
-
-        nes.load_cartridge_ines(&rom)
-            .expect("PAL cartridge should load");
-
-        for step in 1..=16 {
-            nes.clock();
-            let expected = match step {
-                1..=2 => 0,
-                3..=5 => 1,
-                6..=8 => 2,
-                9..=11 => 3,
-                12..=15 => 4,
-                16 => 5,
-                _ => unreachable!(),
-            };
-            assert_eq!(nes.cpu.clocks(), expected, "master clock step {}", step);
-        }
-    }
-}
+mod tests;

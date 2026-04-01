@@ -1,5 +1,9 @@
 use crate::cartridge::TVSystem;
 
+pub const FRAME_WIDTH: usize = 256;
+pub const FRAME_HEIGHT: usize = 240;
+const VISIBLE_FRAME_PIXELS: usize = FRAME_WIDTH * FRAME_HEIGHT;
+
 const STATUS_SPRITE_OVERFLOW: u8 = 0x20;
 const STATUS_SPRITE_ZERO_HIT: u8 = 0x40;
 const STATUS_VBLANK: u8 = 0x80;
@@ -22,6 +26,73 @@ const DENDY_CPU_SCHEDULE: [u8; 1] = [3];
 const PAL: [u8; 32] = [
     0x0F, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, 0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C,
     0x0F, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14, 0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08,
+];
+
+const NES_RGB_PALETTE: [[u8; 3]; 64] = [
+    [84, 84, 84],
+    [0, 30, 116],
+    [8, 16, 144],
+    [48, 0, 136],
+    [68, 0, 100],
+    [92, 0, 48],
+    [84, 4, 0],
+    [60, 24, 0],
+    [32, 42, 0],
+    [8, 58, 0],
+    [0, 64, 0],
+    [0, 60, 0],
+    [0, 50, 60],
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+    [152, 150, 152],
+    [8, 76, 196],
+    [48, 50, 236],
+    [92, 30, 228],
+    [136, 20, 176],
+    [160, 20, 100],
+    [152, 34, 32],
+    [120, 60, 0],
+    [84, 90, 0],
+    [40, 114, 0],
+    [8, 124, 0],
+    [0, 118, 40],
+    [0, 102, 120],
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+    [236, 238, 236],
+    [76, 154, 236],
+    [120, 124, 236],
+    [176, 98, 236],
+    [228, 84, 236],
+    [236, 88, 180],
+    [236, 106, 100],
+    [212, 136, 32],
+    [160, 170, 0],
+    [116, 196, 0],
+    [76, 208, 32],
+    [56, 204, 108],
+    [56, 180, 204],
+    [60, 60, 60],
+    [0, 0, 0],
+    [0, 0, 0],
+    [236, 238, 236],
+    [168, 204, 236],
+    [188, 188, 236],
+    [212, 178, 236],
+    [236, 174, 236],
+    [236, 174, 212],
+    [236, 180, 176],
+    [228, 196, 144],
+    [204, 210, 120],
+    [180, 222, 120],
+    [168, 226, 144],
+    [152, 226, 180],
+    [160, 214, 228],
+    [160, 162, 160],
+    [0, 0, 0],
+    [0, 0, 0],
 ];
 
 pub trait PPUBus {
@@ -299,6 +370,18 @@ impl PPU {
 
     pub fn frame(&self) -> u64 {
         self.frame
+    }
+
+    pub fn frame_pixels(&self) -> &[u8] {
+        &self.bit_map[..VISIBLE_FRAME_PIXELS]
+    }
+
+    pub fn frame_rgb(&self) -> Vec<u8> {
+        let mut rgb = Vec::with_capacity(VISIBLE_FRAME_PIXELS * 3);
+        for &pixel in self.frame_pixels() {
+            rgb.extend_from_slice(&palette_index_to_rgb(pixel));
+        }
+        rgb
     }
 
     pub fn cpu_schedule(&self) -> &'static [u8] {
@@ -885,6 +968,10 @@ impl PPU {
         self.loopy_v = (self.loopy_v & !0x7BE0) | (self.loopy_t & 0x7BE0);
         self.vram_addr = self.loopy_v;
     }
+}
+
+fn palette_index_to_rgb(index: u8) -> [u8; 3] {
+    NES_RGB_PALETTE[(index & 0x3F) as usize]
 }
 
 impl Default for PPU {
