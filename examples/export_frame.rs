@@ -1,4 +1,5 @@
 use nes_core::NES;
+use nes_core::headless::write_frame_ppm;
 use std::env;
 use std::path::Path;
 use std::process::ExitCode;
@@ -59,14 +60,14 @@ fn main() -> ExitCode {
         }
     }
 
-    if let Err(error) = nes.write_frame_ppm(&output_path) {
+    if let Err(error) = write_frame_ppm(&output_path, nes.video_frame()) {
         eprintln!("failed to write PPM {output_path:?}: {error}");
         return ExitCode::from(1);
     }
 
     println!(
         "wrote frame {} from {} to {}",
-        nes.bus.ppu().frame(),
+        nes.frame_number(),
         rom_path,
         output_path
     );

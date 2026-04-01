@@ -3,6 +3,7 @@ use crate::cartridge::{Cartridge, CartridgeError, Mirroring};
 use crate::dma::DmaController;
 use crate::input::{ControllerState, Joypad};
 use crate::ppu::{PPU, PPUBus};
+use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 pub trait CPUBus {
     fn cpu_read(&mut self, addr: u16) -> u8;
@@ -98,6 +99,34 @@ impl PPUMemory {
         self.cartridge
             .as_mut()
             .is_some_and(|cartridge| cartridge.cpu_write(addr, data))
+    }
+
+    fn save_state(&self, writer: &mut StateWriter) -> Result<(), SaveStateError> {
+        writer.write_bytes(&self.chr_ram);
+        writer.write_bytes(&self.vram);
+        writer.write_bytes(&self.palette);
+        match &self.cartridge {
+            Some(cartridge) => {
+                writer.write_bool(true);
+                cartridge.save_state(writer);
+                Ok(())
+            }
+            None => Err(SaveStateError::NoCartridge),
+        }
+    }
+
+    fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
+        reader.read_bytes_into(&mut self.chr_ram)?;
+        reader.read_bytes_into(&mut self.vram)?;
+        reader.read_bytes_into(&mut self.palette)?;
+        let has_cartridge = reader.read_bool()?;
+        match (&mut self.cartridge, has_cartridge) {
+            (Some(cartridge), true) => cartridge.load_state(reader),
+            (None, _) => Err(SaveStateError::NoCartridge),
+            _ => Err(SaveStateError::InvalidData(
+                "save state expected a loaded cartridge",
+            )),
+        }
     }
 }
 
@@ -233,6 +262,35 @@ impl NESBus {
         self.dma.advance_cpu_phase();
     }
 
+    pub(crate) fn save_state(&self, writer: &mut StateWriter) -> Result<(), SaveStateError> {
+        writer.write_bytes(&self.ram);
+        self.ppu.save_state(writer);
+        self.ppu_memory.save_state(writer)?;
+        self.apu.save_state(writer);
+        self.dma.save_state(writer);
+        for controller in &self.controllers {
+            controller.save_state(writer);
+        }
+        writer.write_u8(self.cpu_open_bus);
+        Ok(())
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<(), SaveStateError> {
+        reader.read_bytes_into(&mut self.ram)?;
+        self.ppu.load_state(reader)?;
+        self.ppu_memory.load_state(reader)?;
+        self.apu.load_state(reader)?;
+        self.dma.load_state(reader)?;
+        for controller in &mut self.controllers {
+            controller.load_state(reader)?;
+        }
+        self.cpu_open_bus = reader.read_u8()?;
+        Ok(())
+    }
+
     pub(crate) fn dma_read(&mut self, addr: u16) -> u8 {
         self.cpu_read_internal(addr, 0)
     }
@@ -265,7 +323,10 @@ impl NESBus {
                 self.latched_cpu_read(data)
             }
             0x4020..=0xFFFF => {
-                let data = self.ppu_memory.cartridge_cpu_read(addr).unwrap_or(self.cpu_open_bus);
+                let data = self
+                    .ppu_memory
+                    .cartridge_cpu_read(addr)
+                    .unwrap_or(self.cpu_open_bus);
                 self.latched_cpu_read(data)
             }
             // Handle other address ranges (APU, cartridge, etc.)

@@ -1,19 +1,23 @@
-mod nrom;
 mod mmc1;
+mod nrom;
 mod uxrom;
 
 use self::mmc1::Mmc1;
 use self::nrom::Nrom;
 use self::uxrom::Uxrom;
 use super::{CartridgeError, Mirroring};
+use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 pub(super) trait Mapper {
+    fn mapper_id(&self) -> u16;
     fn cpu_read(&mut self, addr: u16) -> Option<u8>;
     fn cpu_write(&mut self, addr: u16, data: u8) -> bool;
     fn ppu_read(&mut self, addr: u16) -> Option<u8>;
     fn ppu_write(&mut self, addr: u16, data: u8) -> bool;
     fn mirroring(&self) -> Mirroring;
     fn check_a12(&mut self, _addr: u16) {}
+    fn save_state(&self, writer: &mut StateWriter);
+    fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError>;
 }
 
 pub(super) fn from_mapper_id(

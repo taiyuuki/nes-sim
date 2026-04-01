@@ -1,4 +1,6 @@
+use crate::api::CpuDebugSnapshot;
 use crate::bus::CPUBus;
+use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 #[derive(Clone, Copy)]
 pub enum AddrMode {
@@ -435,6 +437,7 @@ pub struct CPU {
     // Timing
     cycles: u64,
     clocks: u64,
+    instruction_counter: u64,
 
     // interrupt
     interrupt: u8,
@@ -456,6 +459,7 @@ impl CPU {
             p: Flag::new(),
             cycles: 0,
             clocks: 0,
+            instruction_counter: 0,
             interrupt: 0,
             interrupt_delay: false,
             pre_interrupt_delay: false,
@@ -471,6 +475,7 @@ impl CPU {
         self.p.i = true;
         self.interrupt_delay = false;
         self.pre_interrupt_delay = false;
+        self.instruction_counter = 0;
         self.nmi_next = false;
         self.nmi_prev = self.nmi;
     }
@@ -570,11 +575,7 @@ impl CPU {
             .expect("Instruction requires an operand address")
     }
 
-    fn issue_dummy_read_on_page_cross(
-        &mut self,
-        operand: ResolvedOperand,
-        bus: &mut impl CPUBus,
-    ) {
+    fn issue_dummy_read_on_page_cross(&mut self, operand: ResolvedOperand, bus: &mut impl CPUBus) {
         if operand.page_crossed {
             let _ = bus.cpu_read(operand.dummy_addr);
         }
@@ -602,7 +603,12 @@ impl CPU {
         }
     }
 
-    fn issue_nop_bus_read(&mut self, mode: AddrMode, operand: Option<ResolvedOperand>, bus: &mut impl CPUBus) {
+    fn issue_nop_bus_read(
+        &mut self,
+        mode: AddrMode,
+        operand: Option<ResolvedOperand>,
+        bus: &mut impl CPUBus,
+    ) {
         match mode {
             AddrMode::IMP => {
                 let _ = bus.cpu_read(self.pc);
@@ -1014,6 +1020,7 @@ impl CPU {
         }
 
         if self.nmi_next {
+            self.instruction_counter = self.instruction_counter.wrapping_add(1);
             self.nmi_interrupt(bus);
             self.nmi_next = false;
             self.cycles += 7;
@@ -1024,11 +1031,13 @@ impl CPU {
             if self.interrupt_delay {
                 self.interrupt_delay = false;
                 if !self.pre_interrupt_delay {
+                    self.instruction_counter = self.instruction_counter.wrapping_add(1);
                     self.irq_interrupt(bus);
                     self.cycles += 7;
                     return;
                 }
             } else if !self.p.i {
+                self.instruction_counter = self.instruction_counter.wrapping_add(1);
                 self.irq_interrupt(bus);
                 self.cycles += 7;
                 return;
@@ -1037,6 +1046,7 @@ impl CPU {
             self.interrupt_delay = false;
         }
 
+        self.instruction_counter = self.instruction_counter.wrapping_add(1);
         let inst_byte = bus.cpu_read(self.pc);
         self.pc = self.pc.wrapping_add(1);
         self.exe_inst(inst_byte, bus);
@@ -1050,8 +1060,72 @@ impl CPU {
         self.clocks
     }
 
+    pub fn cycles_remaining(&self) -> u64 {
+        self.cycles
+    }
+
+    pub fn instruction_counter(&self) -> u64 {
+        self.instruction_counter
+    }
+
     pub fn pc(&self) -> u16 {
         self.pc
+    }
+
+    pub fn debug_snapshot(&self) -> CpuDebugSnapshot {
+        CpuDebugSnapshot {
+            a: self.a,
+            x: self.x,
+            y: self.y,
+            sp: self.sp,
+            pc: self.pc,
+            status: self.status_byte_for_push(false) & !0x10,
+            clocks: self.clocks,
+            cycles_remaining: self.cycles,
+            instruction_counter: self.instruction_counter,
+            irq_pending: self.interrupt != 0,
+            nmi_line: self.nmi,
+        }
+    }
+
+    pub(crate) fn save_state(&self, writer: &mut StateWriter) {
+        writer.write_u8(self.a);
+        writer.write_u8(self.x);
+        writer.write_u8(self.y);
+        writer.write_u8(self.sp);
+        writer.write_u16(self.pc);
+        writer.write_u8(self.status_byte_for_push(false) & !0x10);
+        writer.write_u64(self.cycles);
+        writer.write_u64(self.clocks);
+        writer.write_u64(self.instruction_counter);
+        writer.write_u8(self.interrupt);
+        writer.write_bool(self.interrupt_delay);
+        writer.write_bool(self.pre_interrupt_delay);
+        writer.write_bool(self.nmi);
+        writer.write_bool(self.nmi_prev);
+        writer.write_bool(self.nmi_next);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<(), SaveStateError> {
+        self.a = reader.read_u8()?;
+        self.x = reader.read_u8()?;
+        self.y = reader.read_u8()?;
+        self.sp = reader.read_u8()?;
+        self.pc = reader.read_u16()?;
+        self.set_byte_to_p(reader.read_u8()?);
+        self.cycles = reader.read_u64()?;
+        self.clocks = reader.read_u64()?;
+        self.instruction_counter = reader.read_u64()?;
+        self.interrupt = reader.read_u8()?;
+        self.interrupt_delay = reader.read_bool()?;
+        self.pre_interrupt_delay = reader.read_bool()?;
+        self.nmi = reader.read_bool()?;
+        self.nmi_prev = reader.read_bool()?;
+        self.nmi_next = reader.read_bool()?;
+        Ok(())
     }
 
     #[cfg(test)]
@@ -1065,6 +1139,7 @@ impl CPU {
         self.p.i = true;
         self.cycles = 0;
         self.clocks = 7;
+        self.instruction_counter = 0;
         self.interrupt = 0;
         self.interrupt_delay = false;
         self.pre_interrupt_delay = false;
@@ -1081,6 +1156,7 @@ impl CPU {
 
     #[cfg(test)]
     pub(crate) fn step_instruction_for_test(&mut self, bus: &mut impl CPUBus) {
+        self.instruction_counter = self.instruction_counter.wrapping_add(1);
         let inst_byte = bus.cpu_read(self.pc);
         self.pc = self.pc.wrapping_add(1);
         self.exe_inst(inst_byte, bus);

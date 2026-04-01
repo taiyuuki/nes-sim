@@ -1,21 +1,32 @@
+pub mod api;
 mod apu;
 mod bus;
 pub mod cartridge;
 mod cpu;
 mod dma;
+pub mod headless;
 mod input;
 mod ppu;
+pub mod runtime;
+pub mod savestate;
+pub mod video;
 
+pub use api::{
+    AudioBatch, CoreCommand, CoreEvent, CoreResponse, CpuDebugSnapshot, DebugSnapshot, PixelFormat,
+    PpuDebugSnapshot, VIDEO_FRAME_PITCH, VideoFrame,
+};
 pub use cartridge::{Cartridge, CartridgeError, Mirroring};
 pub use input::{ControllerButton, ControllerState};
 pub use ppu::{FRAME_HEIGHT, FRAME_WIDTH};
-use std::fs;
-use std::io;
-use std::path::Path;
+pub use runtime::{
+    ExecutionTarget, FrontendInput, FrontendRuntime, RunMode, RuntimeSnapshot, RuntimeStatus,
+};
+pub use savestate::SaveStateError;
+use savestate::{StateReader, StateWriter};
 
 pub struct NES {
-    pub cpu: cpu::CPU,
-    pub bus: bus::NESBus,
+    cpu: cpu::CPU,
+    bus: bus::NESBus,
     master_clock: u64,
     cpu_ppu_counter: u8,
     cpu_schedule_index: usize,
@@ -73,9 +84,46 @@ impl NES {
     }
 
     pub fn run_frame(&mut self) {
-        let start_frame = self.bus.ppu_frame();
-        while self.bus.ppu_frame() == start_frame {
+        let start_frame = self.frame_number();
+        while self.frame_number() == start_frame {
             self.clock();
+        }
+    }
+
+    pub fn step_cpu_instruction(&mut self) {
+        let start_instruction = self.cpu.instruction_counter();
+        while self.cpu.instruction_counter() == start_instruction {
+            self.clock();
+        }
+    }
+
+    pub fn execute(&mut self, command: CoreCommand) -> CoreResponse {
+        let event = match command {
+            CoreCommand::Reset => {
+                self.reset();
+                CoreEvent::ResetComplete
+            }
+            CoreCommand::SetControllerState { port, state } => {
+                self.set_controller_state(port, state);
+                CoreEvent::ControllerStateUpdated { port }
+            }
+            CoreCommand::RunFrame => {
+                self.run_frame();
+                CoreEvent::FrameReady {
+                    frame_number: self.frame_number(),
+                }
+            }
+            CoreCommand::StepCpuInstruction => {
+                self.step_cpu_instruction();
+                CoreEvent::CpuInstructionComplete {
+                    instruction_counter: self.cpu.instruction_counter(),
+                }
+            }
+        };
+
+        CoreResponse {
+            event,
+            master_clock: self.master_clock,
         }
     }
 
@@ -83,24 +131,63 @@ impl NES {
         self.master_clock
     }
 
+    pub fn frame_number(&self) -> u64 {
+        self.bus.ppu_frame()
+    }
+
     pub fn frame_pixels(&self) -> &[u8] {
         self.bus.ppu().frame_pixels()
     }
 
-    pub fn frame_rgb(&self) -> Vec<u8> {
-        self.bus.ppu().frame_rgb()
+    pub fn video_frame(&self) -> VideoFrame<'_> {
+        VideoFrame {
+            width: FRAME_WIDTH,
+            height: FRAME_HEIGHT,
+            pitch: VIDEO_FRAME_PITCH,
+            format: PixelFormat::Indexed8,
+            frame_number: self.frame_number(),
+            pixels: self.frame_pixels(),
+        }
     }
 
-    pub fn frame_ppm(&self) -> Vec<u8> {
-        let rgb = self.frame_rgb();
-        let mut ppm = Vec::with_capacity(16 + rgb.len());
-        ppm.extend_from_slice(format!("P6\n{} {}\n255\n", FRAME_WIDTH, FRAME_HEIGHT).as_bytes());
-        ppm.extend_from_slice(&rgb);
-        ppm
+    pub fn audio_batch(&self) -> AudioBatch<'static> {
+        AudioBatch::default()
     }
 
-    pub fn write_frame_ppm<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
-        fs::write(path, self.frame_ppm())
+    pub fn debug_snapshot(&self) -> DebugSnapshot {
+        let ppu = self.bus.ppu();
+        DebugSnapshot {
+            master_clock: self.master_clock,
+            cpu: self.cpu.debug_snapshot(),
+            ppu: PpuDebugSnapshot {
+                frame: ppu.frame(),
+                scanline: ppu.scanline(),
+                in_vblank: ppu.in_vblank(),
+                nmi_line: ppu.nmi_line(),
+                oam_addr: ppu.oam_addr(),
+            },
+        }
+    }
+
+    pub fn save_state(&self) -> Result<Vec<u8>, SaveStateError> {
+        let mut writer = StateWriter::new();
+        writer.write_u64(self.master_clock);
+        writer.write_u8(self.cpu_ppu_counter);
+        writer.write_u64(self.cpu_schedule_index as u64);
+        self.cpu.save_state(&mut writer);
+        self.bus.save_state(&mut writer)?;
+        Ok(writer.finish())
+    }
+
+    pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), SaveStateError> {
+        let mut reader = StateReader::new(bytes)?;
+        self.master_clock = reader.read_u64()?;
+        self.cpu_ppu_counter = reader.read_u8()?;
+        self.cpu_schedule_index = reader.read_u64()? as usize;
+        self.cpu.load_state(&mut reader)?;
+        self.bus.load_state(&mut reader)?;
+        self.cpu.set_nmi(self.bus.ppu_nmi_line());
+        reader.finish()
     }
 
     fn reset_cpu_schedule(&mut self) {

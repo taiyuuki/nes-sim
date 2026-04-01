@@ -1,4 +1,5 @@
 use nes_core::NES;
+use nes_core::headless::{frame_to_ppm, stable_byte_hash};
 use std::env;
 use std::path::Path;
 use std::process::ExitCode;
@@ -6,15 +7,6 @@ use std::process::ExitCode;
 fn usage(program: &str) {
     eprintln!("Usage: {program} <rom-path> [frames] [output-ppm]");
     eprintln!(r#"Example: {program} "roms/mmc1/Rockman2(J).nes" 180 "out/rockman2-current.ppm""#);
-}
-
-fn stable_byte_hash(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
 }
 
 fn main() -> ExitCode {
@@ -56,12 +48,12 @@ fn main() -> ExitCode {
         nes.run_frame();
     }
 
-    let ppm = nes.frame_ppm();
+    let ppm = frame_to_ppm(nes.video_frame());
     let hash = stable_byte_hash(&ppm);
     println!(
         "{} frame={} hash=0x{:016X}",
         rom_path,
-        nes.bus.ppu().frame(),
+        nes.frame_number(),
         hash
     );
 

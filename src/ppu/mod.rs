@@ -1,4 +1,5 @@
 use crate::cartridge::TVSystem;
+use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 pub const FRAME_WIDTH: usize = 256;
 pub const FRAME_HEIGHT: usize = 240;
@@ -402,6 +403,115 @@ impl PPU {
 
     pub fn oam_addr(&self) -> u8 {
         self.oam_addr
+    }
+
+    pub(crate) fn save_state(&self, writer: &mut StateWriter) {
+        writer.write_i16(self.scanline);
+        writer.write_u16(self.cycles);
+        writer.write_u64(self.frame);
+        writer.write_bytes(&self.oam);
+        writer.write_u8(self.oam_addr);
+        writer.write_u8(self.ctrl);
+        writer.write_u8(self.mask);
+        writer.write_u8(self.status);
+        writer.write_u8(self.open_bus);
+        writer.write_u16(self.vram_addr);
+        writer.write_u16(self.temp_vram_addr);
+        writer.write_u8(self.fine_x);
+        writer.write_bool(self.write_latch);
+        writer.write_u8(self.read_buffer);
+        writer.write_bool(self.odd_frame);
+        writer.write_u8(self.next_tile_id);
+        writer.write_u8(self.next_tile_attr);
+        writer.write_u8(self.next_tile_lsb);
+        writer.write_u8(self.next_tile_msb);
+        writer.write_u16(self.bg_pattern_shift_lo);
+        writer.write_u16(self.bg_pattern_shift_hi);
+        writer.write_u16(self.bg_attr_shift_lo);
+        writer.write_u16(self.bg_attr_shift_hi);
+        writer.write_u8(match self.tv_system {
+            TVSystem::NTSC => 0,
+            TVSystem::PAL => 1,
+            TVSystem::DENDY => 2,
+        });
+        writer.write_i16(self.num_scanlines);
+        writer.write_i16(self.vblank_lines);
+        writer.write_u16(self.loopy_v);
+        writer.write_u16(self.loopy_t);
+        writer.write_bytes(&self.bit_map);
+        writer.write_bytes(&self.bg_colors);
+        writer.write_bytes(&self.bg_pixels);
+        for sprite in &self.scanline_sprites {
+            writer.write_u8(sprite.tile_id);
+            writer.write_u8(sprite.row);
+            writer.write_u8(sprite.x);
+            writer.write_u8(sprite.attributes);
+            writer.write_u8(sprite.pattern_lo);
+            writer.write_u8(sprite.pattern_hi);
+            writer.write_bool(sprite.sprite_zero);
+        }
+        writer.write_u8(self.scanline_sprite_count);
+        writer.write_bool(self.suppress_vblank);
+        writer.write_bool(self.even);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<(), SaveStateError> {
+        self.scanline = reader.read_i16()?;
+        self.cycles = reader.read_u16()?;
+        self.frame = reader.read_u64()?;
+        reader.read_bytes_into(&mut self.oam)?;
+        self.oam_addr = reader.read_u8()?;
+        self.ctrl = reader.read_u8()?;
+        self.mask = reader.read_u8()?;
+        self.status = reader.read_u8()?;
+        self.open_bus = reader.read_u8()?;
+        self.vram_addr = reader.read_u16()?;
+        self.temp_vram_addr = reader.read_u16()?;
+        self.fine_x = reader.read_u8()?;
+        self.write_latch = reader.read_bool()?;
+        self.read_buffer = reader.read_u8()?;
+        self.odd_frame = reader.read_bool()?;
+        self.next_tile_id = reader.read_u8()?;
+        self.next_tile_attr = reader.read_u8()?;
+        self.next_tile_lsb = reader.read_u8()?;
+        self.next_tile_msb = reader.read_u8()?;
+        self.bg_pattern_shift_lo = reader.read_u16()?;
+        self.bg_pattern_shift_hi = reader.read_u16()?;
+        self.bg_attr_shift_lo = reader.read_u16()?;
+        self.bg_attr_shift_hi = reader.read_u16()?;
+        self.tv_system = match reader.read_u8()? {
+            0 => TVSystem::NTSC,
+            1 => TVSystem::PAL,
+            2 => TVSystem::DENDY,
+            _ => {
+                return Err(SaveStateError::InvalidData(
+                    "invalid TV system in PPU state",
+                ));
+            }
+        };
+        self.num_scanlines = reader.read_i16()?;
+        self.vblank_lines = reader.read_i16()?;
+        self.loopy_v = reader.read_u16()?;
+        self.loopy_t = reader.read_u16()?;
+        reader.read_bytes_into(&mut self.bit_map)?;
+        reader.read_bytes_into(&mut self.bg_colors)?;
+        reader.read_bytes_into(&mut self.bg_pixels)?;
+        for sprite in &mut self.scanline_sprites {
+            sprite.tile_id = reader.read_u8()?;
+            sprite.row = reader.read_u8()?;
+            sprite.x = reader.read_u8()?;
+            sprite.attributes = reader.read_u8()?;
+            sprite.pattern_lo = reader.read_u8()?;
+            sprite.pattern_hi = reader.read_u8()?;
+            sprite.sprite_zero = reader.read_bool()?;
+        }
+        self.scanline_sprite_count = reader.read_u8()?;
+        self.suppress_vblank = reader.read_bool()?;
+        self.even = reader.read_bool()?;
+        Ok(())
     }
 
     fn read_status(&mut self) -> u8 {
@@ -970,7 +1080,7 @@ impl PPU {
     }
 }
 
-fn palette_index_to_rgb(index: u8) -> [u8; 3] {
+pub(crate) fn palette_index_to_rgb(index: u8) -> [u8; 3] {
     NES_RGB_PALETTE[(index & 0x3F) as usize]
 }
 

@@ -1,4 +1,5 @@
 use crate::bus::NESBus;
+use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CpuSlotPhase {
@@ -110,6 +111,76 @@ impl DmaController {
 
     pub fn advance_cpu_phase(&mut self) {
         self.cpu_phase = self.cpu_phase.toggle();
+    }
+
+    pub(crate) fn save_state(&self, writer: &mut StateWriter) {
+        match self.pending_oam {
+            Some(page) => {
+                writer.write_bool(true);
+                writer.write_u8(page);
+            }
+            None => writer.write_bool(false),
+        }
+
+        match self.active_oam {
+            Some(dma) => {
+                writer.write_bool(true);
+                writer.write_u8(dma.page);
+                writer.write_u8(dma.index);
+                writer.write_u8(dma.latch);
+                writer.write_u8(match dma.state {
+                    OamDmaState::Halt => 0,
+                    OamDmaState::Align => 1,
+                    OamDmaState::Read => 2,
+                    OamDmaState::Write => 3,
+                });
+            }
+            None => writer.write_bool(false),
+        }
+
+        writer.write_u8(match self.cpu_phase {
+            CpuSlotPhase::Get => 0,
+            CpuSlotPhase::Put => 1,
+        });
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<(), SaveStateError> {
+        self.pending_oam = if reader.read_bool()? {
+            Some(reader.read_u8()?)
+        } else {
+            None
+        };
+
+        self.active_oam = if reader.read_bool()? {
+            let page = reader.read_u8()?;
+            let index = reader.read_u8()?;
+            let latch = reader.read_u8()?;
+            let state = match reader.read_u8()? {
+                0 => OamDmaState::Halt,
+                1 => OamDmaState::Align,
+                2 => OamDmaState::Read,
+                3 => OamDmaState::Write,
+                _ => return Err(SaveStateError::InvalidData("invalid OAM DMA state")),
+            };
+            Some(OamDma {
+                page,
+                index,
+                latch,
+                state,
+            })
+        } else {
+            None
+        };
+
+        self.cpu_phase = match reader.read_u8()? {
+            0 => CpuSlotPhase::Get,
+            1 => CpuSlotPhase::Put,
+            _ => return Err(SaveStateError::InvalidData("invalid DMA CPU phase")),
+        };
+        Ok(())
     }
 }
 

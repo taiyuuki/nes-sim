@@ -1,3 +1,5 @@
+use crate::savestate::{SaveStateError, StateReader, StateWriter};
+
 pub struct APU {
     cpu_cycle: u64,
     frame_counter_cycle: u32,
@@ -45,7 +47,10 @@ impl APU {
             self.frame_irq_clear_after_cycle = None;
         }
 
-        if !self.frame_irq_enabled && self.frame_irq_event_fired && self.frame_irq_assert_window == 0 {
+        if !self.frame_irq_enabled
+            && self.frame_irq_event_fired
+            && self.frame_irq_assert_window == 0
+        {
             self.frame_irq_flag = false;
             self.frame_irq_line_low = false;
             self.frame_irq_line_delay = 0;
@@ -149,6 +154,58 @@ impl APU {
 
     pub fn irq_line(&self) -> bool {
         self.frame_irq_line_low && self.frame_irq_enabled && !self.frame_counter_mode_five_step
+    }
+
+    pub(crate) fn save_state(&self, writer: &mut StateWriter) {
+        writer.write_u64(self.cpu_cycle);
+        writer.write_u32(self.frame_counter_cycle);
+        match self.frame_counter_reset_delay {
+            Some(delay) => {
+                writer.write_bool(true);
+                writer.write_u8(delay);
+            }
+            None => writer.write_bool(false),
+        }
+        writer.write_bool(self.frame_irq_enabled);
+        writer.write_bool(self.frame_irq_flag);
+        writer.write_bool(self.frame_irq_line_low);
+        writer.write_u8(self.frame_irq_line_delay);
+        writer.write_bool(self.frame_counter_mode_five_step);
+        writer.write_bool(self.frame_irq_event_fired);
+        writer.write_u8(self.frame_irq_assert_window);
+        match self.frame_irq_clear_after_cycle {
+            Some(cycle) => {
+                writer.write_bool(true);
+                writer.write_u64(cycle);
+            }
+            None => writer.write_bool(false),
+        }
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<(), SaveStateError> {
+        self.cpu_cycle = reader.read_u64()?;
+        self.frame_counter_cycle = reader.read_u32()?;
+        self.frame_counter_reset_delay = if reader.read_bool()? {
+            Some(reader.read_u8()?)
+        } else {
+            None
+        };
+        self.frame_irq_enabled = reader.read_bool()?;
+        self.frame_irq_flag = reader.read_bool()?;
+        self.frame_irq_line_low = reader.read_bool()?;
+        self.frame_irq_line_delay = reader.read_u8()?;
+        self.frame_counter_mode_five_step = reader.read_bool()?;
+        self.frame_irq_event_fired = reader.read_bool()?;
+        self.frame_irq_assert_window = reader.read_u8()?;
+        self.frame_irq_clear_after_cycle = if reader.read_bool()? {
+            Some(reader.read_u64()?)
+        } else {
+            None
+        };
+        Ok(())
     }
 
     fn apply_scheduled_events_until(&mut self, access_cycle: u64) {

@@ -1,5 +1,9 @@
-use super::{ControllerButton, ControllerState, NES};
+use super::{
+    ControllerButton, ControllerState, CoreCommand, CoreEvent, FrontendInput, FrontendRuntime, NES,
+    RunMode,
+};
 use crate::bus::CPUBus;
+use crate::headless::{frame_to_ppm, stable_byte_hash, write_frame_ppm};
 use std::io;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -169,15 +173,6 @@ fn visible_frame_has_non_background_content(nes: &NES) -> bool {
     nes.frame_pixels().iter().any(|&pixel| pixel != 0)
 }
 
-fn stable_byte_hash(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
-}
-
 fn assert_rom_boot_frame_hash(
     rom_path: &str,
     frames: usize,
@@ -191,10 +186,10 @@ fn assert_rom_boot_frame_hash(
     assert!(
         visible_frame_has_non_background_content(&nes),
         "expected {rom_path} boot sequence to render visible non-zero palette indices by frame {}",
-        nes.bus.ppu().frame()
+        nes.frame_number()
     );
 
-    let ppm = nes.frame_ppm();
+    let ppm = frame_to_ppm(nes.video_frame());
     let actual_hash = stable_byte_hash(&ppm);
     if actual_hash != expected_hash {
         let failure_path = std::path::Path::new(failure_ppm_path);
@@ -204,7 +199,7 @@ fn assert_rom_boot_frame_hash(
             std::fs::create_dir_all(parent)
                 .unwrap_or_else(|error| panic!("failed to create {:?}: {}", parent, error));
         }
-        std::fs::write(failure_path, &ppm)
+        write_frame_ppm(failure_path, nes.video_frame())
             .unwrap_or_else(|error| panic!("failed to write {:?}: {}", failure_path, error));
     }
 
@@ -225,15 +220,25 @@ fn make_ines_with_tv(flags9: u8) -> Vec<u8> {
     rom
 }
 
+fn make_ines_with_reset_vector(entry_point: u16) -> Vec<u8> {
+    let mut rom = make_ines_with_tv(0x00);
+    let prg_start = 16;
+    rom[prg_start] = 0xEA;
+    rom[prg_start + 1] = 0xEA;
+    rom[prg_start + 0x3FFC] = entry_point as u8;
+    rom[prg_start + 0x3FFD] = (entry_point >> 8) as u8;
+    rom
+}
+
 #[test]
 fn run_frame_advances_exactly_one_ppu_frame() {
     let mut nes = NES::new();
     let start_clock = nes.master_clock();
-    let start_frame = nes.bus.ppu().frame();
+    let start_frame = nes.frame_number();
 
     nes.run_frame();
 
-    assert_eq!(nes.bus.ppu().frame(), start_frame + 1);
+    assert_eq!(nes.frame_number(), start_frame + 1);
     assert!(nes.master_clock() > start_clock);
 }
 
@@ -294,18 +299,146 @@ fn nes_exposes_controller_state_updates_through_the_bus() {
 fn frame_ppm_uses_binary_ppm_header_and_rgb_payload() {
     let nes = NES::new();
 
-    assert_eq!(nes.frame_pixels().len(), crate::FRAME_WIDTH * crate::FRAME_HEIGHT);
+    assert_eq!(
+        nes.frame_pixels().len(),
+        crate::FRAME_WIDTH * crate::FRAME_HEIGHT
+    );
 
-    let ppm = nes.frame_ppm();
+    let ppm = frame_to_ppm(nes.video_frame());
     let header = b"P6\n256 240\n255\n";
 
     assert!(ppm.starts_with(header));
-    assert_eq!(ppm.len(), header.len() + crate::FRAME_WIDTH * crate::FRAME_HEIGHT * 3);
+    assert_eq!(
+        ppm.len(),
+        header.len() + crate::FRAME_WIDTH * crate::FRAME_HEIGHT * 3
+    );
     assert_eq!(
         &ppm[header.len()..header.len() + 3],
         &[84, 84, 84],
         "palette index 0 should map to the universal background color RGB triplet"
     );
+}
+
+#[test]
+fn execute_run_frame_reports_frame_ready_event() {
+    let mut nes = NES::new();
+    let start_frame = nes.frame_number();
+
+    let response = nes.execute(CoreCommand::RunFrame);
+
+    assert_eq!(
+        response.event,
+        CoreEvent::FrameReady {
+            frame_number: start_frame + 1,
+        }
+    );
+    assert_eq!(nes.frame_number(), start_frame + 1);
+    assert_eq!(response.master_clock, nes.master_clock());
+}
+
+#[test]
+fn step_cpu_instruction_updates_debug_snapshot() {
+    let mut nes = NES::new();
+    let rom = make_ines_with_reset_vector(0x8000);
+    nes.load_cartridge_ines(&rom)
+        .expect("test ROM should load as NROM");
+    nes.reset();
+
+    let before = nes.debug_snapshot();
+    let response = nes.execute(CoreCommand::StepCpuInstruction);
+    let after = nes.debug_snapshot();
+
+    assert_eq!(before.cpu.pc, 0x8000);
+    assert_eq!(
+        response.event,
+        CoreEvent::CpuInstructionComplete {
+            instruction_counter: 1,
+        }
+    );
+    assert_eq!(after.cpu.pc, 0x8001);
+    assert_eq!(after.cpu.instruction_counter, 1);
+    assert!(after.master_clock > before.master_clock);
+}
+
+#[test]
+fn frontend_runtime_can_pause_and_step_a_single_frame() {
+    let rom = make_ines_with_reset_vector(0x8000);
+    let mut runtime =
+        FrontendRuntime::from_rom_bytes(&rom).expect("test ROM should load into runtime");
+
+    runtime.set_mode(RunMode::Paused);
+    let before = runtime.snapshot().debug;
+
+    let paused = runtime.step(FrontendInput::default());
+    assert_eq!(paused.status.mode, RunMode::Paused);
+    assert_eq!(paused.status.executed, super::ExecutionTarget::None);
+    assert_eq!(paused.debug.master_clock, before.master_clock);
+
+    let stepped = runtime.step(FrontendInput {
+        step_frame: true,
+        ..FrontendInput::default()
+    });
+    assert_eq!(stepped.status.mode, RunMode::Paused);
+    assert_eq!(stepped.status.executed, super::ExecutionTarget::Frame);
+    assert!(stepped.debug.master_clock > before.master_clock);
+}
+
+#[test]
+fn frontend_runtime_toggle_pause_switches_modes() {
+    let rom = make_ines_with_reset_vector(0x8000);
+    let mut runtime =
+        FrontendRuntime::from_rom_bytes(&rom).expect("test ROM should load into runtime");
+
+    let paused = runtime.step(FrontendInput {
+        toggle_pause: true,
+        ..FrontendInput::default()
+    });
+    assert_eq!(paused.status.mode, RunMode::Paused);
+
+    let running = runtime.step(FrontendInput {
+        toggle_pause: true,
+        ..FrontendInput::default()
+    });
+    assert_eq!(running.status.mode, RunMode::Running);
+}
+
+#[test]
+fn save_state_round_trip_restores_debug_snapshot_and_video_output() {
+    let rom = make_ines_with_reset_vector(0x8000);
+    let mut runtime =
+        FrontendRuntime::from_rom_bytes(&rom).expect("test ROM should load into runtime");
+
+    runtime.step(FrontendInput {
+        controller1: ControllerState::from_bits(0x81),
+        ..FrontendInput::default()
+    });
+    runtime.step(FrontendInput::default());
+
+    let expected = runtime.snapshot();
+    let expected_debug = expected.debug;
+    let expected_frame_number = expected.video.frame_number;
+    let expected_pixels = expected.video.pixels.to_vec();
+    let state = runtime
+        .save_state()
+        .expect("runtime with loaded cartridge should save");
+
+    runtime.step(FrontendInput {
+        reset: true,
+        ..FrontendInput::default()
+    });
+    runtime.step(FrontendInput {
+        step_cpu_instruction: true,
+        ..FrontendInput::default()
+    });
+
+    runtime
+        .load_state(&state)
+        .expect("saved state should load back into the same runtime");
+    let restored = runtime.snapshot();
+
+    assert_eq!(restored.debug, expected_debug);
+    assert_eq!(restored.video.frame_number, expected_frame_number);
+    assert_eq!(restored.video.pixels, expected_pixels.as_slice());
 }
 
 #[test]
@@ -339,10 +472,7 @@ fn nestest_automation_mode_reports_zero_error_bytes() {
     let Some(log) = read_optional_text_fixture("roms/nestest/nestest.log") else {
         return;
     };
-    let trace_line_count = log
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .count();
+    let trace_line_count = log.lines().filter(|line| !line.trim().is_empty()).count();
     let mut nes = NES::new();
 
     nes.load_cartridge_ines(&rom)

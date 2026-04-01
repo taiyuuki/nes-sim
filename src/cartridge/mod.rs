@@ -4,6 +4,7 @@ use std::fmt::{Display, Formatter};
 mod mappers;
 
 use self::mappers::{Mapper, from_mapper_id};
+use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 const INES_HEADER_LEN: usize = 16;
 const TRAINER_LEN: usize = 512;
@@ -147,6 +148,23 @@ impl Cartridge {
 
     pub fn check_a12(&mut self, addr: u16) {
         self.mapper.check_a12(addr);
+    }
+
+    pub(crate) fn save_state(&self, writer: &mut StateWriter) {
+        writer.write_u16(self.mapper.mapper_id());
+        self.mapper.save_state(writer);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<(), SaveStateError> {
+        let actual = reader.read_u16()?;
+        let expected = self.mapper.mapper_id();
+        if actual != expected {
+            return Err(SaveStateError::MapperMismatch { expected, actual });
+        }
+        self.mapper.load_state(reader)
     }
 }
 

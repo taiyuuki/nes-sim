@@ -1,3 +1,5 @@
+use crate::savestate::{SaveStateError, StateReader, StateWriter};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControllerButton {
     A,
@@ -94,5 +96,21 @@ impl Joypad {
         let bit = self.shift & 0x01;
         self.shift = (self.shift >> 1) | 0x80;
         bit
+    }
+
+    pub(crate) fn save_state(&self, writer: &mut StateWriter) {
+        writer.write_bool(self.strobe);
+        writer.write_u8(self.state.bits());
+        writer.write_u8(self.shift);
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<(), SaveStateError> {
+        self.strobe = reader.read_bool()?;
+        self.state = ControllerState::from_bits(reader.read_u8()?);
+        self.shift = reader.read_u8()?;
+        Ok(())
     }
 }

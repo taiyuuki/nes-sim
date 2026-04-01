@@ -1,5 +1,6 @@
 use super::Mapper;
 use crate::cartridge::{CHR_BANK_LEN, Mirroring};
+use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 const PRG_RAM_LEN: usize = 0x2000;
 
@@ -38,6 +39,10 @@ impl Nrom {
 }
 
 impl Mapper for Nrom {
+    fn mapper_id(&self) -> u16 {
+        0
+    }
+
     fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
             0x6000..=0x7FFF => Some(self.prg_ram[(addr - 0x6000) as usize]),
@@ -78,5 +83,31 @@ impl Mapper for Nrom {
 
     fn mirroring(&self) -> Mirroring {
         self.mirroring
+    }
+
+    fn save_state(&self, writer: &mut StateWriter) {
+        writer.write_bytes(&self.prg_ram);
+        match &self.chr {
+            ChrMemory::Rom(_) => writer.write_bool(false),
+            ChrMemory::Ram(chr_ram) => {
+                writer.write_bool(true);
+                writer.write_bytes(chr_ram);
+            }
+        }
+    }
+
+    fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
+        reader.read_bytes_into(&mut self.prg_ram)?;
+        let has_chr_ram = reader.read_bool()?;
+        match (&mut self.chr, has_chr_ram) {
+            (ChrMemory::Ram(chr_ram), true) => reader.read_bytes_into(chr_ram)?,
+            (ChrMemory::Rom(_), false) => {}
+            _ => {
+                return Err(SaveStateError::InvalidData(
+                    "CHR RAM presence mismatch for NROM save state",
+                ));
+            }
+        }
+        Ok(())
     }
 }
