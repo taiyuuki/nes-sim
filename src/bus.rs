@@ -250,6 +250,18 @@ impl NESBus {
         self.apu.tick_cpu_cycle();
     }
 
+    pub fn apu_sample_rate(&self) -> u32 {
+        self.apu.sample_rate()
+    }
+
+    pub fn apu_audio_samples(&self) -> &[f32] {
+        self.apu.audio_samples()
+    }
+
+    pub fn clear_apu_audio_samples(&mut self) {
+        self.apu.clear_audio_samples();
+    }
+
     pub fn apu_irq_line(&self) -> bool {
         self.apu.irq_line()
     }
@@ -344,12 +356,12 @@ impl NESBus {
                 ppu.cpu_write_register(ppu_memory, 0x2000 | (addr & 0x0007), data);
             }
             0x4014 => self.dma.request_oam_dma(data),
-            0x4015 => self.apu.write_status(data),
+            0x4000..=0x4013 | 0x4015 => self.apu.write_register_at_offset(addr, data, cycle_offset),
             0x4016 => {
                 self.controllers[0].write(data);
                 self.controllers[1].write(data);
             }
-            0x4017 => self.apu.write_frame_counter_at_offset(data, cycle_offset),
+            0x4017 => self.apu.write_register_at_offset(addr, data, cycle_offset),
             0x4020..=0xFFFF => {
                 let _ = self.ppu_memory.cartridge_cpu_write(addr, data);
             }

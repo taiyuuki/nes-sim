@@ -1,9 +1,12 @@
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
 use nes_core::video::frame_to_argb32;
 use nes_core::{ControllerButton, ControllerState, FrontendInput, FrontendRuntime, RunMode};
+use std::collections::VecDeque;
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 fn usage(program: &str) {
@@ -54,6 +57,13 @@ fn main() -> ExitCode {
         }
     };
     let save_path = default_save_path(&rom_path);
+    let audio_player = match AudioPlayer::new(runtime.snapshot().audio.sample_rate) {
+        Ok(player) => Some(player),
+        Err(error) => {
+            eprintln!("audio disabled: {error}");
+            None
+        }
+    };
 
     let mut window = match Window::new(
         "nes_core",
@@ -105,6 +115,10 @@ fn main() -> ExitCode {
             break;
         }
 
+        if let Some(player) = &audio_player {
+            player.push_samples(snapshot.audio.samples, snapshot.audio.sample_rate);
+        }
+
         let buffer = frame_to_argb32(snapshot.video);
         if let Err(error) =
             window.update_with_buffer(&buffer, snapshot.video.width, snapshot.video.height)
@@ -125,6 +139,158 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+struct AudioPlayer {
+    target_sample_rate: u32,
+    device_sample_rate: u32,
+    queue: Arc<Mutex<VecDeque<f32>>>,
+    _stream: cpal::Stream,
+}
+
+impl AudioPlayer {
+    fn new(target_sample_rate: u32) -> Result<Self, String> {
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .ok_or_else(|| "no default audio output device".to_string())?;
+        let default_config = device
+            .default_output_config()
+            .map_err(|error| format!("failed to query default output config: {error}"))?;
+        let channels = usize::from(default_config.channels());
+        let device_sample_rate = default_config.sample_rate().0;
+        let queue = Arc::new(Mutex::new(VecDeque::new()));
+        let queue_for_stream = Arc::clone(&queue);
+        let error_callback = |error| eprintln!("audio stream error: {error}");
+
+        let stream = match default_config.sample_format() {
+            cpal::SampleFormat::F32 => device
+                .build_output_stream(
+                    &default_config.config(),
+                    move |data: &mut [f32], _| write_audio_data(data, channels, &queue_for_stream),
+                    error_callback,
+                    None,
+                )
+                .map_err(|error| format!("failed to build f32 audio stream: {error}"))?,
+            cpal::SampleFormat::I16 => device
+                .build_output_stream(
+                    &default_config.config(),
+                    move |data: &mut [i16], _| {
+                        write_audio_data_i16(data, channels, &queue_for_stream)
+                    },
+                    error_callback,
+                    None,
+                )
+                .map_err(|error| format!("failed to build i16 audio stream: {error}"))?,
+            cpal::SampleFormat::U16 => device
+                .build_output_stream(
+                    &default_config.config(),
+                    move |data: &mut [u16], _| {
+                        write_audio_data_u16(data, channels, &queue_for_stream)
+                    },
+                    error_callback,
+                    None,
+                )
+                .map_err(|error| format!("failed to build u16 audio stream: {error}"))?,
+            sample_format => {
+                return Err(format!(
+                    "unsupported audio sample format: {sample_format:?}"
+                ));
+            }
+        };
+        stream
+            .play()
+            .map_err(|error| format!("failed to start audio stream: {error}"))?;
+
+        Ok(Self {
+            target_sample_rate,
+            device_sample_rate,
+            queue,
+            _stream: stream,
+        })
+    }
+
+    fn push_samples(&self, samples: &[f32], source_sample_rate: u32) {
+        if samples.is_empty() {
+            return;
+        }
+
+        let mono_samples = if source_sample_rate == self.device_sample_rate {
+            samples.to_vec()
+        } else {
+            resample_mono(samples, source_sample_rate, self.device_sample_rate)
+        };
+
+        if let Ok(mut queue) = self.queue.lock() {
+            for sample in mono_samples {
+                queue.push_back(sample.clamp(-1.0, 1.0));
+            }
+            let max_samples = (self.target_sample_rate as usize).saturating_mul(2);
+            while queue.len() > max_samples {
+                let _ = queue.pop_front();
+            }
+        }
+    }
+}
+
+fn write_audio_data(output: &mut [f32], channels: usize, queue: &Arc<Mutex<VecDeque<f32>>>) {
+    let mut next_sample = 0.0;
+    if let Ok(mut queue) = queue.lock() {
+        for frame in output.chunks_mut(channels) {
+            next_sample = queue.pop_front().unwrap_or(0.0);
+            for sample in frame {
+                *sample = next_sample;
+            }
+        }
+    } else {
+        for sample in output.iter_mut() {
+            *sample = next_sample;
+        }
+    }
+}
+
+fn write_audio_data_i16(output: &mut [i16], channels: usize, queue: &Arc<Mutex<VecDeque<f32>>>) {
+    let mut mono = vec![0.0; output.len()];
+    write_audio_data(&mut mono, channels, queue);
+    for (dst, src) in output.iter_mut().zip(mono) {
+        *dst = (src * f32::from(i16::MAX)) as i16;
+    }
+}
+
+fn write_audio_data_u16(output: &mut [u16], channels: usize, queue: &Arc<Mutex<VecDeque<f32>>>) {
+    let mut mono = vec![0.0; output.len()];
+    write_audio_data(&mut mono, channels, queue);
+    for (dst, src) in output.iter_mut().zip(mono) {
+        let normalized = (src * 0.5 + 0.5).clamp(0.0, 1.0);
+        *dst = (normalized * f32::from(u16::MAX)) as u16;
+    }
+}
+
+fn resample_mono(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
+    if samples.is_empty() || source_rate == 0 || target_rate == 0 {
+        return Vec::new();
+    }
+    if source_rate == target_rate {
+        return samples.to_vec();
+    }
+
+    let target_len = samples.len().saturating_mul(target_rate as usize) / source_rate as usize;
+    if target_len == 0 {
+        return Vec::new();
+    }
+
+    let step = source_rate as f32 / target_rate as f32;
+    let mut pos = 0.0f32;
+    let mut resampled = Vec::with_capacity(target_len);
+    for _ in 0..target_len {
+        let index = pos.floor() as usize;
+        let frac = pos - index as f32;
+        let a = samples[index.min(samples.len() - 1)];
+        let b = samples[(index + 1).min(samples.len() - 1)];
+        resampled.push(a + (b - a) * frac);
+        pos += step;
+    }
+    resampled
 }
 
 fn collect_input(window: &Window) -> FrontendInput {

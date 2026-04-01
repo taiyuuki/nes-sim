@@ -150,8 +150,12 @@ impl NES {
         }
     }
 
-    pub fn audio_batch(&self) -> AudioBatch<'static> {
-        AudioBatch::default()
+    pub fn audio_batch(&self) -> AudioBatch<'_> {
+        AudioBatch {
+            channels: 1,
+            sample_rate: self.bus.apu_sample_rate(),
+            samples: self.bus.apu_audio_samples(),
+        }
     }
 
     pub fn debug_snapshot(&self) -> DebugSnapshot {
@@ -188,6 +192,10 @@ impl NES {
         self.bus.load_state(&mut reader)?;
         self.cpu.set_nmi(self.bus.ppu_nmi_line());
         reader.finish()
+    }
+
+    pub fn clear_audio_samples(&mut self) {
+        self.bus.clear_apu_audio_samples();
     }
 
     fn reset_cpu_schedule(&mut self) {

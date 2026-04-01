@@ -14,9 +14,10 @@ test-all = "cargo test"
 
 [features]
 default = []
-desktop = ["dep:minifb"]
+desktop = ["dep:cpal", "dep:minifb"]
 
 [dependencies]
+cpal = { version = "0.15", optional = true }
 minifb = { version = "0.27", optional = true }
 
 [[example]]

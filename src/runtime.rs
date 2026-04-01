@@ -96,6 +96,7 @@ impl FrontendRuntime {
     }
 
     pub fn step(&mut self, input: FrontendInput) -> RuntimeSnapshot<'_> {
+        self.nes.clear_audio_samples();
         self.nes.execute(CoreCommand::SetControllerState {
             port: 0,
             state: input.controller1,
