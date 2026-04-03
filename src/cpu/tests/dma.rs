@@ -114,8 +114,45 @@ fn dmc_dma_fetches_sample_and_updates_open_bus() {
     bus.cpu_write(0x4013, 0x00);
     bus.cpu_write(0x4015, 0x10);
 
-    clock_cpu_cycles(&mut cpu, &mut bus, 4);
+    clock_cpu_cycles(&mut cpu, &mut bus, 3);
 
     assert_eq!(bus.cpu_read(0x4000), 0x40);
+    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x00);
+}
+
+#[test]
+fn dmc_load_dma_completes_in_three_cycles_on_get_phase() {
+    let mut cpu = CPU::new();
+    let mut bus = NESBus::new();
+    let rom = make_ines(1, 1, 0x00);
+
+    bus.load_cartridge_ines(&rom).expect("NROM should load");
+    bus.cpu_write(0x4012, 0x01);
+    bus.cpu_write(0x4013, 0x00);
+    bus.cpu_write(0x4015, 0x10);
+
+    clock_cpu_cycles(&mut cpu, &mut bus, 2);
+    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x10);
+
+    clock_cpu_cycles(&mut cpu, &mut bus, 1);
+    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x00);
+}
+
+#[test]
+fn dmc_load_dma_completes_in_four_cycles_on_put_phase() {
+    let mut cpu = CPU::new();
+    let mut bus = NESBus::new();
+    let rom = make_ines(1, 1, 0x00);
+
+    bus.load_cartridge_ines(&rom).expect("NROM should load");
+    bus.advance_dma_cpu_phase();
+    bus.cpu_write(0x4012, 0x01);
+    bus.cpu_write(0x4013, 0x00);
+    bus.cpu_write(0x4015, 0x10);
+
+    clock_cpu_cycles(&mut cpu, &mut bus, 3);
+    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x10);
+
+    clock_cpu_cycles(&mut cpu, &mut bus, 1);
     assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x00);
 }

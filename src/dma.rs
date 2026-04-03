@@ -1,4 +1,4 @@
-use crate::apu::DmcDmaRequest;
+use crate::apu::{DmcDmaKind, DmcDmaRequest};
 use crate::bus::NESBus;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
@@ -50,15 +50,16 @@ impl OamDma {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DmcDmaState {
-    Halt,
-    HaltAlign,
+    AwaitHalt,
     Dummy,
+    Align,
     Read,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct DmcDma {
     addr: u16,
+    halt_phase: CpuSlotPhase,
     state: DmcDmaState,
 }
 
@@ -66,7 +67,11 @@ impl DmcDma {
     fn new(request: DmcDmaRequest) -> Self {
         Self {
             addr: request.addr,
-            state: DmcDmaState::Halt,
+            halt_phase: match request.kind {
+                DmcDmaKind::Load => CpuSlotPhase::Get,
+                DmcDmaKind::Reload => CpuSlotPhase::Put,
+            },
+            state: DmcDmaState::AwaitHalt,
         }
     }
 }
@@ -105,13 +110,19 @@ impl DmaController {
 
         if let Some(dma) = self.active_dmc.as_mut() {
             match dma.state {
-                DmcDmaState::Halt => {
-                    dma.state = DmcDmaState::HaltAlign;
-                }
-                DmcDmaState::HaltAlign => {
-                    dma.state = DmcDmaState::Dummy;
+                DmcDmaState::AwaitHalt => {
+                    if self.cpu_phase == dma.halt_phase {
+                        dma.state = DmcDmaState::Dummy;
+                    }
                 }
                 DmcDmaState::Dummy => {
+                    dma.state = if self.cpu_phase == CpuSlotPhase::Put {
+                        DmcDmaState::Read
+                    } else {
+                        DmcDmaState::Align
+                    };
+                }
+                DmcDmaState::Align => {
                     dma.state = DmcDmaState::Read;
                 }
                 DmcDmaState::Read => {
@@ -194,10 +205,14 @@ impl DmaController {
             Some(dma) => {
                 writer.write_bool(true);
                 writer.write_u16(dma.addr);
+                writer.write_u8(match dma.halt_phase {
+                    CpuSlotPhase::Get => 0,
+                    CpuSlotPhase::Put => 1,
+                });
                 writer.write_u8(match dma.state {
-                    DmcDmaState::Halt => 0,
-                    DmcDmaState::HaltAlign => 1,
-                    DmcDmaState::Dummy => 2,
+                    DmcDmaState::AwaitHalt => 0,
+                    DmcDmaState::Dummy => 1,
+                    DmcDmaState::Align => 2,
                     DmcDmaState::Read => 3,
                 });
             }
@@ -243,14 +258,23 @@ impl DmaController {
 
         self.active_dmc = if reader.read_bool()? {
             let addr = reader.read_u16()?;
+            let halt_phase = match reader.read_u8()? {
+                0 => CpuSlotPhase::Get,
+                1 => CpuSlotPhase::Put,
+                _ => return Err(SaveStateError::InvalidData("invalid DMC DMA halt phase")),
+            };
             let state = match reader.read_u8()? {
-                0 => DmcDmaState::Halt,
-                1 => DmcDmaState::HaltAlign,
-                2 => DmcDmaState::Dummy,
+                0 => DmcDmaState::AwaitHalt,
+                1 => DmcDmaState::Dummy,
+                2 => DmcDmaState::Align,
                 3 => DmcDmaState::Read,
                 _ => return Err(SaveStateError::InvalidData("invalid DMC DMA state")),
             };
-            Some(DmcDma { addr, state })
+            Some(DmcDma {
+                addr,
+                halt_phase,
+                state,
+            })
         } else {
             None
         };

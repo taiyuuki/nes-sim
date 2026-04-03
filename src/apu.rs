@@ -26,6 +26,7 @@ const DMC_RATE_TABLE: [u16; 16] = [
 #[derive(Clone, Copy)]
 struct PulseChannel {
     enabled: bool,
+    ones_complement_negate: bool,
     duty: u8,
     length_halt: bool,
     constant_volume: bool,
@@ -39,6 +40,7 @@ struct PulseChannel {
     sweep_negate: bool,
     sweep_shift: u8,
     sweep_reload: bool,
+    sweep_divider: u8,
     timer_period: u16,
     timer_value: u16,
     sequence_step: u8,
@@ -46,9 +48,10 @@ struct PulseChannel {
 }
 
 impl PulseChannel {
-    const fn new() -> Self {
+    const fn new(ones_complement_negate: bool) -> Self {
         Self {
             enabled: false,
+            ones_complement_negate,
             duty: 0,
             length_halt: false,
             constant_volume: false,
@@ -62,6 +65,7 @@ impl PulseChannel {
             sweep_negate: false,
             sweep_shift: 0,
             sweep_reload: false,
+            sweep_divider: 0,
             timer_period: 0,
             timer_value: 0,
             sequence_step: 0,
@@ -145,24 +149,30 @@ impl PulseChannel {
     }
 
     fn clock_sweep(&mut self) {
-        if self.sweep_reload {
-            self.sweep_reload = false;
-            return;
+        let divider_zero = self.sweep_divider == 0;
+
+        if divider_zero
+            && self.sweep_enabled
+            && self.sweep_shift != 0
+            && !self.sweep_mutes_channel()
+        {
+            self.timer_period = self.sweep_target_period();
         }
 
-        if self.sweep_enabled && self.sweep_shift != 0 {
-            let change = self.timer_period >> self.sweep_shift;
-            let new_period = if self.sweep_negate {
-                self.timer_period.wrapping_sub(change)
-            } else {
-                self.timer_period.wrapping_add(change)
-            };
-            self.timer_period = new_period & 0x07FF;
+        if self.sweep_reload || divider_zero {
+            self.sweep_divider = self.sweep_period;
+            self.sweep_reload = false;
+        } else {
+            self.sweep_divider -= 1;
         }
     }
 
     fn output(&self) -> f32 {
-        if !self.enabled || self.length_counter == 0 || self.timer_period < 8 {
+        if !self.enabled
+            || self.length_counter == 0
+            || self.timer_period < 8
+            || self.sweep_mutes_channel()
+        {
             return 0.0;
         }
 
@@ -178,8 +188,24 @@ impl PulseChannel {
         f32::from(volume)
     }
 
+    fn sweep_target_period(&self) -> u16 {
+        let change = self.timer_period >> self.sweep_shift;
+        if self.sweep_negate {
+            let extra = u16::from(self.ones_complement_negate);
+            self.timer_period.wrapping_sub(change).wrapping_sub(extra)
+        } else {
+            self.timer_period.wrapping_add(change)
+        }
+    }
+
+    fn sweep_mutes_channel(&self) -> bool {
+        self.timer_period < 8
+            || (self.sweep_shift != 0 && !self.sweep_negate && self.sweep_target_period() > 0x07FF)
+    }
+
     fn save_state(&self, writer: &mut StateWriter) {
         writer.write_bool(self.enabled);
+        writer.write_bool(self.ones_complement_negate);
         writer.write_u8(self.duty);
         writer.write_bool(self.length_halt);
         writer.write_bool(self.constant_volume);
@@ -193,6 +219,7 @@ impl PulseChannel {
         writer.write_bool(self.sweep_negate);
         writer.write_u8(self.sweep_shift);
         writer.write_bool(self.sweep_reload);
+        writer.write_u8(self.sweep_divider);
         writer.write_u16(self.timer_period);
         writer.write_u16(self.timer_value);
         writer.write_u8(self.sequence_step);
@@ -201,6 +228,7 @@ impl PulseChannel {
 
     fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
         self.enabled = reader.read_bool()?;
+        self.ones_complement_negate = reader.read_bool()?;
         self.duty = reader.read_u8()?;
         self.length_halt = reader.read_bool()?;
         self.constant_volume = reader.read_bool()?;
@@ -214,6 +242,7 @@ impl PulseChannel {
         self.sweep_negate = reader.read_bool()?;
         self.sweep_shift = reader.read_u8()?;
         self.sweep_reload = reader.read_bool()?;
+        self.sweep_divider = reader.read_u8()?;
         self.timer_period = reader.read_u16()?;
         self.timer_value = reader.read_u16()?;
         self.sequence_step = reader.read_u8()?;
@@ -490,8 +519,15 @@ impl NoiseChannel {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DmcDmaKind {
+    Load,
+    Reload,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DmcDmaRequest {
     pub addr: u16,
+    pub kind: DmcDmaKind,
 }
 
 #[derive(Clone, Copy)]
@@ -512,6 +548,7 @@ struct DmcChannel {
     sample_buffer: Option<u8>,
     silent: bool,
     pending_dma: bool,
+    pending_dma_kind: DmcDmaKind,
 }
 
 impl DmcChannel {
@@ -522,7 +559,7 @@ impl DmcChannel {
             irq_flag: false,
             loop_flag: false,
             rate_index: 0,
-            timer_value: DMC_RATE_TABLE[0],
+            timer_value: DMC_RATE_TABLE[0] - 1,
             output_level: 0,
             sample_address: 0xC000,
             sample_length: 1,
@@ -533,6 +570,7 @@ impl DmcChannel {
             sample_buffer: None,
             silent: true,
             pending_dma: false,
+            pending_dma_kind: DmcDmaKind::Load,
         }
     }
 
@@ -543,7 +581,9 @@ impl DmcChannel {
         }
         self.loop_flag = (data & 0x40) != 0;
         self.rate_index = data & 0x0F;
-        self.timer_value = DMC_RATE_TABLE[self.rate_index as usize];
+        if !self.enabled && self.bytes_remaining == 0 && self.sample_buffer.is_none() {
+            self.timer_value = DMC_RATE_TABLE[self.rate_index as usize] - 1;
+        }
     }
 
     fn write_direct_load(&mut self, data: u8) {
@@ -569,13 +609,13 @@ impl DmcChannel {
 
         if self.bytes_remaining == 0 {
             self.restart_sample();
-            self.request_dma_if_needed();
+            self.request_dma_if_needed(DmcDmaKind::Load);
         }
     }
 
     fn clock_timer(&mut self) {
         if self.timer_value == 0 {
-            self.timer_value = DMC_RATE_TABLE[self.rate_index as usize];
+            self.timer_value = DMC_RATE_TABLE[self.rate_index as usize] - 1;
             self.clock_output_unit();
         } else {
             self.timer_value -= 1;
@@ -599,6 +639,7 @@ impl DmcChannel {
             self.pending_dma = false;
             Some(DmcDmaRequest {
                 addr: self.current_address,
+                kind: self.pending_dma_kind,
             })
         } else {
             None
@@ -619,12 +660,12 @@ impl DmcChannel {
         if self.bytes_remaining == 0 {
             if self.loop_flag {
                 self.restart_sample();
-                self.request_dma_if_needed();
+                self.request_dma_if_needed(DmcDmaKind::Reload);
             } else if self.irq_enabled {
                 self.irq_flag = true;
             }
         } else {
-            self.request_dma_if_needed();
+            self.request_dma_if_needed(DmcDmaKind::Reload);
         }
     }
 
@@ -633,9 +674,10 @@ impl DmcChannel {
         self.bytes_remaining = self.sample_length;
     }
 
-    fn request_dma_if_needed(&mut self) {
+    fn request_dma_if_needed(&mut self, kind: DmcDmaKind) {
         if self.enabled && self.bytes_remaining > 0 && self.sample_buffer.is_none() {
             self.pending_dma = true;
+            self.pending_dma_kind = kind;
         }
     }
 
@@ -660,7 +702,7 @@ impl DmcChannel {
             if let Some(sample) = self.sample_buffer.take() {
                 self.shift_register = sample;
                 self.silent = false;
-                self.request_dma_if_needed();
+                self.request_dma_if_needed(DmcDmaKind::Reload);
             } else {
                 self.silent = true;
             }
@@ -690,6 +732,10 @@ impl DmcChannel {
         }
         writer.write_bool(self.silent);
         writer.write_bool(self.pending_dma);
+        writer.write_u8(match self.pending_dma_kind {
+            DmcDmaKind::Load => 0,
+            DmcDmaKind::Reload => 1,
+        });
     }
 
     fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
@@ -713,6 +759,11 @@ impl DmcChannel {
         };
         self.silent = reader.read_bool()?;
         self.pending_dma = reader.read_bool()?;
+        self.pending_dma_kind = match reader.read_u8()? {
+            0 => DmcDmaKind::Load,
+            1 => DmcDmaKind::Reload,
+            _ => return Err(SaveStateError::InvalidData("invalid DMC DMA kind")),
+        };
         Ok(())
     }
 }
@@ -734,8 +785,8 @@ struct ApuChannels {
 impl ApuChannels {
     const fn new() -> Self {
         Self {
-            pulse1: PulseChannel::new(),
-            pulse2: PulseChannel::new(),
+            pulse1: PulseChannel::new(true),
+            pulse2: PulseChannel::new(false),
             triangle: TriangleChannel::new(),
             noise: NoiseChannel::new(),
             dmc: DmcChannel::new(),
@@ -1255,7 +1306,7 @@ impl Default for APU {
 
 #[cfg(test)]
 mod tests {
-    use super::{APU, DmcDmaRequest};
+    use super::{APU, DmcDmaKind, DmcDmaRequest, PulseChannel};
 
     fn apu_with_pending_frame_irq() -> APU {
         let mut apu = APU::new();
@@ -1339,6 +1390,58 @@ mod tests {
     }
 
     #[test]
+    fn pulse_sweep_reload_sets_divider_without_immediate_period_change() {
+        let mut pulse = PulseChannel::new(true);
+        pulse.timer_period = 0x0400;
+        pulse.sweep_divider = 2;
+        pulse.write_sweep(0x91);
+
+        pulse.clock_sweep();
+
+        assert_eq!(pulse.timer_period, 0x0400);
+        assert_eq!(pulse.sweep_divider, 1);
+        assert!(!pulse.sweep_reload);
+    }
+
+    #[test]
+    fn pulse_one_and_two_negate_sweep_use_different_subtraction() {
+        let mut pulse1 = PulseChannel::new(true);
+        let mut pulse2 = PulseChannel::new(false);
+
+        pulse1.timer_period = 0x0100;
+        pulse2.timer_period = 0x0100;
+        pulse1.sweep_enabled = true;
+        pulse2.sweep_enabled = true;
+        pulse1.sweep_negate = true;
+        pulse2.sweep_negate = true;
+        pulse1.sweep_shift = 1;
+        pulse2.sweep_shift = 1;
+        pulse1.sweep_divider = 0;
+        pulse2.sweep_divider = 0;
+
+        pulse1.clock_sweep();
+        pulse2.clock_sweep();
+
+        assert_eq!(pulse1.timer_period, 0x007F);
+        assert_eq!(pulse2.timer_period, 0x0080);
+    }
+
+    #[test]
+    fn pulse_sweep_mutes_output_when_target_period_overflows() {
+        let mut pulse = PulseChannel::new(true);
+        pulse.enabled = true;
+        pulse.length_counter = 1;
+        pulse.constant_volume = true;
+        pulse.volume = 15;
+        pulse.duty = 2;
+        pulse.sequence_step = 1;
+        pulse.timer_period = 0x07FF;
+        pulse.sweep_shift = 1;
+
+        assert_eq!(pulse.output(), 0.0);
+    }
+
+    #[test]
     fn pulse_channel_generates_non_zero_audio_samples() {
         let mut apu = APU::new();
         apu.write_register_at_offset(0x4015, 0x01, 0);
@@ -1417,7 +1520,10 @@ mod tests {
         assert_eq!(apu.read_status_at_offset(0) & 0x10, 0x10);
         assert_eq!(
             apu.take_dmc_dma_request(),
-            Some(DmcDmaRequest { addr: 0xCD00 })
+            Some(DmcDmaRequest {
+                addr: 0xCD00,
+                kind: DmcDmaKind::Load,
+            })
         );
     }
 
@@ -1436,5 +1542,33 @@ mod tests {
                 .iter()
                 .any(|sample| sample.abs() > 0.0001)
         );
+    }
+
+    #[test]
+    fn dmc_control_write_does_not_reset_active_timer_phase() {
+        let mut dmc = super::DmcChannel::new();
+        dmc.enabled = true;
+        dmc.bytes_remaining = 1;
+        dmc.sample_buffer = Some(0x00);
+        dmc.timer_value = 7;
+
+        dmc.write_control(0x4F);
+
+        assert_eq!(dmc.timer_value, 7);
+    }
+
+    #[test]
+    fn dmc_fastest_rate_clocks_output_after_54_cpu_cycles() {
+        let mut dmc = super::DmcChannel::new();
+        dmc.write_control(0x0F);
+        dmc.bits_remaining = 1;
+
+        for _ in 0..53 {
+            dmc.clock_timer();
+        }
+        assert_eq!(dmc.bits_remaining, 1);
+
+        dmc.clock_timer();
+        assert_eq!(dmc.bits_remaining, 8);
     }
 }
