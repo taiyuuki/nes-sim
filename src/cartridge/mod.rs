@@ -61,6 +61,13 @@ pub struct Cartridge {
 
 impl Cartridge {
     pub fn from_ines(rom: &[u8]) -> Result<Self, CartridgeError> {
+        Self::from_ines_with_tv_system_override(rom, None)
+    }
+
+    pub fn from_ines_with_tv_system_override(
+        rom: &[u8],
+        tv_system_override: Option<TVSystem>,
+    ) -> Result<Self, CartridgeError> {
         if rom.len() < INES_HEADER_LEN {
             return Err(CartridgeError::FileTooSmall);
         }
@@ -72,7 +79,6 @@ impl Cartridge {
         let flags6 = rom[6];
         let flags7 = rom[7];
         let flags8 = rom[8];
-        let flags9 = rom[9];
 
         let mut mapper_id = u16::from(flags6 >> 4) | u16::from(flags7 & 0xF0);
         let mirroring = if (flags6 & 0x08) != 0 {
@@ -81,11 +87,6 @@ impl Cartridge {
             Mirroring::Vertical
         } else {
             Mirroring::Horizontal
-        };
-        let tv_system = if (flags9 & 0x01) != 0 {
-            TVSystem::PAL
-        } else {
-            TVSystem::NTSC
         };
 
         let has_sram = (flags6 & 0x02) != 0;
@@ -101,13 +102,14 @@ impl Cartridge {
         }
 
         // NES 2.0
-        let is_ines2 = (flags7 & 0x08) != 0;
+        let is_ines2 = (flags7 & 0x0C) == 0x08;
         let mut submapper = 0;
         if is_ines2 {
             mapper_id |= u16::from(flags8 & 0x0F) << 8;
             submapper = flags8 >> 4;
             // return Err(CartridgeError::Nes2Unsupported);
         }
+        let tv_system = tv_system_override.unwrap_or_else(|| detect_tv_system(rom, is_ines2));
         let prg_rom = rom[data_start..data_start + prg_len].to_vec();
         let chr_rom = rom[data_start + prg_len..data_end].to_vec();
         let mapper = from_mapper_id(mapper_id, mirroring, prg_rom, chr_rom)?;
@@ -173,6 +175,27 @@ impl Cartridge {
             return Err(SaveStateError::MapperMismatch { expected, actual });
         }
         self.mapper.load_state(reader)
+    }
+}
+
+fn detect_tv_system(header: &[u8], is_ines2: bool) -> TVSystem {
+    if is_ines2 {
+        return match header[12] & 0x03 {
+            0x01 => TVSystem::PAL,
+            0x03 => TVSystem::DENDY,
+            _ => TVSystem::NTSC,
+        };
+    }
+
+    // iNES 1.0 byte 9 is notoriously unreliable unless the trailing extension bytes are clean.
+    if header[11..16].iter().any(|&byte| byte != 0) {
+        return TVSystem::NTSC;
+    }
+
+    if (header[9] & 0x01) != 0 || (header[10] & 0x03) == 0x02 {
+        TVSystem::PAL
+    } else {
+        TVSystem::NTSC
     }
 }
 

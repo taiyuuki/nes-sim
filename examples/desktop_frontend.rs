@@ -1,7 +1,9 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
 use nes_core::video::frame_to_argb32;
-use nes_core::{ControllerButton, ControllerState, FrontendInput, FrontendRuntime, RunMode};
+use nes_core::{
+    ControllerButton, ControllerState, FrontendInput, FrontendRuntime, RunMode, TVSystem,
+};
 use std::collections::VecDeque;
 use std::env;
 use std::path::PathBuf;
@@ -9,12 +11,14 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const AUDIO_TARGET_BUFFER_MS: usize = 40;
-const AUDIO_MAX_BUFFER_MS: usize = 80;
+const AUDIO_TARGET_BUFFER_MS: usize = 50;
+const AUDIO_MAX_BUFFER_MS: usize = 100;
+const AUDIO_CRITICAL_BUFFER_MS: usize = 12;
+const AUDIO_CATCH_UP_FRAME_LIMIT: usize = 1;
 
 fn usage(program: &str) {
-    eprintln!("Usage: {program} <rom-path>");
-    eprintln!(r#"Example: {program} "roms/mmc1/Rockman2(J).nes""#);
+    eprintln!("Usage: {program} [--tv-system auto|ntsc|pal|dendy] <rom-path>");
+    eprintln!(r#"Example: {program} --tv-system ntsc "roms/mmc1/Rockman2(J).nes""#);
     eprintln!("Controls:");
     eprintln!("  Arrows  D-pad");
     eprintln!("  X/Z     A/B");
@@ -35,14 +39,43 @@ fn main() -> ExitCode {
         .next()
         .unwrap_or_else(|| "desktop_frontend".to_string());
 
-    let Some(rom_path) = args.next() else {
+    let mut tv_system_override = Some(TVSystem::NTSC);
+    let mut rom_path = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--help" | "-h" => {
+                usage(&program);
+                return ExitCode::SUCCESS;
+            }
+            "--tv-system" => {
+                let Some(value) = args.next() else {
+                    eprintln!("missing value after --tv-system");
+                    usage(&program);
+                    return ExitCode::from(2);
+                };
+                tv_system_override = match parse_tv_system_override(&value) {
+                    Some(value) => value,
+                    None => {
+                        eprintln!("invalid --tv-system value {value:?}");
+                        usage(&program);
+                        return ExitCode::from(2);
+                    }
+                };
+            }
+            _ if rom_path.is_none() => rom_path = Some(arg),
+            _ => {
+                eprintln!("unexpected argument {arg:?}");
+                usage(&program);
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let Some(rom_path) = rom_path else {
         usage(&program);
         return ExitCode::from(2);
     };
-    if rom_path == "--help" || rom_path == "-h" {
-        usage(&program);
-        return ExitCode::SUCCESS;
-    }
 
     let rom = match std::fs::read(&rom_path) {
         Ok(rom) => rom,
@@ -52,13 +85,14 @@ fn main() -> ExitCode {
         }
     };
 
-    let mut runtime = match FrontendRuntime::from_rom_bytes(&rom) {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            eprintln!("failed to load ROM {rom_path:?}: {error}");
-            return ExitCode::from(1);
-        }
-    };
+    let mut runtime =
+        match FrontendRuntime::from_rom_bytes_with_tv_system_override(&rom, tv_system_override) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                eprintln!("failed to load ROM {rom_path:?}: {error}");
+                return ExitCode::from(1);
+            }
+        };
     let save_path = default_save_path(&rom_path);
     let audio_player = match AudioPlayer::new(runtime.snapshot().audio.sample_rate) {
         Ok(player) => Some(player),
@@ -91,6 +125,8 @@ fn main() -> ExitCode {
     let mut fps_window_start = Instant::now();
     let mut status_message = format!("save slot {}", save_path.display());
 
+    let mut snapshot = runtime.snapshot();
+
     while window.is_open() && !window.is_key_down(Key::Escape) {
         if window.is_key_pressed(Key::F5, KeyRepeat::No) {
             status_message = match runtime.save_state() {
@@ -113,13 +149,42 @@ fn main() -> ExitCode {
         }
 
         let input = collect_input(&window);
-        let snapshot = runtime.step(input);
+        snapshot = runtime.step(input);
         if snapshot.status.quit_requested {
             break;
         }
 
         if let Some(player) = &audio_player {
             player.push_samples(snapshot.audio.samples, snapshot.audio.sample_rate);
+
+            let allow_audio_catch_up = matches!(snapshot.status.mode, RunMode::Running)
+                && !input.reset
+                && !input.toggle_pause
+                && !input.step_frame
+                && !input.step_cpu_instruction
+                && !input.quit;
+
+            if allow_audio_catch_up {
+                let catch_up_input = FrontendInput {
+                    controller1: input.controller1,
+                    controller2: input.controller2,
+                    ..FrontendInput::default()
+                };
+
+                let mut catch_up_frames = 0usize;
+                while player.needs_urgent_refill() && catch_up_frames < AUDIO_CATCH_UP_FRAME_LIMIT {
+                    snapshot = runtime.step(catch_up_input);
+                    if snapshot.status.quit_requested {
+                        break;
+                    }
+                    player.push_samples(snapshot.audio.samples, snapshot.audio.sample_rate);
+                    catch_up_frames += 1;
+                }
+            }
+        }
+
+        if snapshot.status.quit_requested {
+            break;
         }
 
         let buffer = frame_to_argb32(snapshot.video);
@@ -144,12 +209,28 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn parse_tv_system_override(value: &str) -> Option<Option<TVSystem>> {
+    match value {
+        "auto" => Some(None),
+        "ntsc" => Some(Some(TVSystem::NTSC)),
+        "pal" => Some(Some(TVSystem::PAL)),
+        "dendy" => Some(Some(TVSystem::DENDY)),
+        _ => None,
+    }
+}
+
 struct AudioPlayer {
-    device_sample_rate: u32,
+    critical_queue_samples: usize,
     target_queue_samples: usize,
     max_queue_samples: usize,
-    queue: Arc<Mutex<VecDeque<f32>>>,
+    resampler: Mutex<StreamingLinearResampler>,
+    output_state: Arc<Mutex<AudioOutputState>>,
     _stream: cpal::Stream,
+}
+
+struct AudioOutputState {
+    queue: VecDeque<f32>,
+    last_sample: f32,
 }
 
 impl AudioPlayer {
@@ -163,17 +244,24 @@ impl AudioPlayer {
             .map_err(|error| format!("failed to query default output config: {error}"))?;
         let channels = usize::from(default_config.channels());
         let device_sample_rate = default_config.sample_rate().0;
+        let critical_queue_samples = device_sample_rate as usize * AUDIO_CRITICAL_BUFFER_MS / 1000;
         let target_queue_samples = device_sample_rate as usize * AUDIO_TARGET_BUFFER_MS / 1000;
         let max_queue_samples = device_sample_rate as usize * AUDIO_MAX_BUFFER_MS / 1000;
-        let queue = Arc::new(Mutex::new(VecDeque::new()));
-        let queue_for_stream = Arc::clone(&queue);
+        let resampler = Mutex::new(StreamingLinearResampler::new(device_sample_rate));
+        let output_state = Arc::new(Mutex::new(AudioOutputState {
+            queue: VecDeque::new(),
+            last_sample: 0.0,
+        }));
+        let output_state_for_stream = Arc::clone(&output_state);
         let error_callback = |error| eprintln!("audio stream error: {error}");
 
         let stream = match default_config.sample_format() {
             cpal::SampleFormat::F32 => device
                 .build_output_stream(
                     &default_config.config(),
-                    move |data: &mut [f32], _| write_audio_data(data, channels, &queue_for_stream),
+                    move |data: &mut [f32], _| {
+                        write_audio_data(data, channels, &output_state_for_stream)
+                    },
                     error_callback,
                     None,
                 )
@@ -182,7 +270,7 @@ impl AudioPlayer {
                 .build_output_stream(
                     &default_config.config(),
                     move |data: &mut [i16], _| {
-                        write_audio_data_i16(data, channels, &queue_for_stream)
+                        write_audio_data_i16(data, channels, &output_state_for_stream)
                     },
                     error_callback,
                     None,
@@ -192,7 +280,7 @@ impl AudioPlayer {
                 .build_output_stream(
                     &default_config.config(),
                     move |data: &mut [u16], _| {
-                        write_audio_data_u16(data, channels, &queue_for_stream)
+                        write_audio_data_u16(data, channels, &output_state_for_stream)
                     },
                     error_callback,
                     None,
@@ -209,10 +297,11 @@ impl AudioPlayer {
             .map_err(|error| format!("failed to start audio stream: {error}"))?;
 
         Ok(Self {
-            device_sample_rate,
+            critical_queue_samples,
             target_queue_samples,
             max_queue_samples,
-            queue,
+            resampler,
+            output_state,
             _stream: stream,
         })
     }
@@ -222,35 +311,132 @@ impl AudioPlayer {
             return;
         }
 
-        let mono_samples = if source_sample_rate == self.device_sample_rate {
-            samples.to_vec()
+        let mono_samples = if let Ok(mut resampler) = self.resampler.lock() {
+            resampler.resample_chunk(samples, source_sample_rate)
         } else {
-            resample_mono(samples, source_sample_rate, self.device_sample_rate)
+            return;
         };
 
-        if let Ok(mut queue) = self.queue.lock() {
+        if let Ok(mut output_state) = self.output_state.lock() {
             for sample in mono_samples {
-                queue.push_back(sample.clamp(-1.0, 1.0));
+                output_state.queue.push_back(sample.clamp(-1.0, 1.0));
             }
 
-            if queue.len() > self.max_queue_samples {
-                while queue.len() > self.target_queue_samples {
-                    let _ = queue.pop_front();
+            if output_state.queue.len() > self.max_queue_samples {
+                while output_state.queue.len() > self.target_queue_samples {
+                    if let Some(sample) = output_state.queue.pop_front() {
+                        output_state.last_sample = sample;
+                    }
                 }
             }
 
-            while queue.len() > self.max_queue_samples {
-                let _ = queue.pop_front();
+            while output_state.queue.len() > self.max_queue_samples {
+                if let Some(sample) = output_state.queue.pop_front() {
+                    output_state.last_sample = sample;
+                }
             }
+        }
+    }
+
+    fn needs_urgent_refill(&self) -> bool {
+        if let Ok(output_state) = self.output_state.lock() {
+            output_state.queue.len() < self.critical_queue_samples
+        } else {
+            false
         }
     }
 }
 
-fn write_audio_data(output: &mut [f32], channels: usize, queue: &Arc<Mutex<VecDeque<f32>>>) {
+struct StreamingLinearResampler {
+    target_rate: u32,
+    source_rate: u32,
+    step: f64,
+    history: VecDeque<f32>,
+    history_start_index: i64,
+    latest_input_index: i64,
+    next_output_position: f64,
+}
+
+impl StreamingLinearResampler {
+    fn new(target_rate: u32) -> Self {
+        Self {
+            target_rate,
+            source_rate: 0,
+            step: 1.0,
+            history: VecDeque::new(),
+            history_start_index: 0,
+            latest_input_index: -1,
+            next_output_position: 0.0,
+        }
+    }
+
+    fn reset(&mut self, source_rate: u32) {
+        self.source_rate = source_rate;
+        self.step = source_rate as f64 / self.target_rate as f64;
+        self.history.clear();
+        self.history_start_index = 0;
+        self.latest_input_index = -1;
+        self.next_output_position = 0.0;
+    }
+
+    fn resample_chunk(&mut self, samples: &[f32], source_rate: u32) -> Vec<f32> {
+        if samples.is_empty() || source_rate == 0 || self.target_rate == 0 {
+            return Vec::new();
+        }
+
+        if self.source_rate != source_rate || self.history.is_empty() {
+            self.reset(source_rate);
+        }
+
+        for &sample in samples {
+            self.latest_input_index += 1;
+            self.history.push_back(sample);
+        }
+
+        let mut output = Vec::new();
+        while self.can_emit_sample() {
+            output.push(self.current_output_sample());
+            self.next_output_position += self.step;
+            self.discard_consumed_history();
+        }
+
+        output
+    }
+
+    fn can_emit_sample(&self) -> bool {
+        self.latest_input_index >= self.next_output_position.floor() as i64 + 1
+    }
+
+    fn current_output_sample(&self) -> f32 {
+        let index = self.next_output_position.floor() as i64;
+        let frac = (self.next_output_position - index as f64) as f32;
+        let a = self.history[(index - self.history_start_index) as usize];
+        let b = self.history[(index + 1 - self.history_start_index) as usize];
+        a + (b - a) * frac
+    }
+
+    fn discard_consumed_history(&mut self) {
+        let keep_from = self.next_output_position.floor() as i64;
+        while self.history_start_index < keep_from {
+            let _ = self.history.pop_front();
+            self.history_start_index += 1;
+        }
+    }
+}
+
+fn write_audio_data(
+    output: &mut [f32],
+    channels: usize,
+    output_state: &Arc<Mutex<AudioOutputState>>,
+) {
     let mut next_sample = 0.0;
-    if let Ok(mut queue) = queue.lock() {
+    if let Ok(mut output_state) = output_state.lock() {
         for frame in output.chunks_mut(channels) {
-            next_sample = queue.pop_front().unwrap_or(0.0);
+            next_sample = output_state
+                .queue
+                .pop_front()
+                .unwrap_or(output_state.last_sample);
+            output_state.last_sample = next_sample;
             for sample in frame {
                 *sample = next_sample;
             }
@@ -262,48 +448,29 @@ fn write_audio_data(output: &mut [f32], channels: usize, queue: &Arc<Mutex<VecDe
     }
 }
 
-fn write_audio_data_i16(output: &mut [i16], channels: usize, queue: &Arc<Mutex<VecDeque<f32>>>) {
+fn write_audio_data_i16(
+    output: &mut [i16],
+    channels: usize,
+    output_state: &Arc<Mutex<AudioOutputState>>,
+) {
     let mut mono = vec![0.0; output.len()];
-    write_audio_data(&mut mono, channels, queue);
+    write_audio_data(&mut mono, channels, output_state);
     for (dst, src) in output.iter_mut().zip(mono) {
         *dst = (src * f32::from(i16::MAX)) as i16;
     }
 }
 
-fn write_audio_data_u16(output: &mut [u16], channels: usize, queue: &Arc<Mutex<VecDeque<f32>>>) {
+fn write_audio_data_u16(
+    output: &mut [u16],
+    channels: usize,
+    output_state: &Arc<Mutex<AudioOutputState>>,
+) {
     let mut mono = vec![0.0; output.len()];
-    write_audio_data(&mut mono, channels, queue);
+    write_audio_data(&mut mono, channels, output_state);
     for (dst, src) in output.iter_mut().zip(mono) {
         let normalized = (src * 0.5 + 0.5).clamp(0.0, 1.0);
         *dst = (normalized * f32::from(u16::MAX)) as u16;
     }
-}
-
-fn resample_mono(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
-    if samples.is_empty() || source_rate == 0 || target_rate == 0 {
-        return Vec::new();
-    }
-    if source_rate == target_rate {
-        return samples.to_vec();
-    }
-
-    let target_len = samples.len().saturating_mul(target_rate as usize) / source_rate as usize;
-    if target_len == 0 {
-        return Vec::new();
-    }
-
-    let step = source_rate as f32 / target_rate as f32;
-    let mut pos = 0.0f32;
-    let mut resampled = Vec::with_capacity(target_len);
-    for _ in 0..target_len {
-        let index = pos.floor() as usize;
-        let frac = pos - index as f32;
-        let a = samples[index.min(samples.len() - 1)];
-        let b = samples[(index + 1).min(samples.len() - 1)];
-        resampled.push(a + (b - a) * frac);
-        pos += step;
-    }
-    resampled
 }
 
 fn collect_input(window: &Window) -> FrontendInput {
@@ -357,6 +524,64 @@ fn collect_input(window: &Window) -> FrontendInput {
         step_cpu_instruction: window.is_key_pressed(Key::M, KeyRepeat::No),
         quit: window.is_key_pressed(Key::Escape, KeyRepeat::No),
         ..FrontendInput::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AudioOutputState, StreamingLinearResampler, write_audio_data};
+    use std::collections::VecDeque;
+    use std::f32::consts::PI;
+    use std::sync::{Arc, Mutex};
+
+    fn estimate_positive_zero_crossing_frequency(samples: &[f32], sample_rate: f32) -> f32 {
+        let mut crossings = 0usize;
+        for window in samples.windows(2) {
+            if window[0] <= 0.0 && window[1] > 0.0 {
+                crossings += 1;
+            }
+        }
+        crossings as f32 * sample_rate / samples.len() as f32
+    }
+
+    #[test]
+    fn streaming_resampler_preserves_tone_across_chunk_boundaries() {
+        let source_rate = 44_100u32;
+        let target_rate = 48_000u32;
+        let tone_hz = 440.0f32;
+        let phase_step = 2.0 * PI * tone_hz / source_rate as f32;
+        let mut phase = 0.0f32;
+        let mut resampler = StreamingLinearResampler::new(target_rate);
+        let mut output = Vec::new();
+
+        for _ in 0..120 {
+            let mut chunk = Vec::with_capacity(367);
+            for _ in 0..367 {
+                chunk.push(phase.sin());
+                phase += phase_step;
+            }
+            output.extend(resampler.resample_chunk(&chunk, source_rate));
+        }
+
+        let measured_hz =
+            estimate_positive_zero_crossing_frequency(&output[1024..], target_rate as f32);
+        assert!(
+            (measured_hz - tone_hz).abs() < 3.0,
+            "expected about {tone_hz:.2} Hz, measured {measured_hz:.2} Hz"
+        );
+    }
+
+    #[test]
+    fn audio_callback_reuses_last_sample_on_underrun() {
+        let output_state = Arc::new(Mutex::new(AudioOutputState {
+            queue: VecDeque::from([0.25]),
+            last_sample: -0.5,
+        }));
+        let mut output = [0.0f32; 4];
+
+        write_audio_data(&mut output, 1, &output_state);
+
+        assert_eq!(output, [0.25, 0.25, 0.25, 0.25]);
     }
 }
 

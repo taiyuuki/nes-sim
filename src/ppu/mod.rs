@@ -299,8 +299,7 @@ impl PPU {
         cpu_cycle_offset: u8,
     ) {
         self.open_bus = data;
-        let (future_scanline, _, _) =
-            self.predict_status_timing(u16::from(cpu_cycle_offset) * 3);
+        let (future_scanline, _, _) = self.predict_status_timing(u16::from(cpu_cycle_offset) * 3);
 
         match addr {
             0x2000 => {
@@ -990,8 +989,7 @@ impl PPU {
     }
 
     fn rendering_vram_access_active_on_scanline(&self, scanline: i16) -> bool {
-        self.rendering_on()
-            && (scanline < VISIBLE_SCANLINES || scanline == self.num_scanlines - 1)
+        self.rendering_on() && (scanline < VISIBLE_SCANLINES || scanline == self.num_scanlines - 1)
     }
 
     fn rendering_oam_access_active(&self) -> bool {

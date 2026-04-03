@@ -1,6 +1,6 @@
 use super::{
     ControllerButton, ControllerState, CoreCommand, CoreEvent, FrontendInput, FrontendRuntime, NES,
-    RunMode,
+    RunMode, TVSystem,
 };
 use crate::bus::CPUBus;
 use crate::headless::{frame_to_ppm, stable_byte_hash, write_frame_ppm};
@@ -259,6 +259,26 @@ fn pal_cpu_schedule_uses_33334_pattern() {
             9..=11 => 3,
             12..=15 => 4,
             16 => 5,
+            _ => unreachable!(),
+        };
+        assert_eq!(nes.cpu.clocks(), expected, "master clock step {}", step);
+    }
+}
+
+#[test]
+fn tv_system_override_can_force_ntsc_cpu_schedule_for_pal_header() {
+    let mut nes = NES::new();
+    let rom = make_ines_with_tv(0x01);
+
+    nes.load_cartridge_ines_with_tv_system_override(&rom, Some(TVSystem::NTSC))
+        .expect("cartridge should load with NTSC override");
+
+    for step in 1..=6 {
+        nes.clock();
+        let expected = match step {
+            1..=2 => 0,
+            3..=5 => 1,
+            6 => 2,
             _ => unreachable!(),
         };
         assert_eq!(nes.cpu.clocks(), expected, "master clock step {}", step);

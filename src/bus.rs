@@ -1,5 +1,5 @@
 use crate::apu::APU;
-use crate::cartridge::{Cartridge, CartridgeError, Mirroring};
+use crate::cartridge::{Cartridge, CartridgeError, Mirroring, TVSystem};
 use crate::dma::DmaController;
 use crate::input::{ControllerState, Joypad};
 use crate::ppu::{PPU, PPUBus};
@@ -234,7 +234,16 @@ impl NESBus {
     }
 
     pub fn load_cartridge_ines(&mut self, rom: &[u8]) -> Result<(), CartridgeError> {
-        let cartridge: Cartridge = Cartridge::from_ines(rom)?;
+        self.load_cartridge_ines_with_tv_system_override(rom, None)
+    }
+
+    pub fn load_cartridge_ines_with_tv_system_override(
+        &mut self,
+        rom: &[u8],
+        tv_system_override: Option<TVSystem>,
+    ) -> Result<(), CartridgeError> {
+        let cartridge: Cartridge =
+            Cartridge::from_ines_with_tv_system_override(rom, tv_system_override)?;
         self.insert_cartridge(cartridge);
         Ok(())
     }
@@ -348,11 +357,8 @@ impl NESBus {
             0x2000..=0x3FFF => {
                 let ppu = &mut self.ppu;
                 let ppu_memory = &mut self.ppu_memory;
-                let data = ppu.cpu_read_register_timed(
-                    ppu_memory,
-                    0x2000 | (addr & 0x0007),
-                    cycle_offset,
-                );
+                let data =
+                    ppu.cpu_read_register_timed(ppu_memory, 0x2000 | (addr & 0x0007), cycle_offset);
                 self.latched_cpu_read(data)
             }
             0x4015 => self.apu.read_status_at_offset(cycle_offset) | (self.cpu_open_bus & 0x20),

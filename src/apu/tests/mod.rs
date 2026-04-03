@@ -1,4 +1,63 @@
 use super::{APU, DmcDmaKind, DmcDmaRequest, PulseChannel};
+use std::f32::consts::PI;
+
+fn estimate_positive_zero_crossing_frequency(samples: &[f32], sample_rate: f32) -> f32 {
+    let mut crossings = 0usize;
+    for window in samples.windows(2) {
+        if window[0] <= 0.0 && window[1] > 0.0 {
+            crossings += 1;
+        }
+    }
+
+    crossings as f32 * sample_rate / samples.len() as f32
+}
+
+fn pulse_cpu_cycles_per_full_wave(timer_period: u16) -> u64 {
+    let mut pulse = PulseChannel::new(true);
+    pulse.timer_period = timer_period;
+    pulse.timer_value = timer_period;
+
+    let start_step = pulse.sequence_step;
+    let mut advances = 0u8;
+    for cpu_cycle in 1..200_000u64 {
+        if cpu_cycle & 1 == 0 {
+            let before = pulse.sequence_step;
+            pulse.clock_timer();
+            if pulse.sequence_step != before {
+                advances = advances.wrapping_add(1);
+                if advances >= 8 && pulse.sequence_step == start_step {
+                    return cpu_cycle;
+                }
+            }
+        }
+    }
+
+    panic!("pulse wave did not complete within search window");
+}
+
+fn triangle_cpu_cycles_per_full_wave(timer_period: u16) -> u64 {
+    let mut triangle = super::TriangleChannel::new();
+    triangle.timer_period = timer_period;
+    triangle.timer_value = timer_period;
+    triangle.enabled = true;
+    triangle.length_counter = 1;
+    triangle.linear_counter = 1;
+
+    let start_step = triangle.sequence_step;
+    let mut advances = 0u8;
+    for cpu_cycle in 1..200_000u64 {
+        let before = triangle.sequence_step;
+        triangle.clock_timer();
+        if triangle.sequence_step != before {
+            advances = advances.wrapping_add(1);
+            if advances >= 32 && triangle.sequence_step == start_step {
+                return cpu_cycle;
+            }
+        }
+    }
+
+    panic!("triangle wave did not complete within search window");
+}
 
 fn apu_with_pending_frame_irq() -> APU {
     let mut apu = APU::new();
@@ -271,6 +330,95 @@ fn resampler_rejects_cpu_rate_nyquist_toggle_noise() {
 }
 
 #[test]
+fn resampler_preserves_input_tone_frequency() {
+    let mut resampler = super::AudioResampler::new();
+    let mut output = Vec::new();
+    let tone_hz = 440.0f32;
+    let input_rate = 1_789_773.0f32;
+    let phase_step = 2.0 * PI * tone_hz / input_rate;
+    let mut phase = 0.0f32;
+
+    for _ in 0..300_000 {
+        resampler.push_source_sample(phase.sin(), &mut output);
+        phase += phase_step;
+    }
+
+    let expected_len = 300_000usize * 44_100 / 1_789_773usize;
+    assert!(
+        output.len().abs_diff(expected_len) <= 2,
+        "expected about {expected_len} output samples, got {}",
+        output.len()
+    );
+
+    let measured_hz = estimate_positive_zero_crossing_frequency(&output[2048..], 44_100.0);
+    assert!(
+        (measured_hz - tone_hz).abs() < 10.0,
+        "expected about {tone_hz:.2} Hz, measured {measured_hz:.2} Hz"
+    );
+}
+
+#[test]
+fn pulse_channel_output_frequency_matches_ntsc_timer_formula() {
+    let mut apu = APU::new();
+    let timer_period = 253u16;
+    let expected_hz = 1_789_773.0 / (16.0 * (timer_period + 1) as f32);
+
+    apu.write_register_at_offset(0x4015, 0x01, 0);
+    apu.write_register_at_offset(0x4000, 0x9F, 0);
+    apu.write_register_at_offset(0x4001, 0x08, 0);
+    apu.write_register_at_offset(0x4002, timer_period as u8, 0);
+    apu.write_register_at_offset(0x4003, ((timer_period >> 8) as u8) | 0xF8, 0);
+
+    for _ in 0..40_000 {
+        apu.tick_cpu_cycle();
+    }
+
+    apu.clear_audio_samples();
+
+    for _ in 0..200_000 {
+        apu.tick_cpu_cycle();
+    }
+
+    let measured_hz =
+        estimate_positive_zero_crossing_frequency(apu.audio_samples(), apu.sample_rate() as f32);
+
+    assert!(
+        (measured_hz - expected_hz).abs() < 10.0,
+        "expected about {expected_hz:.2} Hz, measured {measured_hz:.2} Hz"
+    );
+}
+
+#[test]
+fn triangle_channel_output_frequency_matches_ntsc_timer_formula() {
+    let mut apu = APU::new();
+    let timer_period = 126u16;
+    let expected_hz = 1_789_773.0 / (32.0 * (timer_period + 1) as f32);
+
+    apu.write_register_at_offset(0x4015, 0x04, 0);
+    apu.write_register_at_offset(0x4008, 0x8F, 0);
+    apu.write_register_at_offset(0x400A, timer_period as u8, 0);
+    apu.write_register_at_offset(0x400B, ((timer_period >> 8) as u8) | 0xF8, 0);
+
+    for _ in 0..40_000 {
+        apu.tick_cpu_cycle();
+    }
+
+    apu.clear_audio_samples();
+
+    for _ in 0..200_000 {
+        apu.tick_cpu_cycle();
+    }
+
+    let measured_hz =
+        estimate_positive_zero_crossing_frequency(apu.audio_samples(), apu.sample_rate() as f32);
+
+    assert!(
+        (measured_hz - expected_hz).abs() < 3.0,
+        "expected about {expected_hz:.2} Hz, measured {measured_hz:.2} Hz"
+    );
+}
+
+#[test]
 fn dmc_control_write_does_not_reset_active_timer_phase() {
     let mut dmc = super::DmcChannel::new();
     dmc.enabled = true;
@@ -296,4 +444,26 @@ fn dmc_fastest_rate_clocks_output_after_54_cpu_cycles() {
 
     dmc.clock_timer();
     assert_eq!(dmc.bits_remaining, 8);
+}
+
+#[test]
+fn pulse_timer_sequence_matches_ntsc_frequency_formula_in_cpu_cycles() {
+    let timer_period = 253u16;
+    let expected_cycles = 16 * u64::from(timer_period + 1);
+
+    assert_eq!(
+        pulse_cpu_cycles_per_full_wave(timer_period),
+        expected_cycles
+    );
+}
+
+#[test]
+fn triangle_timer_sequence_matches_ntsc_frequency_formula_in_cpu_cycles() {
+    let timer_period = 126u16;
+    let expected_cycles = 32 * u64::from(timer_period + 1);
+
+    assert_eq!(
+        triangle_cpu_cycles_per_full_wave(timer_period),
+        expected_cycles
+    );
 }

@@ -72,6 +72,14 @@ fn make_ines_with_flags(prg_rom: &[u8], chr_rom: &[u8], flags6: u8) -> Vec<u8> {
     rom
 }
 
+fn make_ines_with_tv_bytes(flags9: u8, flags10: u8, tail: [u8; 5]) -> Vec<u8> {
+    let mut rom = make_ines(1, 1, 0x00, 0xEA, 0x55);
+    rom[9] = flags9;
+    rom[10] = flags10;
+    rom[11..16].copy_from_slice(&tail);
+    rom
+}
+
 #[test]
 fn parses_ines_header_and_maps_nrom_prg() {
     let mut rom = make_ines(1, 1, 0x01, 0xEA, 0x55);
@@ -230,6 +238,31 @@ fn mmc3_switches_prg_banks_and_respects_prg_mode() {
 
     assert_eq!(cartridge.cpu_read(0x8000), Some(0x06));
     assert_eq!(cartridge.cpu_read(0xC000), Some(0x02));
+}
+
+#[test]
+fn ines1_clean_header_can_request_pal_timing() {
+    let rom = make_ines_with_tv_bytes(0x01, 0x00, [0; 5]);
+    let cartridge = Cartridge::from_ines(&rom).expect("valid NROM should parse");
+
+    assert_eq!(cartridge.tv_system(), TVSystem::PAL);
+}
+
+#[test]
+fn ines1_dirty_extension_bytes_fall_back_to_ntsc_timing() {
+    let rom = make_ines_with_tv_bytes(0x01, 0x00, [0x44, 0x69, 0x73, 0x6B, 0x44]);
+    let cartridge = Cartridge::from_ines(&rom).expect("valid NROM should parse");
+
+    assert_eq!(cartridge.tv_system(), TVSystem::NTSC);
+}
+
+#[test]
+fn tv_system_override_wins_over_header_hint() {
+    let rom = make_ines_with_tv_bytes(0x01, 0x00, [0; 5]);
+    let cartridge = Cartridge::from_ines_with_tv_system_override(&rom, Some(TVSystem::NTSC))
+        .expect("valid NROM should parse");
+
+    assert_eq!(cartridge.tv_system(), TVSystem::NTSC);
 }
 
 #[test]

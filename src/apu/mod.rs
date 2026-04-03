@@ -5,7 +5,10 @@ use std::sync::OnceLock;
 
 const CPU_CLOCK_HZ_NTSC: u64 = 1_789_773;
 const AUDIO_SAMPLE_RATE: u32 = 44_100;
-const AUDIO_HIGHPASS_COEFFICIENT: f32 = 0.995;
+const AUDIO_HIGHPASS_1_CUTOFF_HZ: f32 = 90.0;
+const AUDIO_HIGHPASS_2_CUTOFF_HZ: f32 = 440.0;
+const AUDIO_LOWPASS_CUTOFF_HZ: f32 = 14_000.0;
+const AUDIO_OUTPUT_GAIN: f32 = 0.9;
 const AUDIO_RESAMPLER_TAPS: usize = 32;
 const AUDIO_RESAMPLER_PHASES: usize = 256;
 const AUDIO_RESAMPLER_HALF_TAPS: usize = AUDIO_RESAMPLER_TAPS / 2;
@@ -1180,12 +1183,95 @@ impl Default for FrameCounter {
     }
 }
 
+struct OnePoleHighPass {
+    alpha: f32,
+    last_input: f32,
+    last_output: f32,
+}
+
+impl OnePoleHighPass {
+    fn new(cutoff_hz: f32) -> Self {
+        let rc = 1.0 / (2.0 * PI * cutoff_hz);
+        let dt = 1.0 / AUDIO_SAMPLE_RATE as f32;
+        Self {
+            alpha: rc / (rc + dt),
+            last_input: 0.0,
+            last_output: 0.0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.last_input = 0.0;
+        self.last_output = 0.0;
+    }
+
+    fn process(&mut self, input: f32) -> f32 {
+        let output = self.alpha * (self.last_output + input - self.last_input);
+        self.last_input = input;
+        self.last_output = output;
+        output
+    }
+}
+
+struct OnePoleLowPass {
+    alpha: f32,
+    last_output: f32,
+}
+
+impl OnePoleLowPass {
+    fn new(cutoff_hz: f32) -> Self {
+        let rc = 1.0 / (2.0 * PI * cutoff_hz);
+        let dt = 1.0 / AUDIO_SAMPLE_RATE as f32;
+        Self {
+            alpha: dt / (rc + dt),
+            last_output: 0.0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.last_output = 0.0;
+    }
+
+    fn process(&mut self, input: f32) -> f32 {
+        self.last_output += self.alpha * (input - self.last_output);
+        self.last_output
+    }
+}
+
+struct AudioOutputFilter {
+    highpass_90hz: OnePoleHighPass,
+    highpass_440hz: OnePoleHighPass,
+    lowpass_14khz: OnePoleLowPass,
+}
+
+impl AudioOutputFilter {
+    fn new() -> Self {
+        Self {
+            highpass_90hz: OnePoleHighPass::new(AUDIO_HIGHPASS_1_CUTOFF_HZ),
+            highpass_440hz: OnePoleHighPass::new(AUDIO_HIGHPASS_2_CUTOFF_HZ),
+            lowpass_14khz: OnePoleLowPass::new(AUDIO_LOWPASS_CUTOFF_HZ),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.highpass_90hz.reset();
+        self.highpass_440hz.reset();
+        self.lowpass_14khz.reset();
+    }
+
+    fn process(&mut self, input: f32) -> f32 {
+        let sample = self.highpass_90hz.process(input);
+        let sample = self.highpass_440hz.process(sample);
+        self.lowpass_14khz.process(sample)
+    }
+}
+
 struct AudioResampler {
     history: VecDeque<f32>,
     history_start_index: i64,
+    latest_input_index: i64,
     next_output_position: f64,
-    last_input: f32,
-    last_output: f32,
+    output_filter: AudioOutputFilter,
 }
 
 impl AudioResampler {
@@ -1193,9 +1279,9 @@ impl AudioResampler {
         let mut resampler = Self {
             history: VecDeque::new(),
             history_start_index: 0,
+            latest_input_index: -1,
             next_output_position: 0.0,
-            last_input: 0.0,
-            last_output: 0.0,
+            output_filter: AudioOutputFilter::new(),
         };
         resampler.reset();
         resampler
@@ -1205,17 +1291,18 @@ impl AudioResampler {
         self.history.clear();
         self.history.resize(AUDIO_RESAMPLER_HALF_TAPS - 1, 0.0);
         self.history_start_index = -((AUDIO_RESAMPLER_HALF_TAPS as i64) - 1);
+        self.latest_input_index = -1;
         self.next_output_position = 0.0;
-        self.last_input = 0.0;
-        self.last_output = 0.0;
+        self.output_filter.reset();
     }
 
     fn push_source_sample(&mut self, sample: f32, output: &mut Vec<f32>) {
+        self.latest_input_index += 1;
         self.history.push_back(sample);
 
         while self.can_emit_sample() {
             let sample = self.current_output_sample();
-            output.push(self.highpass(sample).clamp(-1.0, 1.0));
+            output.push((self.output_filter.process(sample) * AUDIO_OUTPUT_GAIN).clamp(-1.0, 1.0));
             self.next_output_position += AUDIO_RESAMPLER_STEP;
             self.discard_consumed_history();
         }
@@ -1223,7 +1310,7 @@ impl AudioResampler {
 
     fn can_emit_sample(&self) -> bool {
         let (_, window_end) = Self::window_bounds(self.next_output_position);
-        self.latest_history_index() >= window_end
+        self.latest_input_index >= window_end
     }
 
     fn current_output_sample(&self) -> f32 {
@@ -1243,23 +1330,13 @@ impl AudioResampler {
         acc
     }
 
-    fn highpass(&mut self, input: f32) -> f32 {
-        let output = input - self.last_input + (self.last_output * AUDIO_HIGHPASS_COEFFICIENT);
-        self.last_input = input;
-        self.last_output = output;
-        output
-    }
-
     fn discard_consumed_history(&mut self) {
         let (next_window_start, _) = Self::window_bounds(self.next_output_position);
-        while self.history_start_index < next_window_start {
+        let discard_upto = next_window_start.min(self.latest_input_index + 1);
+        while self.history_start_index < discard_upto {
             let _ = self.history.pop_front();
             self.history_start_index += 1;
         }
-    }
-
-    fn latest_history_index(&self) -> i64 {
-        self.history_start_index + self.history.len() as i64 - 1
     }
 
     fn window_bounds(position: f64) -> (i64, i64) {

@@ -368,7 +368,10 @@ fn timed_ppustatus_reads_sample_the_actual_bus_phase() {
         0,
         "an absolute CPU read should sample PPUSTATUS several CPU subcycles later"
     );
-    assert!(!ppu.in_vblank(), "reading PPUSTATUS should still clear the flag");
+    assert!(
+        !ppu.in_vblank(),
+        "reading PPUSTATUS should still clear the flag"
+    );
 }
 
 #[test]
