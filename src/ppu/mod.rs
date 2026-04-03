@@ -266,8 +266,17 @@ impl PPU {
     }
 
     pub fn cpu_read_register(&mut self, bus: &mut impl PPUBus, addr: u16) -> u8 {
+        self.cpu_read_register_timed(bus, addr, 0)
+    }
+
+    pub fn cpu_read_register_timed(
+        &mut self,
+        bus: &mut impl PPUBus,
+        addr: u16,
+        cpu_cycle_offset: u8,
+    ) -> u8 {
         match addr {
-            0x2002 => self.read_status(),
+            0x2002 => self.read_status_timed(cpu_cycle_offset),
             0x2004 => {
                 let data = self.read_oam_data();
                 self.open_bus = data;
@@ -279,7 +288,19 @@ impl PPU {
     }
 
     pub fn cpu_write_register(&mut self, bus: &mut impl PPUBus, addr: u16, data: u8) {
+        self.cpu_write_register_timed(bus, addr, data, 0);
+    }
+
+    pub fn cpu_write_register_timed(
+        &mut self,
+        bus: &mut impl PPUBus,
+        addr: u16,
+        data: u8,
+        cpu_cycle_offset: u8,
+    ) {
         self.open_bus = data;
+        let (future_scanline, _, _) =
+            self.predict_status_timing(u16::from(cpu_cycle_offset) * 3);
 
         match addr {
             0x2000 => {
@@ -290,10 +311,10 @@ impl PPU {
             }
             0x2001 => self.mask = data,
             0x2003 => self.oam_addr = data,
-            0x2004 => self.write_oam_data(data),
+            0x2004 => self.write_oam_data_timed(data, future_scanline),
             0x2005 => self.write_scroll(data),
             0x2006 => self.write_addr(data),
-            0x2007 => self.write_data(bus, data),
+            0x2007 => self.write_data_timed(bus, data, future_scanline),
             _ => {}
         }
     }
@@ -535,17 +556,15 @@ impl PPU {
         Ok(())
     }
 
-    fn read_status(&mut self) -> u8 {
-        let mut status_bits = self.status;
-        if self.scanline == self.vblank_lines {
-            match self.cycles {
-                0 => self.suppress_vblank = true,
-                1 | 2 => {
-                    status_bits |= STATUS_VBLANK;
-                    self.suppress_vblank = true;
-                }
-                _ => {}
-            }
+    fn read_status_timed(&mut self, cpu_cycle_offset: u8) -> u8 {
+        let ppu_cycle_offset = u16::from(cpu_cycle_offset) * 3;
+        let (future_scanline, future_cycles, future_status) =
+            self.predict_status_timing(ppu_cycle_offset);
+
+        let mut status_bits = future_status;
+        if future_scanline == self.vblank_lines && future_cycles == 1 {
+            status_bits &= !STATUS_VBLANK;
+            self.suppress_vblank = true;
         }
 
         let status = (status_bits & 0xE0) | (self.open_bus & 0x1F);
@@ -553,6 +572,51 @@ impl PPU {
         self.write_latch = false;
         self.open_bus = status;
         status
+    }
+
+    fn predict_status_timing(&self, ppu_cycle_offset: u16) -> (i16, u16, u8) {
+        let mut scanline = self.scanline;
+        let mut cycles = self.cycles;
+        let mut odd_frame = self.odd_frame;
+        let mut status = self.status;
+        let mut suppress_vblank = self.suppress_vblank;
+
+        for _ in 0..ppu_cycle_offset {
+            if scanline == self.vblank_lines && cycles == 1 && !suppress_vblank {
+                status |= STATUS_VBLANK;
+            }
+
+            if scanline == self.num_scanlines - 1 && cycles == 1 {
+                status &= !(STATUS_SPRITE_OVERFLOW | STATUS_SPRITE_ZERO_HIT | STATUS_VBLANK);
+                suppress_vblank = false;
+            }
+
+            let pre_render_scanline = scanline == self.num_scanlines - 1;
+            let skip_odd_frame_cycle = self.num_scanlines == 262
+                && pre_render_scanline
+                && self.rendering_on()
+                && odd_frame
+                && cycles == DOTS_PER_SCANLINE - 2;
+
+            if skip_odd_frame_cycle {
+                scanline = 0;
+                cycles = 0;
+                odd_frame = !odd_frame;
+                continue;
+            }
+
+            cycles += 1;
+            if cycles >= DOTS_PER_SCANLINE {
+                cycles = 0;
+                scanline += 1;
+                if scanline >= self.num_scanlines {
+                    scanline = 0;
+                    odd_frame = !odd_frame;
+                }
+            }
+        }
+
+        (scanline, cycles, status)
     }
 
     fn read_data(&mut self, bus: &mut impl PPUBus) -> u8 {
@@ -573,9 +637,13 @@ impl PPU {
     }
 
     fn write_data(&mut self, bus: &mut impl PPUBus, data: u8) {
+        self.write_data_timed(bus, data, self.scanline);
+    }
+
+    fn write_data_timed(&mut self, bus: &mut impl PPUBus, data: u8, effective_scanline: i16) {
         let addr = self.loopy_v & 0x3FFF;
         self.ppu_write_bus_exposed(bus, addr, data);
-        self.increment_data_access_vram_addr();
+        self.increment_data_access_vram_addr_on_scanline(effective_scanline);
     }
 
     fn write_scroll(&mut self, data: u8) {
@@ -613,8 +681,8 @@ impl PPU {
         self.set_current_vram_addr(self.loopy_v.wrapping_add(increment));
     }
 
-    fn increment_data_access_vram_addr(&mut self) {
-        if self.rendering_vram_access_active() {
+    fn increment_data_access_vram_addr_on_scanline(&mut self, scanline: i16) {
+        if self.rendering_vram_access_active_on_scanline(scanline) {
             self.increment_x();
             self.increment_y();
         } else {
@@ -622,8 +690,16 @@ impl PPU {
         }
     }
 
+    fn increment_data_access_vram_addr(&mut self) {
+        self.increment_data_access_vram_addr_on_scanline(self.scanline);
+    }
+
     fn write_oam_data(&mut self, data: u8) {
-        if self.rendering_oam_access_active() {
+        self.write_oam_data_timed(data, self.scanline);
+    }
+
+    fn write_oam_data_timed(&mut self, data: u8, effective_scanline: i16) {
+        if self.rendering_oam_access_active_on_scanline(effective_scanline) {
             self.oam_addr = self.oam_addr.wrapping_add(4);
             return;
         }
@@ -910,12 +986,20 @@ impl PPU {
     }
 
     fn rendering_vram_access_active(&self) -> bool {
+        self.rendering_vram_access_active_on_scanline(self.scanline)
+    }
+
+    fn rendering_vram_access_active_on_scanline(&self, scanline: i16) -> bool {
         self.rendering_on()
-            && (self.scanline < VISIBLE_SCANLINES || self.scanline == self.num_scanlines - 1)
+            && (scanline < VISIBLE_SCANLINES || scanline == self.num_scanlines - 1)
     }
 
     fn rendering_oam_access_active(&self) -> bool {
-        self.rendering_on() && self.scanline < VISIBLE_SCANLINES
+        self.rendering_oam_access_active_on_scanline(self.scanline)
+    }
+
+    fn rendering_oam_access_active_on_scanline(&self, scanline: i16) -> bool {
+        self.rendering_on() && scanline < VISIBLE_SCANLINES
     }
 
     fn rendering_oam_clear_phase(&self) -> bool {

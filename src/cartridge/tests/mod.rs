@@ -212,7 +212,7 @@ fn mmc3_switches_prg_banks_and_respects_prg_mode() {
     let mut cartridge = Cartridge::from_ines(&rom).expect("valid MMC3 should parse");
 
     assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
-    assert_eq!(cartridge.cpu_read(0xA000), Some(0x00));
+    assert_eq!(cartridge.cpu_read(0xA000), Some(0x01));
     assert_eq!(cartridge.cpu_read(0xC000), Some(0x06));
     assert_eq!(cartridge.cpu_read(0xE000), Some(0x07));
 
@@ -230,6 +230,35 @@ fn mmc3_switches_prg_banks_and_respects_prg_mode() {
 
     assert_eq!(cartridge.cpu_read(0x8000), Some(0x06));
     assert_eq!(cartridge.cpu_read(0xC000), Some(0x02));
+}
+
+#[test]
+fn mmc3_starts_with_linear_chr_ram_and_first_two_prg_banks_mapped() {
+    let mut prg_rom = Vec::with_capacity(4 * PRG_BANK_LEN);
+    for bank in 0..8_u8 {
+        prg_rom.extend(std::iter::repeat_n(bank, PRG_BANK_LEN / 2));
+    }
+    let rom = make_ines_with_flags(&prg_rom, &[], 0x40);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("valid MMC3 should parse");
+
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    assert_eq!(cartridge.cpu_read(0xA000), Some(0x01));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x06));
+    assert_eq!(cartridge.cpu_read(0xE000), Some(0x07));
+
+    for (addr, value) in [
+        (0x0000, 0x10),
+        (0x0400, 0x11),
+        (0x0800, 0x12),
+        (0x0C00, 0x13),
+        (0x1000, 0x14),
+        (0x1400, 0x15),
+        (0x1800, 0x16),
+        (0x1C00, 0x17),
+    ] {
+        assert!(cartridge.ppu_write(addr, value));
+        assert_eq!(cartridge.ppu_read(addr), Some(value));
+    }
 }
 
 #[test]

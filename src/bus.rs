@@ -348,7 +348,11 @@ impl NESBus {
             0x2000..=0x3FFF => {
                 let ppu = &mut self.ppu;
                 let ppu_memory = &mut self.ppu_memory;
-                let data = ppu.cpu_read_register(ppu_memory, 0x2000 | (addr & 0x0007));
+                let data = ppu.cpu_read_register_timed(
+                    ppu_memory,
+                    0x2000 | (addr & 0x0007),
+                    cycle_offset,
+                );
                 self.latched_cpu_read(data)
             }
             0x4015 => self.apu.read_status_at_offset(cycle_offset) | (self.cpu_open_bus & 0x20),
@@ -379,7 +383,12 @@ impl NESBus {
             0x2000..=0x3FFF => {
                 let ppu = &mut self.ppu;
                 let ppu_memory = &mut self.ppu_memory;
-                ppu.cpu_write_register(ppu_memory, 0x2000 | (addr & 0x0007), data);
+                ppu.cpu_write_register_timed(
+                    ppu_memory,
+                    0x2000 | (addr & 0x0007),
+                    data,
+                    cycle_offset,
+                );
             }
             0x4014 => self.dma.request_oam_dma(data),
             0x4000..=0x4013 | 0x4015 => self.apu.write_register_at_offset(addr, data, cycle_offset),

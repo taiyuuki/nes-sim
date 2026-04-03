@@ -34,7 +34,7 @@ impl Mmc3Core {
     pub(super) fn new() -> Self {
         Self {
             bank_select: 0,
-            bank_registers: [0; 8],
+            bank_registers: Self::default_bank_registers(),
             prg_ram_enabled: true,
             prg_ram_write_protect: false,
             irq_latch: 0,
@@ -45,6 +45,12 @@ impl Mmc3Core {
             last_a12: false,
             a12_fall_cycle: 0,
         }
+    }
+
+    fn default_bank_registers() -> [u8; 8] {
+        // MMC3 powers up with a linear CHR view and the first two switchable 8 KiB
+        // PRG banks visible before the game programs its own mapping.
+        [0, 2, 4, 5, 6, 7, 0, 1]
     }
 
     pub(super) fn prg_bank_number(&self, bank_count: usize, slot: usize) -> usize {

@@ -299,7 +299,7 @@ fn clock_clears_vblank_on_pre_render_scanline() {
 }
 
 #[test]
-fn reading_ppustatus_on_the_last_pre_vblank_dot_suppresses_vblank_for_that_frame() {
+fn reading_ppustatus_on_the_last_pre_vblank_dot_does_not_suppress_vblank() {
     let mut ppu = PPU::new();
     let mut bus = TestPPUBus::new();
 
@@ -313,13 +313,13 @@ fn reading_ppustatus_on_the_last_pre_vblank_dot_suppresses_vblank_for_that_frame
     ppu.clock(&mut bus);
 
     assert!(
-        !ppu.in_vblank(),
-        "reading PPUSTATUS on the last pre-VBlank dot should suppress the flag"
+        ppu.in_vblank(),
+        "reading PPUSTATUS just before vblank should not suppress the next frame flag"
     );
 }
 
 #[test]
-fn reading_ppustatus_on_vblank_dot_one_reports_set_but_clears_and_suppresses_it() {
+fn reading_ppustatus_on_vblank_dot_one_reports_clear_and_suppresses_it() {
     let mut ppu = PPU::new();
     let mut bus = TestPPUBus::new();
 
@@ -328,7 +328,7 @@ fn reading_ppustatus_on_vblank_dot_one_reports_set_but_clears_and_suppresses_it(
 
     let status = ppu.cpu_read_register(&mut bus, 0x2002);
 
-    assert_ne!(status & STATUS_VBLANK, 0);
+    assert_eq!(status & STATUS_VBLANK, 0);
     assert!(!ppu.in_vblank());
 
     ppu.clock(&mut bus);
@@ -336,12 +336,13 @@ fn reading_ppustatus_on_vblank_dot_one_reports_set_but_clears_and_suppresses_it(
 }
 
 #[test]
-fn reading_ppustatus_on_vblank_dot_two_also_suppresses_the_nmi_window() {
+fn reading_ppustatus_on_vblank_dot_two_reads_and_clears_the_flag() {
     let mut ppu = PPU::new();
     let mut bus = TestPPUBus::new();
 
     ppu.scanline = 241;
     ppu.cycles = 2;
+    ppu.status = STATUS_VBLANK;
 
     let status = ppu.cpu_read_register(&mut bus, 0x2002);
 
@@ -350,6 +351,63 @@ fn reading_ppustatus_on_vblank_dot_two_also_suppresses_the_nmi_window() {
 
     ppu.clock(&mut bus);
     assert!(!ppu.in_vblank());
+}
+
+#[test]
+fn timed_ppustatus_reads_sample_the_actual_bus_phase() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
+
+    ppu.scanline = 241;
+    ppu.cycles = 0;
+
+    let status = ppu.cpu_read_register_timed(&mut bus, 0x2002, 3);
+
+    assert_ne!(
+        status & STATUS_VBLANK,
+        0,
+        "an absolute CPU read should sample PPUSTATUS several CPU subcycles later"
+    );
+    assert!(!ppu.in_vblank(), "reading PPUSTATUS should still clear the flag");
+}
+
+#[test]
+fn timed_ppudata_write_uses_the_actual_scanline_phase_for_vram_increment() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
+
+    ppu.mask = MASK_SHOW_BG;
+    ppu.scanline = 239;
+    ppu.cycles = 340;
+    ppu.loopy_v = 0x0000;
+    ppu.vram_addr = 0x0000;
+
+    ppu.cpu_write_register_timed(&mut bus, 0x2007, 0x12, 1);
+
+    assert_eq!(bus.mem[0x0000], 0x12);
+    assert_eq!(
+        ppu.loopy_v, 0x0001,
+        "a PPUDATA write that lands on the post-render scanline should increment linearly"
+    );
+}
+
+#[test]
+fn timed_oamdata_write_uses_the_actual_scanline_phase_for_rendering_rules() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
+
+    ppu.mask = MASK_SHOW_SPRITES;
+    ppu.scanline = 239;
+    ppu.cycles = 340;
+    ppu.oam_addr = 0x10;
+
+    ppu.cpu_write_register_timed(&mut bus, 0x2004, 0x77, 1);
+
+    assert_eq!(ppu.oam[0x10], 0x77);
+    assert_eq!(
+        ppu.oam_addr, 0x11,
+        "an OAMDATA write that lands after visible rendering should perform the normal write"
+    );
 }
 
 #[test]
