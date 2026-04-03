@@ -71,7 +71,7 @@ fn main() -> ExitCode {
         nes_core::FRAME_HEIGHT,
         WindowOptions {
             resize: false,
-            scale: Scale::X4,
+            scale: Scale::X2,
             ..WindowOptions::default()
         },
     ) {

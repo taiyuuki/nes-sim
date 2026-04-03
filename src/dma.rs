@@ -1,3 +1,4 @@
+use crate::apu::DmcDmaRequest;
 use crate::bus::NESBus;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
@@ -47,9 +48,33 @@ impl OamDma {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DmcDmaState {
+    Halt,
+    HaltAlign,
+    Dummy,
+    Read,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DmcDma {
+    addr: u16,
+    state: DmcDmaState,
+}
+
+impl DmcDma {
+    fn new(request: DmcDmaRequest) -> Self {
+        Self {
+            addr: request.addr,
+            state: DmcDmaState::Halt,
+        }
+    }
+}
+
 pub struct DmaController {
     pending_oam: Option<u8>,
     active_oam: Option<OamDma>,
+    active_dmc: Option<DmcDma>,
     cpu_phase: CpuSlotPhase,
 }
 
@@ -58,6 +83,7 @@ impl DmaController {
         Self {
             pending_oam: None,
             active_oam: None,
+            active_dmc: None,
             cpu_phase: CpuSlotPhase::Get,
         }
     }
@@ -67,10 +93,36 @@ impl DmaController {
     }
 
     pub fn in_progress(&self) -> bool {
-        self.pending_oam.is_some() || self.active_oam.is_some()
+        self.pending_oam.is_some() || self.active_oam.is_some() || self.active_dmc.is_some()
     }
 
     pub fn tick_cpu_cycle(&mut self, bus: &mut NESBus) -> bool {
+        if self.active_dmc.is_none() {
+            if let Some(request) = bus.take_dmc_dma_request() {
+                self.active_dmc = Some(DmcDma::new(request));
+            }
+        }
+
+        if let Some(dma) = self.active_dmc.as_mut() {
+            match dma.state {
+                DmcDmaState::Halt => {
+                    dma.state = DmcDmaState::HaltAlign;
+                }
+                DmcDmaState::HaltAlign => {
+                    dma.state = DmcDmaState::Dummy;
+                }
+                DmcDmaState::Dummy => {
+                    dma.state = DmcDmaState::Read;
+                }
+                DmcDmaState::Read => {
+                    let data = bus.dma_read(dma.addr);
+                    bus.submit_dmc_dma_sample(data);
+                    self.active_dmc = None;
+                }
+            }
+            return true;
+        }
+
         if self.active_oam.is_none() {
             if let Some(page) = self.pending_oam.take() {
                 self.active_oam = Some(OamDma::new(page));
@@ -138,6 +190,20 @@ impl DmaController {
             None => writer.write_bool(false),
         }
 
+        match self.active_dmc {
+            Some(dma) => {
+                writer.write_bool(true);
+                writer.write_u16(dma.addr);
+                writer.write_u8(match dma.state {
+                    DmcDmaState::Halt => 0,
+                    DmcDmaState::HaltAlign => 1,
+                    DmcDmaState::Dummy => 2,
+                    DmcDmaState::Read => 3,
+                });
+            }
+            None => writer.write_bool(false),
+        }
+
         writer.write_u8(match self.cpu_phase {
             CpuSlotPhase::Get => 0,
             CpuSlotPhase::Put => 1,
@@ -171,6 +237,20 @@ impl DmaController {
                 latch,
                 state,
             })
+        } else {
+            None
+        };
+
+        self.active_dmc = if reader.read_bool()? {
+            let addr = reader.read_u16()?;
+            let state = match reader.read_u8()? {
+                0 => DmcDmaState::Halt,
+                1 => DmcDmaState::HaltAlign,
+                2 => DmcDmaState::Dummy,
+                3 => DmcDmaState::Read,
+                _ => return Err(SaveStateError::InvalidData("invalid DMC DMA state")),
+            };
+            Some(DmcDma { addr, state })
         } else {
             None
         };

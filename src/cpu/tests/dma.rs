@@ -8,6 +8,20 @@ fn clock_cpu_cycles(cpu: &mut CPU, bus: &mut NESBus, cycles: usize) {
     }
 }
 
+fn make_ines(prg_banks: u8, chr_banks: u8, flags6: u8) -> Vec<u8> {
+    let mut rom = vec![0; 16];
+    rom[0..4].copy_from_slice(b"NES\x1A");
+    rom[4] = prg_banks;
+    rom[5] = chr_banks;
+    rom[6] = flags6;
+
+    let prg_len = prg_banks as usize * 0x4000;
+    let chr_len = chr_banks as usize * 0x2000;
+    rom.extend((0..prg_len).map(|index| (index & 0xFF) as u8));
+    rom.extend((0..chr_len).map(|index| (0x80 | (index & 0x7F)) as u8));
+    rom
+}
+
 #[test]
 fn oam_dma_request_stalls_cpu_until_transfer_completes() {
     let mut cpu = CPU::new();
@@ -87,4 +101,21 @@ fn oam_dma_consumes_513_cycles_when_started_on_put_phase() {
     }
 
     assert_eq!(cycles, 513);
+}
+
+#[test]
+fn dmc_dma_fetches_sample_and_updates_open_bus() {
+    let mut cpu = CPU::new();
+    let mut bus = NESBus::new();
+    let rom = make_ines(1, 1, 0x00);
+
+    bus.load_cartridge_ines(&rom).expect("NROM should load");
+    bus.cpu_write(0x4012, 0x01);
+    bus.cpu_write(0x4013, 0x00);
+    bus.cpu_write(0x4015, 0x10);
+
+    clock_cpu_cycles(&mut cpu, &mut bus, 4);
+
+    assert_eq!(bus.cpu_read(0x4000), 0x40);
+    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x00);
 }

@@ -321,6 +321,14 @@ impl NESBus {
         self.ppu.write_oam_dma(data);
     }
 
+    pub(crate) fn take_dmc_dma_request(&mut self) -> Option<crate::apu::DmcDmaRequest> {
+        self.apu.take_dmc_dma_request()
+    }
+
+    pub(crate) fn submit_dmc_dma_sample(&mut self, data: u8) {
+        self.apu.submit_dmc_dma_sample(data);
+    }
+
     fn latched_cpu_read(&mut self, data: u8) -> u8 {
         self.cpu_open_bus = data;
         data
