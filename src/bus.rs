@@ -57,6 +57,14 @@ impl PPUMemory {
     }
 
     fn nametable_index(&self, addr: u16) -> usize {
+        if let Some(index) = self
+            .cartridge
+            .as_ref()
+            .and_then(|cartridge| cartridge.map_nametable_addr(addr))
+        {
+            return index;
+        }
+
         let offset = (addr - 0x2000) & 0x0FFF;
         let table = offset / 0x0400;
         let inner = (offset & 0x03FF) as usize;
@@ -449,6 +457,16 @@ mod tests {
         rom
     }
 
+    fn make_ines_mapper(prg_banks: u8, chr_banks: u8, mapper_id: u16, flags6_low: u8) -> Vec<u8> {
+        let mut rom = make_ines(
+            prg_banks,
+            chr_banks,
+            ((mapper_id as u8) << 4) | (flags6_low & 0x0F),
+        );
+        rom[7] = (mapper_id & 0xF0) as u8;
+        rom
+    }
+
     #[test]
     fn cartridge_prg_rom_is_visible_on_cpu_bus() {
         let mut bus = NESBus::new();
@@ -532,6 +550,80 @@ mod tests {
         bus.cpu_write(0x2006, 0x00);
         assert_eq!(bus.cpu_read(0x2007), 0x00);
         assert_eq!(bus.cpu_read(0x2007), 0xA5);
+    }
+
+    #[test]
+    fn nametable_access_tracks_mapper118_chr_bank_mirroring_in_2k_mode() {
+        let mut bus = NESBus::new();
+        let rom = make_ines_mapper(2, 1, 118, 0x00);
+
+        bus.load_cartridge_ines(&rom)
+            .expect("Mapper 118 should load");
+
+        bus.cpu_write(0x8000, 0x00);
+        bus.cpu_write(0x8001, 0x00);
+        bus.cpu_write(0x8000, 0x01);
+        bus.cpu_write(0x8001, 0x80);
+
+        bus.cpu_write(0x2006, 0x20);
+        bus.cpu_write(0x2006, 0x00);
+        bus.cpu_write(0x2007, 0x11);
+
+        bus.cpu_write(0x2006, 0x28);
+        bus.cpu_write(0x2006, 0x00);
+        bus.cpu_write(0x2007, 0x22);
+
+        bus.cpu_write(0x2006, 0x24);
+        bus.cpu_write(0x2006, 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0x11);
+
+        bus.cpu_write(0x2006, 0x2C);
+        bus.cpu_write(0x2006, 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0x22);
+
+        bus.cpu_write(0xA000, 0x00);
+        bus.cpu_write(0x2006, 0x24);
+        bus.cpu_write(0x2006, 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0x11);
+    }
+
+    #[test]
+    fn nametable_access_tracks_mapper118_chr_bank_mirroring_in_1k_mode() {
+        let mut bus = NESBus::new();
+        let rom = make_ines_mapper(2, 1, 118, 0x00);
+
+        bus.load_cartridge_ines(&rom)
+            .expect("Mapper 118 should load");
+
+        bus.cpu_write(0x8000, 0x82);
+        bus.cpu_write(0x8001, 0x80);
+        bus.cpu_write(0x8000, 0x83);
+        bus.cpu_write(0x8001, 0x00);
+        bus.cpu_write(0x8000, 0x84);
+        bus.cpu_write(0x8001, 0x80);
+        bus.cpu_write(0x8000, 0x85);
+        bus.cpu_write(0x8001, 0x00);
+
+        bus.cpu_write(0x2006, 0x20);
+        bus.cpu_write(0x2006, 0x00);
+        bus.cpu_write(0x2007, 0xA1);
+
+        bus.cpu_write(0x2006, 0x24);
+        bus.cpu_write(0x2006, 0x00);
+        bus.cpu_write(0x2007, 0xB2);
+
+        bus.cpu_write(0x2006, 0x28);
+        bus.cpu_write(0x2006, 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0xA1);
+
+        bus.cpu_write(0x2006, 0x2C);
+        bus.cpu_write(0x2006, 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0x00);
+        assert_eq!(bus.cpu_read(0x2007), 0xB2);
     }
 
     #[test]

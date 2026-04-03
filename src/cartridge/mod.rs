@@ -150,6 +150,10 @@ impl Cartridge {
         self.mapper.check_a12(addr, ppu_cycle);
     }
 
+    pub fn map_nametable_addr(&self, addr: u16) -> Option<usize> {
+        self.mapper.map_nametable_addr(addr)
+    }
+
     pub fn irq_line(&self) -> bool {
         self.mapper.irq_line()
     }
