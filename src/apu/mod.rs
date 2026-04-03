@@ -1,8 +1,15 @@
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
+use std::collections::VecDeque;
+use std::f32::consts::PI;
+use std::sync::OnceLock;
 
 const CPU_CLOCK_HZ_NTSC: u64 = 1_789_773;
 const AUDIO_SAMPLE_RATE: u32 = 44_100;
 const AUDIO_HIGHPASS_COEFFICIENT: f32 = 0.995;
+const AUDIO_RESAMPLER_TAPS: usize = 32;
+const AUDIO_RESAMPLER_PHASES: usize = 256;
+const AUDIO_RESAMPLER_HALF_TAPS: usize = AUDIO_RESAMPLER_TAPS / 2;
+const AUDIO_RESAMPLER_STEP: f64 = CPU_CLOCK_HZ_NTSC as f64 / AUDIO_SAMPLE_RATE as f64;
 const LENGTH_TABLE: [u8; 32] = [
     10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
     192, 24, 72, 26, 16, 28, 32, 30,
@@ -23,6 +30,8 @@ const NOISE_PERIOD_TABLE: [u16; 16] = [
 const DMC_RATE_TABLE: [u16; 16] = [
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
 ];
+static AUDIO_RESAMPLER_KERNEL: OnceLock<[[f32; AUDIO_RESAMPLER_TAPS]; AUDIO_RESAMPLER_PHASES]> =
+    OnceLock::new();
 
 #[derive(Clone, Copy)]
 struct PulseChannel {
@@ -1171,15 +1180,137 @@ impl Default for FrameCounter {
     }
 }
 
+struct AudioResampler {
+    history: VecDeque<f32>,
+    history_start_index: i64,
+    next_output_position: f64,
+    last_input: f32,
+    last_output: f32,
+}
+
+impl AudioResampler {
+    fn new() -> Self {
+        let mut resampler = Self {
+            history: VecDeque::new(),
+            history_start_index: 0,
+            next_output_position: 0.0,
+            last_input: 0.0,
+            last_output: 0.0,
+        };
+        resampler.reset();
+        resampler
+    }
+
+    fn reset(&mut self) {
+        self.history.clear();
+        self.history.resize(AUDIO_RESAMPLER_HALF_TAPS - 1, 0.0);
+        self.history_start_index = -((AUDIO_RESAMPLER_HALF_TAPS as i64) - 1);
+        self.next_output_position = 0.0;
+        self.last_input = 0.0;
+        self.last_output = 0.0;
+    }
+
+    fn push_source_sample(&mut self, sample: f32, output: &mut Vec<f32>) {
+        self.history.push_back(sample);
+
+        while self.can_emit_sample() {
+            let sample = self.current_output_sample();
+            output.push(self.highpass(sample).clamp(-1.0, 1.0));
+            self.next_output_position += AUDIO_RESAMPLER_STEP;
+            self.discard_consumed_history();
+        }
+    }
+
+    fn can_emit_sample(&self) -> bool {
+        let (_, window_end) = Self::window_bounds(self.next_output_position);
+        self.latest_history_index() >= window_end
+    }
+
+    fn current_output_sample(&self) -> f32 {
+        let base_index = self.next_output_position.floor() as i64;
+        let frac = ((self.next_output_position - base_index as f64) as f32)
+            .clamp(0.0, 1.0 - (1.0 / AUDIO_RESAMPLER_PHASES as f32));
+        let phase =
+            ((frac * AUDIO_RESAMPLER_PHASES as f32) as usize).min(AUDIO_RESAMPLER_PHASES - 1);
+        let kernel = &audio_resampler_kernel()[phase];
+        let window_start = base_index - (AUDIO_RESAMPLER_HALF_TAPS as i64 - 1);
+
+        let mut acc = 0.0;
+        for (tap, coeff) in kernel.iter().enumerate() {
+            let sample_index = (window_start + tap as i64 - self.history_start_index) as usize;
+            acc += self.history[sample_index] * coeff;
+        }
+        acc
+    }
+
+    fn highpass(&mut self, input: f32) -> f32 {
+        let output = input - self.last_input + (self.last_output * AUDIO_HIGHPASS_COEFFICIENT);
+        self.last_input = input;
+        self.last_output = output;
+        output
+    }
+
+    fn discard_consumed_history(&mut self) {
+        let (next_window_start, _) = Self::window_bounds(self.next_output_position);
+        while self.history_start_index < next_window_start {
+            let _ = self.history.pop_front();
+            self.history_start_index += 1;
+        }
+    }
+
+    fn latest_history_index(&self) -> i64 {
+        self.history_start_index + self.history.len() as i64 - 1
+    }
+
+    fn window_bounds(position: f64) -> (i64, i64) {
+        let base_index = position.floor() as i64;
+        (
+            base_index - (AUDIO_RESAMPLER_HALF_TAPS as i64 - 1),
+            base_index + AUDIO_RESAMPLER_HALF_TAPS as i64,
+        )
+    }
+}
+
+fn audio_resampler_kernel() -> &'static [[f32; AUDIO_RESAMPLER_TAPS]; AUDIO_RESAMPLER_PHASES] {
+    AUDIO_RESAMPLER_KERNEL.get_or_init(|| {
+        let mut kernel = [[0.0; AUDIO_RESAMPLER_TAPS]; AUDIO_RESAMPLER_PHASES];
+        let cutoff = 0.5 * (AUDIO_SAMPLE_RATE as f32 / CPU_CLOCK_HZ_NTSC as f32) * 0.95;
+
+        for (phase, taps) in kernel.iter_mut().enumerate() {
+            let frac = phase as f32 / AUDIO_RESAMPLER_PHASES as f32;
+            let mut sum = 0.0;
+
+            for (tap, coeff) in taps.iter_mut().enumerate() {
+                let x = tap as f32 - (AUDIO_RESAMPLER_HALF_TAPS as f32 - 1.0) - frac;
+                let sinc_arg = 2.0 * cutoff * x;
+                let sinc = if sinc_arg.abs() < f32::EPSILON {
+                    1.0
+                } else {
+                    (PI * sinc_arg).sin() / (PI * sinc_arg)
+                };
+                let window_position = tap as f32 / (AUDIO_RESAMPLER_TAPS - 1) as f32;
+                let window = 0.42 - (0.5 * (2.0 * PI * window_position).cos())
+                    + (0.08 * (4.0 * PI * window_position).cos());
+                *coeff = 2.0 * cutoff * sinc * window;
+                sum += *coeff;
+            }
+
+            if sum != 0.0 {
+                for coeff in taps.iter_mut() {
+                    *coeff /= sum;
+                }
+            }
+        }
+
+        kernel
+    })
+}
+
 pub struct APU {
     cpu_cycle: u64,
     frame_counter: FrameCounter,
     channels: ApuChannels,
-    audio_sample_accumulator: u64,
-    audio_mix_accumulator: f32,
-    audio_mix_count: u32,
-    audio_filter_last_input: f32,
-    audio_filter_last_output: f32,
+    resampler: AudioResampler,
     sample_buffer: Vec<f32>,
 }
 
@@ -1189,11 +1320,7 @@ impl APU {
             cpu_cycle: 0,
             frame_counter: FrameCounter::new(),
             channels: ApuChannels::new(),
-            audio_sample_accumulator: 0,
-            audio_mix_accumulator: 0.0,
-            audio_mix_count: 0,
-            audio_filter_last_input: 0.0,
-            audio_filter_last_output: 0.0,
+            resampler: AudioResampler::new(),
             sample_buffer: Vec::new(),
         }
     }
@@ -1207,9 +1334,10 @@ impl APU {
         self.channels.clock_timers(self.cpu_cycle);
         let events = self.frame_counter.tick(self.cpu_cycle);
         self.channels.apply_frame_counter_events(events);
-        self.audio_mix_accumulator += self.channels.mix_sample();
-        self.audio_mix_count += 1;
-        self.push_audio_samples();
+        let mixed = self.channels.mix_sample();
+        let resampler = &mut self.resampler;
+        let sample_buffer = &mut self.sample_buffer;
+        resampler.push_source_sample(mixed, sample_buffer);
     }
 
     pub fn write_register_at_offset(&mut self, addr: u16, data: u8, cycle_offset: u8) {
@@ -1267,7 +1395,6 @@ impl APU {
         writer.write_u64(self.cpu_cycle);
         self.frame_counter.save_state(writer);
         self.channels.save_state(writer);
-        writer.write_u64(self.audio_sample_accumulator);
     }
 
     pub(crate) fn load_state(
@@ -1277,11 +1404,7 @@ impl APU {
         self.cpu_cycle = reader.read_u64()?;
         self.frame_counter.load_state(reader)?;
         self.channels.load_state(reader)?;
-        self.audio_sample_accumulator = reader.read_u64()?;
-        self.audio_mix_accumulator = 0.0;
-        self.audio_mix_count = 0;
-        self.audio_filter_last_input = 0.0;
-        self.audio_filter_last_output = 0.0;
+        self.resampler.reset();
         self.sample_buffer.clear();
         Ok(())
     }
@@ -1292,32 +1415,6 @@ impl APU {
 
     pub(crate) fn submit_dmc_dma_sample(&mut self, data: u8) {
         self.channels.dmc.submit_dma_sample(data);
-    }
-
-    fn push_audio_samples(&mut self) {
-        self.audio_sample_accumulator += u64::from(AUDIO_SAMPLE_RATE);
-        while self.audio_sample_accumulator >= CPU_CLOCK_HZ_NTSC {
-            self.audio_sample_accumulator -= CPU_CLOCK_HZ_NTSC;
-            let sample = self.take_filtered_audio_sample();
-            self.sample_buffer.push(sample);
-        }
-    }
-
-    fn take_filtered_audio_sample(&mut self) -> f32 {
-        let mixed = if self.audio_mix_count == 0 {
-            self.channels.mix_sample()
-        } else {
-            let average = self.audio_mix_accumulator / self.audio_mix_count as f32;
-            self.audio_mix_accumulator = 0.0;
-            self.audio_mix_count = 0;
-            average
-        };
-
-        let filtered = mixed - self.audio_filter_last_input
-            + (self.audio_filter_last_output * AUDIO_HIGHPASS_COEFFICIENT);
-        self.audio_filter_last_input = mixed;
-        self.audio_filter_last_output = filtered;
-        filtered.clamp(-1.0, 1.0)
     }
 }
 

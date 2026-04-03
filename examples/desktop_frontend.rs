@@ -9,6 +9,9 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+const AUDIO_TARGET_BUFFER_MS: usize = 40;
+const AUDIO_MAX_BUFFER_MS: usize = 80;
+
 fn usage(program: &str) {
     eprintln!("Usage: {program} <rom-path>");
     eprintln!(r#"Example: {program} "roms/mmc1/Rockman2(J).nes""#);
@@ -71,7 +74,7 @@ fn main() -> ExitCode {
         nes_core::FRAME_HEIGHT,
         WindowOptions {
             resize: false,
-            scale: Scale::X2,
+            scale: Scale::X4,
             ..WindowOptions::default()
         },
     ) {
@@ -142,14 +145,15 @@ fn main() -> ExitCode {
 }
 
 struct AudioPlayer {
-    target_sample_rate: u32,
     device_sample_rate: u32,
+    target_queue_samples: usize,
+    max_queue_samples: usize,
     queue: Arc<Mutex<VecDeque<f32>>>,
     _stream: cpal::Stream,
 }
 
 impl AudioPlayer {
-    fn new(target_sample_rate: u32) -> Result<Self, String> {
+    fn new(_target_sample_rate: u32) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -159,6 +163,8 @@ impl AudioPlayer {
             .map_err(|error| format!("failed to query default output config: {error}"))?;
         let channels = usize::from(default_config.channels());
         let device_sample_rate = default_config.sample_rate().0;
+        let target_queue_samples = device_sample_rate as usize * AUDIO_TARGET_BUFFER_MS / 1000;
+        let max_queue_samples = device_sample_rate as usize * AUDIO_MAX_BUFFER_MS / 1000;
         let queue = Arc::new(Mutex::new(VecDeque::new()));
         let queue_for_stream = Arc::clone(&queue);
         let error_callback = |error| eprintln!("audio stream error: {error}");
@@ -203,8 +209,9 @@ impl AudioPlayer {
             .map_err(|error| format!("failed to start audio stream: {error}"))?;
 
         Ok(Self {
-            target_sample_rate,
             device_sample_rate,
+            target_queue_samples,
+            max_queue_samples,
             queue,
             _stream: stream,
         })
@@ -225,8 +232,14 @@ impl AudioPlayer {
             for sample in mono_samples {
                 queue.push_back(sample.clamp(-1.0, 1.0));
             }
-            let max_samples = (self.target_sample_rate as usize).saturating_mul(2);
-            while queue.len() > max_samples {
+
+            if queue.len() > self.max_queue_samples {
+                while queue.len() > self.target_queue_samples {
+                    let _ = queue.pop_front();
+                }
+            }
+
+            while queue.len() > self.max_queue_samples {
                 let _ = queue.pop_front();
             }
         }

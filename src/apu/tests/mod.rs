@@ -252,11 +252,22 @@ fn constant_dmc_level_does_not_leave_persistent_dc_offset() {
     }
 
     assert!(!apu.audio_samples().is_empty());
-    assert!(
-        apu.audio_samples()
-            .iter()
-            .all(|sample| sample.abs() < 0.01)
-    );
+    assert!(apu.audio_samples().iter().all(|sample| sample.abs() < 0.01));
+}
+
+#[test]
+fn resampler_rejects_cpu_rate_nyquist_toggle_noise() {
+    let mut resampler = super::AudioResampler::new();
+    let mut output = Vec::new();
+
+    for index in 0..200_000 {
+        let sample = if index & 1 == 0 { 1.0 } else { -1.0 };
+        resampler.push_source_sample(sample, &mut output);
+    }
+
+    assert!(!output.is_empty());
+    let average_abs = output.iter().map(|sample| sample.abs()).sum::<f32>() / output.len() as f32;
+    assert!(average_abs < 0.05);
 }
 
 #[test]
