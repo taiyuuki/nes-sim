@@ -995,9 +995,6 @@ impl CPU {
                 let operand = self.require_operand(inst.1, bus);
                 self.sax(operand.addr, bus);
             }
-            _ => {
-                let _ = self.resolve_operand(inst.1, bus);
-            } // Illegal opcode, do nothing
         }
         self.cycles += inst.2 as u64 + extra_cycles;
     }

@@ -1068,7 +1068,7 @@ impl FrameCounter {
         if !self.irq_event_fired && cycle >= 29_828 {
             self.irq_event_fired = true;
             self.irq_assert_window = if self.irq_enabled { 3 } else { 2 };
-            self.irq_line_delay = if self.irq_enabled { 3 } else { 0 };
+            self.irq_line_delay = if self.irq_enabled { 4 } else { 0 };
         }
 
         if cycle >= 29_830 {
@@ -1316,13 +1316,16 @@ mod tests {
     }
 
     #[test]
-    fn frame_irq_line_goes_low_three_cycles_after_flag_first_sets() {
+    fn frame_irq_line_goes_low_four_cycles_after_flag_first_sets() {
         let mut apu = APU::new();
         apu.frame_counter.irq_enabled = true;
         apu.frame_counter.cycle = 29_827;
 
         apu.tick_cpu_cycle();
         assert!(apu.frame_counter.irq_flag);
+        assert!(!apu.irq_line());
+
+        apu.tick_cpu_cycle();
         assert!(!apu.irq_line());
 
         apu.tick_cpu_cycle();
