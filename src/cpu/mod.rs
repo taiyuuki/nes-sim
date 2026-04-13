@@ -1025,23 +1025,18 @@ impl CPU {
             return;
         }
 
-        if self.interrupt > 0 {
-            if self.interrupt_delay {
-                self.interrupt_delay = false;
-                if !self.pre_interrupt_delay {
-                    self.instruction_counter = self.instruction_counter.wrapping_add(1);
-                    self.irq_interrupt(bus);
-                    self.cycles += 7;
-                    return;
-                }
-            } else if !self.p.i {
-                self.instruction_counter = self.instruction_counter.wrapping_add(1);
-                self.irq_interrupt(bus);
-                self.cycles += 7;
-                return;
-            }
-        } else {
-            self.interrupt_delay = false;
+        let delayed_i = self.interrupt_delay;
+        let old_i = self.pre_interrupt_delay;
+        self.interrupt_delay = false;
+        self.pre_interrupt_delay = false;
+
+        let irq_masked = if delayed_i { old_i } else { self.p.i };
+
+        if self.interrupt > 0 && !irq_masked {
+            self.instruction_counter = self.instruction_counter.wrapping_add(1);
+            self.irq_interrupt(bus);
+            self.cycles += 7;
+            return;
         }
 
         self.instruction_counter = self.instruction_counter.wrapping_add(1);
@@ -1054,10 +1049,12 @@ impl CPU {
         self.nmi = nmi;
     }
 
+    #[cfg(test)]
     pub fn clocks(&self) -> u64 {
         self.clocks
     }
 
+    #[allow(dead_code)]
     pub fn cycles_remaining(&self) -> u64 {
         self.cycles
     }
@@ -1066,6 +1063,7 @@ impl CPU {
         self.instruction_counter
     }
 
+    #[cfg(test)]
     pub fn pc(&self) -> u16 {
         self.pc
     }
@@ -1162,6 +1160,7 @@ impl CPU {
         self.cycles = 0;
     }
 
+    #[cfg(test)]
     pub fn set_irq(&mut self, irq: bool) {
         self.interrupt = u8::from(irq);
     }
@@ -1181,7 +1180,7 @@ impl CPU {
             self.irq_clear(mask)
         }
     }
-
+    #[allow(dead_code)]
     pub fn irq_pending(&self) -> bool {
         self.interrupt != 0
     }
@@ -1309,6 +1308,7 @@ impl CPU {
         self.set_zn(self.a);
     }
 
+    #[allow(dead_code)]
     fn lda(&mut self, addr: u16, bus: &mut impl CPUBus) {
         self.a = bus.cpu_read(addr);
         self.set_zn(self.a);
@@ -1329,6 +1329,7 @@ impl CPU {
         self.set_zn(self.y);
     }
 
+    #[allow(dead_code)]
     fn sta(&mut self, addr: u16, bus: &mut impl CPUBus) {
         bus.cpu_write(addr, self.a);
     }
@@ -1648,6 +1649,7 @@ impl CPU {
         let _ = self.rmw_memory(addr, bus, |cpu, value| cpu.op_ror(value));
     }
 
+    #[allow(dead_code)]
     fn bit(&mut self, addr: u16, bus: &mut impl CPUBus) {
         let val = bus.cpu_read(addr);
         self.p.z = self.a & val == 0;
@@ -1757,6 +1759,7 @@ impl CPU {
         bus.cpu_write(addr, val);
     }
 
+    #[allow(dead_code)]
     fn slo(&mut self, addr: u16, bus: &mut impl CPUBus) {
         let result = self.rmw_memory(addr, bus, |cpu, value| cpu.op_asl(value));
         self.ora_value(result);

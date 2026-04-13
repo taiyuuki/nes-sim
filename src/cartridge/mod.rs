@@ -50,6 +50,7 @@ impl Display for CartridgeError {
 
 impl Error for CartridgeError {}
 
+#[allow(dead_code)]
 pub struct Cartridge {
     mapper: Box<dyn Mapper>,
     has_sram: bool,

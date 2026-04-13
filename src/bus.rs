@@ -293,6 +293,7 @@ impl NESBus {
         self.ppu_memory.cartridge_irq_line()
     }
 
+    #[allow(dead_code)]
     pub fn dma_in_progress(&self) -> bool {
         self.dma.in_progress()
     }
