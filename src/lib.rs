@@ -53,6 +53,7 @@ impl NES {
     pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
         self.bus.insert_cartridge(cartridge);
         self.reset_cpu_schedule();
+        self.reset();
     }
 
     pub fn load_cartridge_ines(&mut self, rom: &[u8]) -> Result<(), CartridgeError> {
