@@ -214,6 +214,18 @@ impl NES {
         self.bus.clear_apu_audio_samples();
     }
 
+    pub fn set_apu_sample_rate(&mut self, sample_rate: u32) {
+        self.bus.set_apu_sample_rate(sample_rate);
+    }
+
+    pub fn set_apu_debug_mute_mask(&mut self, mask: u8) {
+        self.bus.set_apu_debug_mute_mask(mask);
+    }
+
+    pub fn apu_debug_mute_mask(&self) -> u8 {
+        self.bus.apu_debug_mute_mask()
+    }
+
     fn reset_cpu_schedule(&mut self) {
         self.cpu_ppu_counter = 0;
         self.cpu_schedule_index = 0;

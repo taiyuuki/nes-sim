@@ -28,6 +28,8 @@ fn usage(program: &str) {
     eprintln!("  N       Step frame");
     eprintln!("  M       Step CPU instruction");
     eprintln!("  R       Reset");
+    eprintln!("  1..5    Toggle APU mute (P1/P2/TRI/NOI/DMC)");
+    eprintln!("  0       Clear APU mute");
     eprintln!("  F5      Save state");
     eprintln!("  F8      Load state");
     eprintln!("  Esc     Quit");
@@ -101,6 +103,9 @@ fn main() -> ExitCode {
             None
         }
     };
+    if let Some(player) = &audio_player {
+        runtime.nes_mut().set_apu_sample_rate(player.output_sample_rate());
+    }
 
     let mut window = match Window::new(
         "nes_core",
@@ -124,6 +129,7 @@ fn main() -> ExitCode {
     let mut fps = 0.0f32;
     let mut fps_window_start = Instant::now();
     let mut status_message = format!("save slot {}", save_path.display());
+    let mut apu_mute_mask = runtime.nes().apu_debug_mute_mask();
 
     let mut snapshot = runtime.snapshot();
 
@@ -146,6 +152,10 @@ fn main() -> ExitCode {
                 },
                 Err(error) => format!("load failed: {error}"),
             };
+        }
+
+        if handle_apu_debug_hotkeys(&window, &mut runtime, &mut apu_mute_mask) {
+            status_message = format!("apu mute {}", apu_mute_mask_to_string(apu_mute_mask));
         }
 
         let input = collect_input(&window);
@@ -203,7 +213,13 @@ fn main() -> ExitCode {
             fps_window_start = Instant::now();
         }
 
-        update_window_title(&mut window, &snapshot, fps, &status_message);
+        update_window_title(
+            &mut window,
+            &snapshot,
+            fps,
+            &status_message,
+            apu_mute_mask,
+        );
     }
 
     ExitCode::SUCCESS
@@ -220,6 +236,7 @@ fn parse_tv_system_override(value: &str) -> Option<Option<TVSystem>> {
 }
 
 struct AudioPlayer {
+    output_sample_rate: u32,
     critical_queue_samples: usize,
     target_queue_samples: usize,
     max_queue_samples: usize,
@@ -297,6 +314,7 @@ impl AudioPlayer {
             .map_err(|error| format!("failed to start audio stream: {error}"))?;
 
         Ok(Self {
+            output_sample_rate: device_sample_rate,
             critical_queue_samples,
             target_queue_samples,
             max_queue_samples,
@@ -306,12 +324,18 @@ impl AudioPlayer {
         })
     }
 
+    fn output_sample_rate(&self) -> u32 {
+        self.output_sample_rate
+    }
+
     fn push_samples(&self, samples: &[f32], source_sample_rate: u32) {
         if samples.is_empty() {
             return;
         }
 
-        let mono_samples = if let Ok(mut resampler) = self.resampler.lock() {
+        let mono_samples = if source_sample_rate == self.output_sample_rate {
+            samples.to_vec()
+        } else if let Ok(mut resampler) = self.resampler.lock() {
             resampler.resample_chunk(samples, source_sample_rate)
         } else {
             return;
@@ -429,13 +453,21 @@ fn write_audio_data(
     channels: usize,
     output_state: &Arc<Mutex<AudioOutputState>>,
 ) {
+    const UNDERRUN_DECAY: f32 = 0.98;
+    const SILENCE_EPSILON: f32 = 1e-4;
     let mut next_sample = 0.0;
     if let Ok(mut output_state) = output_state.lock() {
         for frame in output.chunks_mut(channels) {
-            next_sample = output_state
-                .queue
-                .pop_front()
-                .unwrap_or(output_state.last_sample);
+            next_sample = if let Some(sample) = output_state.queue.pop_front() {
+                sample
+            } else {
+                let decayed = output_state.last_sample * UNDERRUN_DECAY;
+                if decayed.abs() < SILENCE_EPSILON {
+                    0.0
+                } else {
+                    decayed
+                }
+            };
             output_state.last_sample = next_sample;
             for sample in frame {
                 *sample = next_sample;
@@ -572,7 +604,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_callback_reuses_last_sample_on_underrun() {
+    fn audio_callback_decays_to_silence_on_underrun() {
         let output_state = Arc::new(Mutex::new(AudioOutputState {
             queue: VecDeque::from([0.25]),
             last_sample: -0.5,
@@ -581,7 +613,67 @@ mod tests {
 
         write_audio_data(&mut output, 1, &output_state);
 
-        assert_eq!(output, [0.25, 0.25, 0.25, 0.25]);
+        assert_eq!(output[0], 0.25);
+        assert!(output[1] < 0.25 && output[1] > 0.0);
+        assert!(output[2] < output[1]);
+        assert!(output[3] < output[2]);
+    }
+}
+
+fn handle_apu_debug_hotkeys(
+    window: &Window,
+    runtime: &mut FrontendRuntime,
+    apu_mute_mask: &mut u8,
+) -> bool {
+    let mut updated = false;
+
+    let mut toggle = |key: Key, bit: u8| {
+        if window.is_key_pressed(key, KeyRepeat::No) {
+            *apu_mute_mask ^= bit;
+            updated = true;
+        }
+    };
+
+    toggle(Key::Key1, 0x01);
+    toggle(Key::Key2, 0x02);
+    toggle(Key::Key3, 0x04);
+    toggle(Key::Key4, 0x08);
+    toggle(Key::Key5, 0x10);
+
+    if window.is_key_pressed(Key::Key0, KeyRepeat::No) {
+        *apu_mute_mask = 0;
+        updated = true;
+    }
+
+    if updated {
+        runtime.nes_mut().set_apu_debug_mute_mask(*apu_mute_mask);
+    }
+
+    updated
+}
+
+fn apu_mute_mask_to_string(mask: u8) -> String {
+    let mut parts = Vec::new();
+    if (mask & 0x01) != 0 {
+        parts.push("P1");
+    }
+    if (mask & 0x02) != 0 {
+        parts.push("P2");
+    }
+    if (mask & 0x04) != 0 {
+        parts.push("TRI");
+    }
+    if (mask & 0x08) != 0 {
+        parts.push("NOI");
+    }
+    if (mask & 0x10) != 0 {
+        parts.push("DMC");
+    }
+
+    if parts.is_empty() {
+        "none".to_string()
+    } else {
+        parts.join("+")
     }
 }
 
@@ -598,18 +690,20 @@ fn update_window_title(
     snapshot: &nes_core::RuntimeSnapshot<'_>,
     fps: f32,
     status_message: &str,
+    apu_mute_mask: u8,
 ) {
     let mode = match snapshot.status.mode {
         RunMode::Running => "running",
         RunMode::Paused => "paused",
     };
     let title = format!(
-        "nes_core | {} | fps {:.1} | frame {} | pc {:04X} | cpu clocks {} | {}",
+        "nes_core | {} | fps {:.1} | frame {} | pc {:04X} | cpu clocks {} | mute {} | {}",
         mode,
         fps,
         snapshot.debug.ppu.frame,
         snapshot.debug.cpu.pc,
         snapshot.debug.cpu.clocks,
+        apu_mute_mask_to_string(apu_mute_mask),
         status_message
     );
     window.set_title(&title);

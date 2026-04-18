@@ -3,6 +3,9 @@ use crate::savestate::{SaveStateError, StateReader, StateWriter};
 const CPU_CLOCK_NTSC: f64 = 1_789_773.0;
 const DEFAULT_SAMPLE_RATE: u32 = 44_100;
 const FRAME_SEQUENCER_DIVIDER: u16 = 7_456;
+const HPF_CUTOFF_1_HZ: f32 = 90.0;
+const HPF_CUTOFF_2_HZ: f32 = 180.0;
+const LPF_CUTOFF_HZ: f32 = 14_000.0;
 const DUTY_TABLE: [[u8; 8]; 4] = [
     [0, 1, 0, 0, 0, 0, 0, 0],
     [0, 1, 1, 0, 0, 0, 0, 0],
@@ -92,7 +95,11 @@ impl PulseChannel {
 
     fn write_timer_high(&mut self, value: u8, length_enabled: bool) {
         self.timer_reload = (self.timer_reload & 0x00FF) | (((value & 0x07) as u16) << 8);
-        self.seq_step = 0;
+        // Avoid hard phase discontinuity on rapid retriggers while channel is
+        // already audible; this reduces click artifacts in short pulse SFX.
+        if self.length_counter == 0 {
+            self.seq_step = 0;
+        }
         self.timer_counter = self.timer_reload;
         self.envelope_start = true;
         if length_enabled {
@@ -285,9 +292,11 @@ impl TriangleChannel {
     }
 
     fn output(&self) -> u8 {
-        if !self.enabled || self.length_counter == 0 || self.linear_counter == 0 {
+        if !self.enabled {
             return 0;
         }
+        // Hardware keeps triangle DAC at the current sequencer step when the
+        // length/linear gate closes; it does not hard-drop to zero.
         TRIANGLE_TABLE[self.seq_step as usize]
     }
 }
@@ -410,7 +419,7 @@ impl NoiseChannel {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct DmcState {
     enabled: bool,
     irq_enabled: bool,
@@ -424,9 +433,33 @@ struct DmcState {
     sample_buffer: Option<u8>,
     shift_register: u8,
     bits_remaining: u8,
+    silence: bool,
     rate_index: u8,
     timer_reload: u16,
     timer_counter: u16,
+}
+
+impl Default for DmcState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            irq_enabled: false,
+            loop_flag: false,
+            irq_flag: false,
+            output_level: 0,
+            sample_address: 0,
+            sample_length: 0,
+            current_address: 0,
+            bytes_remaining: 0,
+            sample_buffer: None,
+            shift_register: 0,
+            bits_remaining: 8,
+            silence: true,
+            rate_index: 0,
+            timer_reload: 0,
+            timer_counter: 0,
+        }
+    }
 }
 
 impl DmcState {
@@ -459,12 +492,15 @@ impl DmcState {
         self.enabled = enabled;
         if !enabled {
             self.bytes_remaining = 0;
+            self.sample_buffer = None;
+            self.silence = true;
             return None;
         }
 
         if self.bytes_remaining == 0 {
             self.current_address = self.sample_address;
             self.bytes_remaining = self.sample_length;
+            self.silence = true;
             return Some(DmcDmaRequest {
                 addr: self.current_address,
                 kind: DmcDmaKind::Load,
@@ -507,13 +543,7 @@ impl DmcState {
     fn tick_timer(&mut self) {
         if self.timer_counter == 0 {
             self.timer_counter = self.timer_reload;
-            if self.bits_remaining == 0 {
-                self.bits_remaining = 8;
-                if let Some(next) = self.sample_buffer.take() {
-                    self.shift_register = next;
-                }
-            }
-            if self.bits_remaining > 0 {
+            if !self.silence {
                 if (self.shift_register & 1) != 0 {
                     if self.output_level <= 125 {
                         self.output_level += 2;
@@ -522,7 +552,20 @@ impl DmcState {
                     self.output_level -= 2;
                 }
                 self.shift_register >>= 1;
+            }
+
+            if self.bits_remaining > 0 {
                 self.bits_remaining -= 1;
+            }
+
+            if self.bits_remaining == 0 {
+                self.bits_remaining = 8;
+                if let Some(next) = self.sample_buffer.take() {
+                    self.shift_register = next;
+                    self.silence = false;
+                } else {
+                    self.silence = true;
+                }
             }
         } else {
             self.timer_counter -= 1;
@@ -545,13 +588,28 @@ pub struct APU {
     sample_rate: u32,
     cycles_per_sample: f64,
     sample_phase: f64,
+    sample_accum: f64,
+    sample_accum_count: u32,
     audio_samples: Vec<f32>,
     expansions: Vec<Box<dyn ExpansionAudioChip>>,
+    apu_subclock_even: bool,
+    hpf1_coeff: f32,
+    hpf2_coeff: f32,
+    lpf_coeff: f32,
+    hpf1_prev_input: f32,
+    hpf1_prev_output: f32,
+    hpf2_prev_input: f32,
+    hpf2_prev_output: f32,
+    lpf_prev_output: f32,
+    debug_mute_mask: u8,
 }
 
 impl APU {
     pub fn new() -> Self {
         let sample_rate = DEFAULT_SAMPLE_RATE;
+        let hpf1_coeff = highpass_coeff(HPF_CUTOFF_1_HZ, sample_rate);
+        let hpf2_coeff = highpass_coeff(HPF_CUTOFF_2_HZ, sample_rate);
+        let lpf_coeff = lowpass_coeff(LPF_CUTOFF_HZ, sample_rate);
         Self {
             pulse1: PulseChannel::new(true),
             pulse2: PulseChannel::new(false),
@@ -567,8 +625,20 @@ impl APU {
             sample_rate,
             cycles_per_sample: CPU_CLOCK_NTSC / sample_rate as f64,
             sample_phase: 0.0,
+            sample_accum: 0.0,
+            sample_accum_count: 0,
             audio_samples: Vec::new(),
             expansions: Vec::new(),
+            apu_subclock_even: false,
+            hpf1_coeff,
+            hpf2_coeff,
+            lpf_coeff,
+            hpf1_prev_input: 0.0,
+            hpf1_prev_output: 0.0,
+            hpf2_prev_input: 0.0,
+            hpf2_prev_output: 0.0,
+            lpf_prev_output: 0.0,
+            debug_mute_mask: 0,
         }
     }
 
@@ -582,14 +652,25 @@ impl APU {
         self.frame_divider = FRAME_SEQUENCER_DIVIDER;
         self.pending_dmc_dma = None;
         self.sample_phase = 0.0;
+        self.sample_accum = 0.0;
+        self.sample_accum_count = 0;
+        self.apu_subclock_even = false;
+        self.hpf1_prev_input = 0.0;
+        self.hpf1_prev_output = 0.0;
+        self.hpf2_prev_input = 0.0;
+        self.hpf2_prev_output = 0.0;
+        self.lpf_prev_output = 0.0;
     }
 
     pub fn tick_cpu_cycle(&mut self) {
         self.tick_frame_counter();
-        self.pulse1.tick_timer();
-        self.pulse2.tick_timer();
+        if self.apu_subclock_even {
+            self.pulse1.tick_timer();
+            self.pulse2.tick_timer();
+            self.noise.tick_timer();
+        }
+        self.apu_subclock_even = !self.apu_subclock_even;
         self.triangle.tick_timer();
-        self.noise.tick_timer();
         self.dmc.tick_timer();
         if self.pending_dmc_dma.is_none() {
             self.pending_dmc_dma = self.dmc.request_dma_if_needed();
@@ -598,10 +679,22 @@ impl APU {
             chip.tick_cpu_cycle();
         }
 
+        let raw_cycle_mix = self.mix_output();
+        self.sample_accum += raw_cycle_mix as f64;
+        self.sample_accum_count = self.sample_accum_count.saturating_add(1);
+
         self.sample_phase += 1.0;
         if self.sample_phase >= self.cycles_per_sample {
             self.sample_phase -= self.cycles_per_sample;
-            self.audio_samples.push(self.mix_output());
+            let raw = if self.sample_accum_count > 0 {
+                (self.sample_accum / self.sample_accum_count as f64) as f32
+            } else {
+                raw_cycle_mix
+            };
+            self.sample_accum = 0.0;
+            self.sample_accum_count = 0;
+            let filtered = self.filter_output(raw);
+            self.audio_samples.push(filtered);
         }
     }
 
@@ -666,6 +759,28 @@ impl APU {
         self.sample_rate
     }
 
+    pub fn set_sample_rate(&mut self, sample_rate: u32) {
+        if sample_rate == 0 || sample_rate == self.sample_rate {
+            return;
+        }
+
+        self.sample_rate = sample_rate;
+        self.cycles_per_sample = CPU_CLOCK_NTSC / sample_rate as f64;
+        self.sample_phase = 0.0;
+        self.sample_accum = 0.0;
+        self.sample_accum_count = 0;
+        self.audio_samples.clear();
+
+        self.hpf1_coeff = highpass_coeff(HPF_CUTOFF_1_HZ, sample_rate);
+        self.hpf2_coeff = highpass_coeff(HPF_CUTOFF_2_HZ, sample_rate);
+        self.lpf_coeff = lowpass_coeff(LPF_CUTOFF_HZ, sample_rate);
+        self.hpf1_prev_input = 0.0;
+        self.hpf1_prev_output = 0.0;
+        self.hpf2_prev_input = 0.0;
+        self.hpf2_prev_output = 0.0;
+        self.lpf_prev_output = 0.0;
+    }
+
     pub fn audio_samples(&self) -> &[f32] {
         &self.audio_samples
     }
@@ -678,6 +793,14 @@ impl APU {
         self.frame_irq_flag
             || self.dmc.irq_flag
             || self.expansions.iter().any(|chip| chip.irq_line())
+    }
+
+    pub fn set_debug_mute_mask(&mut self, mask: u8) {
+        self.debug_mute_mask = mask & 0x1F;
+    }
+
+    pub fn debug_mute_mask(&self) -> u8 {
+        self.debug_mute_mask
     }
 
     pub fn take_dmc_dma_request(&mut self) -> Option<DmcDmaRequest> {
@@ -711,6 +834,8 @@ impl APU {
         writer.write_u16(self.dmc.sample_length);
         writer.write_u16(self.dmc.current_address);
         writer.write_u16(self.dmc.bytes_remaining);
+        writer.write_bool(self.dmc.silence);
+        writer.write_bool(self.apu_subclock_even);
     }
 
     pub fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
@@ -736,7 +861,16 @@ impl APU {
         self.dmc.sample_length = reader.read_u16()?;
         self.dmc.current_address = reader.read_u16()?;
         self.dmc.bytes_remaining = reader.read_u16()?;
+        self.dmc.silence = reader.read_bool()?;
+        self.apu_subclock_even = reader.read_bool()?;
         self.pending_dmc_dma = None;
+        self.sample_accum = 0.0;
+        self.sample_accum_count = 0;
+        self.hpf1_prev_input = 0.0;
+        self.hpf1_prev_output = 0.0;
+        self.hpf2_prev_input = 0.0;
+        self.hpf2_prev_output = 0.0;
+        self.lpf_prev_output = 0.0;
         Ok(())
     }
 
@@ -810,11 +944,31 @@ impl APU {
     }
 
     fn mix_output(&self) -> f32 {
-        let pulse1 = self.pulse1.output() as f64;
-        let pulse2 = self.pulse2.output() as f64;
-        let triangle = self.triangle.output() as f64;
-        let noise = self.noise.output() as f64;
-        let dmc = self.dmc.output_level as f64;
+        let pulse1 = if (self.debug_mute_mask & 0x01) == 0 {
+            self.pulse1.output() as f64
+        } else {
+            0.0
+        };
+        let pulse2 = if (self.debug_mute_mask & 0x02) == 0 {
+            self.pulse2.output() as f64
+        } else {
+            0.0
+        };
+        let triangle = if (self.debug_mute_mask & 0x04) == 0 {
+            self.triangle.output() as f64
+        } else {
+            0.0
+        };
+        let noise = if (self.debug_mute_mask & 0x08) == 0 {
+            self.noise.output() as f64
+        } else {
+            0.0
+        };
+        let dmc = if (self.debug_mute_mask & 0x10) == 0 {
+            self.dmc.output_level as f64
+        } else {
+            0.0
+        };
 
         let pulse_sum = pulse1 + pulse2;
         let pulse_mix = if pulse_sum > 0.0 {
@@ -837,6 +991,33 @@ impl APU {
 
         (mixed as f32).clamp(-1.0, 1.0)
     }
+
+    fn filter_output(&mut self, input: f32) -> f32 {
+        // Approximate common NES output conditioning:
+        // 90 Hz HPF -> 440 Hz HPF -> 14 kHz LPF.
+        let hp1 = self.hpf1_coeff * (self.hpf1_prev_output + input - self.hpf1_prev_input);
+        self.hpf1_prev_input = input;
+        self.hpf1_prev_output = hp1;
+
+        let hp2 = self.hpf2_coeff * (self.hpf2_prev_output + hp1 - self.hpf2_prev_input);
+        self.hpf2_prev_input = hp1;
+        self.hpf2_prev_output = hp2;
+
+        self.lpf_prev_output += self.lpf_coeff * (hp2 - self.lpf_prev_output);
+        self.lpf_prev_output.clamp(-1.0, 1.0)
+    }
+}
+
+fn highpass_coeff(cutoff_hz: f32, sample_rate: u32) -> f32 {
+    let dt = 1.0 / sample_rate as f32;
+    let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff_hz);
+    rc / (rc + dt)
+}
+
+fn lowpass_coeff(cutoff_hz: f32, sample_rate: u32) -> f32 {
+    let dt = 1.0 / sample_rate as f32;
+    let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff_hz);
+    dt / (rc + dt)
 }
 
 impl Default for APU {
@@ -906,6 +1087,31 @@ mod tests {
     }
 
     #[test]
+    fn pulse_timer_high_preserves_phase_when_channel_already_active() {
+        let mut pulse = PulseChannel::new(false);
+        pulse.enabled = true;
+        pulse.length_counter = 8;
+        pulse.seq_step = 5;
+
+        pulse.write_timer_high(0x18, true);
+
+        assert_eq!(pulse.seq_step, 5);
+        assert_eq!(pulse.length_counter, LENGTH_TABLE[(0x18 >> 3) as usize]);
+    }
+
+    #[test]
+    fn pulse_timer_high_resets_phase_when_channel_inactive() {
+        let mut pulse = PulseChannel::new(false);
+        pulse.enabled = true;
+        pulse.length_counter = 0;
+        pulse.seq_step = 5;
+
+        pulse.write_timer_high(0x18, true);
+
+        assert_eq!(pulse.seq_step, 0);
+    }
+
+    #[test]
     fn apu_generates_and_clears_audio_samples() {
         let mut apu = APU::new();
 
@@ -925,6 +1131,16 @@ mod tests {
     }
 
     #[test]
+    fn set_sample_rate_updates_emission_interval() {
+        let mut apu = APU::new();
+        let default_rate = apu.sample_rate();
+        apu.set_sample_rate(48_000);
+        assert_eq!(apu.sample_rate(), 48_000);
+        assert_ne!(apu.sample_rate(), default_rate);
+        assert!(apu.cycles_per_sample > 30.0 && apu.cycles_per_sample < 40.0);
+    }
+
+    #[test]
     fn five_step_mode_does_not_raise_frame_irq() {
         let mut apu = APU::new();
         apu.write_register_at_offset(0x4017, 0x80, 0);
@@ -932,5 +1148,75 @@ mod tests {
         tick_cycles(&mut apu, 40_000);
 
         assert_eq!(apu.read_status_at_offset(0) & 0x40, 0);
+    }
+
+    #[test]
+    fn pulse_timers_advance_every_other_cpu_cycle() {
+        let mut apu = APU::new();
+        apu.pulse1.timer_reload = 0;
+        apu.pulse1.timer_counter = 0;
+        let start = apu.pulse1.seq_step;
+
+        apu.tick_cpu_cycle();
+        assert_eq!(apu.pulse1.seq_step, start);
+
+        apu.tick_cpu_cycle();
+        assert_eq!(apu.pulse1.seq_step, (start + 1) & 0x07);
+    }
+
+    #[test]
+    fn triangle_holds_last_step_when_gated_by_counters() {
+        let mut tri = TriangleChannel::default();
+        tri.enabled = true;
+        tri.seq_step = 5;
+        tri.length_counter = 0;
+        tri.linear_counter = 0;
+
+        assert_eq!(tri.output(), TRIANGLE_TABLE[5]);
+    }
+
+    #[test]
+    fn triangle_disabled_outputs_zero() {
+        let mut tri = TriangleChannel::default();
+        tri.enabled = false;
+        tri.seq_step = 11;
+        tri.length_counter = 10;
+        tri.linear_counter = 10;
+
+        assert_eq!(tri.output(), 0);
+    }
+
+    #[test]
+    fn dmc_silence_keeps_output_level_constant_without_sample_buffer() {
+        let mut dmc = DmcState {
+            timer_reload: 0,
+            timer_counter: 0,
+            output_level: 64,
+            silence: true,
+            sample_buffer: None,
+            shift_register: 0xFF,
+            bits_remaining: 8,
+            ..DmcState::default()
+        };
+
+        dmc.tick_timer();
+
+        assert_eq!(dmc.output_level, 64);
+        assert!(dmc.silence);
+    }
+
+    #[test]
+    fn sample_integrator_accumulates_cpu_cycles_before_emit() {
+        let mut apu = APU::new();
+        apu.write_register_at_offset(0x4015, 0x01, 0);
+        apu.write_register_at_offset(0x4000, 0x1F, 0);
+        apu.write_register_at_offset(0x4002, 0x08, 0);
+        apu.write_register_at_offset(0x4003, 0x18, 0);
+
+        for _ in 0..64 {
+            apu.tick_cpu_cycle();
+        }
+
+        assert!(apu.sample_accum_count > 0 || !apu.audio_samples().is_empty());
     }
 }

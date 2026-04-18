@@ -77,6 +77,10 @@ impl FrontendRuntime {
         &self.nes
     }
 
+    pub fn nes_mut(&mut self) -> &mut NES {
+        &mut self.nes
+    }
+
     pub fn save_state(&self) -> Result<Vec<u8>, SaveStateError> {
         self.nes.save_state()
     }

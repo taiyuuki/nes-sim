@@ -281,12 +281,24 @@ impl NESBus {
         self.apu.sample_rate()
     }
 
+    pub fn set_apu_sample_rate(&mut self, sample_rate: u32) {
+        self.apu.set_sample_rate(sample_rate);
+    }
+
     pub fn apu_audio_samples(&self) -> &[f32] {
         self.apu.audio_samples()
     }
 
     pub fn clear_apu_audio_samples(&mut self) {
         self.apu.clear_audio_samples();
+    }
+
+    pub fn set_apu_debug_mute_mask(&mut self, mask: u8) {
+        self.apu.set_debug_mute_mask(mask);
+    }
+
+    pub fn apu_debug_mute_mask(&self) -> u8 {
+        self.apu.debug_mute_mask()
     }
 
     pub fn apu_irq_line(&self) -> bool {
