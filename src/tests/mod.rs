@@ -270,7 +270,7 @@ fn tv_system_override_can_force_ntsc_cpu_schedule_for_pal_header() {
     let mut nes = NES::new();
     let rom = make_ines_with_tv(0x01);
 
-    nes.load_cartridge_ines_with_tv_system_override(&rom, Some(TVSystem::NTSC))
+    nes.load_cartridge_ines(&rom)
         .expect("cartridge should load with NTSC override");
 
     for step in 1..=6 {

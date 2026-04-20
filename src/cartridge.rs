@@ -27,6 +27,51 @@ pub enum TVSystem {
     DENDY,
 }
 
+pub enum TimingMode {
+    NTSC,
+    Pal,
+    MultipleRegion,
+    Dendy,
+}
+
+impl TimingMode {
+    fn decode_ines(flag9: u8, flag10: u8) -> Self {
+        match flag10 & 0x03 {
+            0x02 => Self::Pal,
+            0x03 => Self::MultipleRegion,
+            _ => {
+                if (flag9 & 0x01) != 0 {
+                    Self::Pal
+                } else {
+                    Self::NTSC
+                }
+            }
+        }
+    }
+
+    fn decode_nes20(encoded: u8) -> Self {
+        match encoded {
+            1 => Self::Pal,
+            2 => Self::MultipleRegion,
+            3 => Self::Dendy,
+            _ => Self::NTSC,
+        }
+    }
+
+    fn to_tv_system(&self) -> TVSystem {
+        match self {
+            TimingMode::Pal => TVSystem::PAL,
+            TimingMode::Dendy => TVSystem::DENDY,
+            TimingMode::NTSC | TimingMode::MultipleRegion => TVSystem::NTSC,
+        }
+    }
+}
+
+pub enum RomFormat {
+    INES,
+    NES20,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum CartridgeError {
     FileTooSmall,
@@ -50,47 +95,230 @@ impl Display for CartridgeError {
 
 impl Error for CartridgeError {}
 
-#[allow(dead_code)]
-pub struct Cartridge {
-    mapper: Box<dyn Mapper>,
-    has_sram: bool,
-    has_trainer: bool,
-    tv_system: TVSystem,
-    is_ines2: bool,
-    submapper: u8,
-}
-
-impl Cartridge {
-    pub fn from_ines(rom: &[u8]) -> Result<Self, CartridgeError> {
-        Self::from_ines_with_tv_system_override(rom, None)
+fn decode_nes20_rom_size(lsb: u16, msb_nibble: u16, unit_size: u16) -> u32 {
+    if msb_nibble != 0x0F {
+        return ((msb_nibble << 8) | lsb) as u32 * (unit_size as u32);
     }
 
-    pub fn from_ines_with_tv_system_override(
-        rom: &[u8],
-        tv_system_override: Option<TVSystem>,
-    ) -> Result<Self, CartridgeError> {
+    let multiplier = (lsb & 0x03) * 2 + 1;
+    let exponent = lsb >> 2;
+    (multiplier as u32) << exponent
+}
+
+fn decode_nes20_ram_size(encode_shift_count: u8) -> u32 {
+    if encode_shift_count == 0 {
+        0
+    } else {
+        64 << encode_shift_count
+    }
+}
+
+fn decode_ines_prg_ram_size(encoded_units: u8) -> u16 {
+    let unit = if encoded_units == 0 { 1 } else { encoded_units };
+    unit as u16 * 0x2000
+}
+
+fn decode_mirroring(flags6: u8) -> Mirroring {
+    if flags6 & 0x08 != 0 {
+        return Mirroring::FourScreen;
+    }
+    if flags6 & 0x01 != 0 {
+        return Mirroring::Vertical;
+    }
+    Mirroring::Horizontal
+}
+
+struct CartridgeHeader {
+    raw: Vec<u8>,
+    format: RomFormat,
+    mapper_id: u16,
+    submapper: u8,
+    mirroring: Mirroring,
+    has_battery_backed_ram: bool,
+    has_trainer: bool,
+    has_bus_conflicts: bool,
+    console_type: u8,
+    console_type_data: u8,
+    timing_mode: TimingMode,
+    tv_system: TVSystem,
+    prg_rom_size: u32,
+    prg_ram_size: u32,
+    prg_nvram_size: u32,
+    chr_rom_size: u32,
+    chr_ram_size: u32,
+    chr_nvram_size: u32,
+    misc_rom_count: u8,
+    defaut_expansion_device: u8,
+    has_prg_ram_info: bool,
+    uses_exponent_rom_size_encoding: bool,
+}
+
+impl CartridgeHeader {
+    fn parse(rom: &[u8]) -> Result<CartridgeHeader, CartridgeError> {
         if rom.len() < INES_HEADER_LEN {
             return Err(CartridgeError::FileTooSmall);
         }
 
         if &rom[0..4] != b"NES\x1A" {
-            return Err(CartridgeError::InvalidMagic);
+            return Err(CartridgeError::FileTooSmall);
         }
 
-        let flags6 = rom[6];
-        let flags7 = rom[7];
-        let flags8 = rom[8];
+        let total_len = rom.len();
+        let raw = rom[0..INES_HEADER_LEN].to_vec();
+        let flags6 = raw[6] as u16;
+        let flags7 = raw[7] as u16;
+        let flags8 = raw[8] as u16;
+        let has_trainer = (flags6 & 0x04) != 0;
 
-        let mut mapper_id = u16::from(flags6 >> 4) | u16::from(flags7 & 0xF0);
-        let mirroring = if (flags6 & 0x08) != 0 {
-            Mirroring::FourScreen
-        } else if (flags6 & 0x01) != 0 {
-            Mirroring::Vertical
+        let mut format = if (raw[7] & 0x0C) != 0x08 {
+            RomFormat::INES
         } else {
-            Mirroring::Horizontal
+            RomFormat::NES20
         };
 
-        let has_sram = (flags6 & 0x02) != 0;
+        let prg_rom_size =
+            decode_nes20_rom_size(raw[4] as u16, (raw[9] as u16) & 0x0F, PRG_BANK_LEN as u16);
+        let chr_rom_size =
+            decode_nes20_rom_size(raw[5] as u16, (raw[9] as u16) >> 4, PRG_BANK_LEN as u16);
+
+        let trainer_size = if (raw[6] & 0x04) != 0 { total_len } else { 0 };
+        let required_bytes =
+            INES_HEADER_LEN + trainer_size + (prg_rom_size + chr_rom_size) as usize;
+
+        if required_bytes <= total_len {
+            format = RomFormat::INES;
+        }
+
+        let mirroring = decode_mirroring(raw[6]);
+        let has_sram = flags6 & 0x02 == 0;
+        let console_type = raw[7] & 0x03;
+        let console_type_data = raw[13];
+
+        return match format {
+            RomFormat::NES20 => {
+                let timing_mode = TimingMode::decode_nes20(raw[12] & 0x03);
+                let mapper_id = (flags6 >> 4) | (flags7 & 0xF0) | ((flags8 & 0x0F) << 8);
+                let submapper = (flags8 >> 4) as u8;
+                let tv_system = timing_mode.to_tv_system();
+                let prg_ram_size = decode_nes20_ram_size(raw[10] & 0x0F);
+                let prg_nvram_size = decode_nes20_ram_size(raw[10] << 4);
+                let chr_ram_size = decode_nes20_ram_size(raw[11] & 0x0F);
+                let chr_nvram_size = decode_nes20_ram_size(raw[11] >> 4);
+                let misc_rom_count = raw[14] & 0x03;
+                let defaut_expansion_device = raw[15] & 0x3F;
+                let uses_exponent_rom_size_encoding =
+                    ((raw[9] & 0x0F) == 0x0F) || ((raw[9] >> 4) == 0x0F);
+
+                Ok(CartridgeHeader {
+                    raw,
+                    format,
+                    mapper_id,
+                    submapper,
+                    mirroring,
+                    has_battery_backed_ram: has_sram,
+                    has_trainer,
+                    has_bus_conflicts: false,
+                    console_type,
+                    console_type_data,
+                    timing_mode,
+                    tv_system,
+                    prg_rom_size,
+                    chr_rom_size,
+                    prg_ram_size,
+                    prg_nvram_size,
+                    chr_ram_size,
+                    chr_nvram_size,
+                    misc_rom_count,
+                    defaut_expansion_device,
+                    has_prg_ram_info: true,
+                    uses_exponent_rom_size_encoding,
+                })
+            }
+            RomFormat::INES => {
+                let has_trusted_ines_extension = raw[12..INES_HEADER_LEN].iter().all(|b| *b == 0);
+                let mapper_id = if has_sram {
+                    (flags6 >> 4) | (flags7 & 0xF0)
+                } else {
+                    flags6 >> 4
+                };
+
+                let prg_rom_size = (raw[4] as u32) * (PRG_BANK_LEN as u32);
+                let chr_rom_size = (raw[5] as u32) * (CHR_BANK_LEN as u32);
+
+                let required_bytes =
+                    INES_HEADER_LEN + trainer_size + (prg_rom_size + chr_rom_size) as usize;
+
+                if required_bytes > total_len {
+                    return Err(CartridgeError::TruncatedData);
+                }
+
+                let inferred_prg_ram_size = if has_trusted_ines_extension {
+                    decode_ines_prg_ram_size(raw[8]) as u32
+                } else {
+                    0x2000
+                };
+
+                let has_prg_ram = !has_trusted_ines_extension || (raw[10] & 0x10) == 0;
+                let timing_mode = if has_trusted_ines_extension {
+                    TimingMode::decode_ines(raw[9], raw[10])
+                } else {
+                    TimingMode::NTSC
+                };
+                let tv_system = timing_mode.to_tv_system();
+                let has_bus_conflicts = has_trusted_ines_extension && (raw[10] & 0x20 != 0);
+
+                Ok(CartridgeHeader {
+                    raw,
+                    format,
+                    mapper_id,
+                    submapper: 0,
+                    mirroring,
+                    has_battery_backed_ram: has_sram,
+                    has_trainer,
+                    has_bus_conflicts,
+                    console_type,
+                    console_type_data,
+                    timing_mode,
+                    tv_system,
+                    prg_rom_size,
+                    prg_ram_size: if has_prg_ram && !has_sram {
+                        inferred_prg_ram_size
+                    } else {
+                        0
+                    },
+                    prg_nvram_size: if has_prg_ram && has_sram {
+                        inferred_prg_ram_size
+                    } else {
+                        0
+                    },
+                    chr_rom_size,
+                    chr_ram_size: if chr_rom_size == 0 {
+                        CHR_BANK_LEN as u32
+                    } else {
+                        0
+                    },
+                    chr_nvram_size: 0,
+                    misc_rom_count: 0,
+                    defaut_expansion_device: 0,
+                    has_prg_ram_info: has_trusted_ines_extension,
+                    uses_exponent_rom_size_encoding: false,
+                })
+            }
+        };
+    }
+}
+
+#[allow(dead_code)]
+pub struct Cartridge {
+    mapper: Box<dyn Mapper>,
+    header: CartridgeHeader,
+}
+
+impl Cartridge {
+    pub fn from_ines(rom: &[u8]) -> Result<Self, CartridgeError> {
+        let header = CartridgeHeader::parse(rom)?;
+
+        let flags6 = rom[6];
         let has_trainer = (flags6 & 0x04) != 0;
         let trainer_len = if has_trainer { TRAINER_LEN } else { 0 };
 
@@ -102,27 +330,11 @@ impl Cartridge {
             return Err(CartridgeError::TruncatedData);
         }
 
-        // NES 2.0
-        let is_ines2 = (flags7 & 0x0C) == 0x08;
-        let mut submapper = 0;
-        if is_ines2 {
-            mapper_id |= u16::from(flags8 & 0x0F) << 8;
-            submapper = flags8 >> 4;
-            // return Err(CartridgeError::Nes2Unsupported);
-        }
-        let tv_system = tv_system_override.unwrap_or_else(|| detect_tv_system(rom, is_ines2));
         let prg_rom = rom[data_start..data_start + prg_len].to_vec();
         let chr_rom = rom[data_start + prg_len..data_end].to_vec();
-        let mapper = from_mapper_id(mapper_id, mirroring, prg_rom, chr_rom)?;
+        let mapper = from_mapper_id(header.mapper_id, header.mirroring, prg_rom, chr_rom)?;
 
-        Ok(Self {
-            mapper,
-            submapper,
-            has_sram,
-            has_trainer,
-            tv_system,
-            is_ines2,
-        })
+        Ok(Self { mapper, header })
     }
 
     pub fn mirroring(&self) -> Mirroring {
@@ -130,7 +342,7 @@ impl Cartridge {
     }
 
     pub fn tv_system(&self) -> TVSystem {
-        self.tv_system
+        self.header.tv_system
     }
 
     pub fn cpu_read(&mut self, addr: u16) -> Option<u8> {
@@ -162,7 +374,7 @@ impl Cartridge {
     }
 
     pub(crate) fn save_state(&self, writer: &mut StateWriter) {
-        writer.write_u16(self.mapper.mapper_id());
+        writer.write_u16(self.header.mapper_id);
         self.mapper.save_state(writer);
     }
 
@@ -171,32 +383,11 @@ impl Cartridge {
         reader: &mut StateReader<'_>,
     ) -> Result<(), SaveStateError> {
         let actual = reader.read_u16()?;
-        let expected = self.mapper.mapper_id();
+        let expected = self.header.mapper_id;
         if actual != expected {
             return Err(SaveStateError::MapperMismatch { expected, actual });
         }
         self.mapper.load_state(reader)
-    }
-}
-
-fn detect_tv_system(header: &[u8], is_ines2: bool) -> TVSystem {
-    if is_ines2 {
-        return match header[12] & 0x03 {
-            0x01 => TVSystem::PAL,
-            0x03 => TVSystem::DENDY,
-            _ => TVSystem::NTSC,
-        };
-    }
-
-    // iNES 1.0 byte 9 is notoriously unreliable unless the trailing extension bytes are clean.
-    if header[11..16].iter().any(|&byte| byte != 0) {
-        return TVSystem::NTSC;
-    }
-
-    if (header[9] & 0x01) != 0 || (header[10] & 0x03) == 0x02 {
-        TVSystem::PAL
-    } else {
-        TVSystem::NTSC
     }
 }
 

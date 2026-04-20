@@ -238,16 +238,7 @@ impl NESBus {
     }
 
     pub fn load_cartridge_ines(&mut self, rom: &[u8]) -> Result<(), CartridgeError> {
-        self.load_cartridge_ines_with_tv_system_override(rom, None)
-    }
-
-    pub fn load_cartridge_ines_with_tv_system_override(
-        &mut self,
-        rom: &[u8],
-        tv_system_override: Option<TVSystem>,
-    ) -> Result<(), CartridgeError> {
-        let cartridge: Cartridge =
-            Cartridge::from_ines_with_tv_system_override(rom, tv_system_override)?;
+        let cartridge: Cartridge = Cartridge::from_ines(rom)?;
         self.insert_cartridge(cartridge);
         Ok(())
     }

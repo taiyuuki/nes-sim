@@ -118,10 +118,6 @@ impl Mmc1 {
 }
 
 impl Mapper for Mmc1 {
-    fn mapper_id(&self) -> u16 {
-        1
-    }
-
     fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
             0x6000..=0x7FFF => Some(self.prg_ram[(addr - 0x6000) as usize]),

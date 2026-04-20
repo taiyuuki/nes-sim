@@ -56,15 +56,8 @@ impl FrontendRuntime {
     }
 
     pub fn from_rom_bytes(rom: &[u8]) -> Result<Self, CartridgeError> {
-        Self::from_rom_bytes_with_tv_system_override(rom, None)
-    }
-
-    pub fn from_rom_bytes_with_tv_system_override(
-        rom: &[u8],
-        tv_system_override: Option<TVSystem>,
-    ) -> Result<Self, CartridgeError> {
         let mut nes = NES::new();
-        nes.load_cartridge_ines_with_tv_system_override(rom, tv_system_override)?;
+        nes.load_cartridge_ines(rom)?;
         nes.reset();
         Ok(Self::new(nes))
     }

@@ -11,11 +11,11 @@ pub mod runtime;
 pub mod savestate;
 pub mod video;
 
-pub use apu::ExpansionAudioChip;
 pub use api::{
     AudioBatch, CoreCommand, CoreEvent, CoreResponse, CpuDebugSnapshot, DebugSnapshot, PixelFormat,
     PpuDebugSnapshot, VIDEO_FRAME_PITCH, VideoFrame,
 };
+pub use apu::ExpansionAudioChip;
 pub use cartridge::{Cartridge, CartridgeError, Mirroring, TVSystem};
 pub use input::{ControllerButton, ControllerState};
 pub use ppu::{FRAME_HEIGHT, FRAME_WIDTH};
@@ -58,16 +58,7 @@ impl NES {
     }
 
     pub fn load_cartridge_ines(&mut self, rom: &[u8]) -> Result<(), CartridgeError> {
-        self.load_cartridge_ines_with_tv_system_override(rom, None)
-    }
-
-    pub fn load_cartridge_ines_with_tv_system_override(
-        &mut self,
-        rom: &[u8],
-        tv_system_override: Option<TVSystem>,
-    ) -> Result<(), CartridgeError> {
-        self.bus
-            .load_cartridge_ines_with_tv_system_override(rom, tv_system_override)?;
+        self.bus.load_cartridge_ines(rom)?;
         self.reset_cpu_schedule();
         Ok(())
     }

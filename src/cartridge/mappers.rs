@@ -13,7 +13,6 @@ use super::{CartridgeError, Mirroring};
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 pub(super) trait Mapper {
-    fn mapper_id(&self) -> u16;
     fn cpu_read(&mut self, addr: u16) -> Option<u8>;
     fn cpu_write(&mut self, addr: u16, data: u8) -> bool;
     fn ppu_read(&mut self, addr: u16) -> Option<u8>;
