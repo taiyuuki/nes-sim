@@ -138,6 +138,60 @@ fn parses_ines_header_and_maps_uxrom_prg_banks() {
 }
 
 #[test]
+fn cnrom_switches_chr_banks_with_cpu_writes() {
+    let prg_rom = vec![0xEA; 2 * PRG_BANK_LEN];
+    let mut chr_rom = Vec::with_capacity(3 * CHR_BANK_LEN);
+    chr_rom.extend(std::iter::repeat_n(0x10, CHR_BANK_LEN));
+    chr_rom.extend(std::iter::repeat_n(0x20, CHR_BANK_LEN));
+    chr_rom.extend(std::iter::repeat_n(0x30, CHR_BANK_LEN));
+    let rom = make_ines_with_prg_chr(&prg_rom, &chr_rom, 0x30);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("valid CNROM should parse");
+
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x10));
+    assert_eq!(cartridge.ppu_read(0x1FFF), Some(0x10));
+
+    assert!(cartridge.cpu_write(0x8000, 0x02));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x30));
+    assert_eq!(cartridge.ppu_read(0x1FFF), Some(0x30));
+
+    // CNROM bank select lines are wider than some carts; values should wrap to available banks.
+    assert!(cartridge.cpu_write(0xFFFF, 0x07));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x20));
+}
+
+#[test]
+fn anrom_switches_32k_prg_bank_with_low_nibble() {
+    let mut prg_rom = Vec::with_capacity(4 * 0x8000);
+    for bank in 0..4_u8 {
+        prg_rom.extend(std::iter::repeat_n(bank, 0x8000));
+    }
+    let rom = make_ines_with_prg(&prg_rom, 0, 0x70, 0x00);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("valid ANROM should parse");
+
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    assert_eq!(cartridge.cpu_read(0xFFFF), Some(0x00));
+
+    assert!(cartridge.cpu_write(0x8000, 0x13));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x03));
+    assert_eq!(cartridge.cpu_read(0xFFFF), Some(0x03));
+}
+
+#[test]
+fn anrom_uses_bit4_for_one_screen_mirroring_select() {
+    let prg_rom = vec![0xEA; 2 * PRG_BANK_LEN];
+    let rom = make_ines_with_prg(&prg_rom, 0, 0x70, 0x00);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("valid ANROM should parse");
+
+    assert_eq!(cartridge.mirroring(), Mirroring::SPAGE0);
+
+    assert!(cartridge.cpu_write(0x8000, 0x10));
+    assert_eq!(cartridge.mirroring(), Mirroring::SPAGE1);
+
+    assert!(cartridge.cpu_write(0x8000, 0x00));
+    assert_eq!(cartridge.mirroring(), Mirroring::SPAGE0);
+}
+
+#[test]
 fn uxrom_bank_select_wraps_when_value_exceeds_bank_count() {
     let mut prg_rom = Vec::with_capacity(2 * PRG_BANK_LEN);
     prg_rom.extend(std::iter::repeat_n(0x11, PRG_BANK_LEN));

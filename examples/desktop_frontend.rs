@@ -87,14 +87,13 @@ fn main() -> ExitCode {
         }
     };
 
-    let mut runtime =
-        match FrontendRuntime::from_rom_bytes_with_tv_system_override(&rom, tv_system_override) {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                eprintln!("failed to load ROM {rom_path:?}: {error}");
-                return ExitCode::from(1);
-            }
-        };
+    let mut runtime = match FrontendRuntime::from_rom_bytes(&rom) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("failed to load ROM {rom_path:?}: {error}");
+            return ExitCode::from(1);
+        }
+    };
     let save_path = default_save_path(&rom_path);
     let audio_player = match AudioPlayer::new(runtime.snapshot().audio.sample_rate) {
         Ok(player) => Some(player),
@@ -104,7 +103,9 @@ fn main() -> ExitCode {
         }
     };
     if let Some(player) = &audio_player {
-        runtime.nes_mut().set_apu_sample_rate(player.output_sample_rate());
+        runtime
+            .nes_mut()
+            .set_apu_sample_rate(player.output_sample_rate());
     }
 
     let mut window = match Window::new(
@@ -213,13 +214,7 @@ fn main() -> ExitCode {
             fps_window_start = Instant::now();
         }
 
-        update_window_title(
-            &mut window,
-            &snapshot,
-            fps,
-            &status_message,
-            apu_mute_mask,
-        );
+        update_window_title(&mut window, &snapshot, fps, &status_message, apu_mute_mask);
     }
 
     ExitCode::SUCCESS
