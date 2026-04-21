@@ -589,7 +589,11 @@ impl PPU {
             self.predict_status_timing(ppu_cycle_offset);
 
         let mut status_bits = future_status;
-        if (status_bits & STATUS_SPRITE_ZERO_HIT) == 0
+        // Only apply imminent sprite-0-hit lookahead for sub-cycle peeks.
+        // Wider lookahead windows were causing unstable split timing in games
+        // that poll PPUSTATUS at instruction-level granularity.
+        if cpu_cycle_offset <= 1
+            && (status_bits & STATUS_SPRITE_ZERO_HIT) == 0
             && self.predict_sprite_zero_hit_within_offset(ppu_cycle_offset)
         {
             status_bits |= STATUS_SPRITE_ZERO_HIT;
@@ -696,19 +700,9 @@ impl PPU {
 
                     let bg_pixel = if show_leftmost_bg || x >= 8 {
                         let bit = 0x8000 >> self.fine_x;
-                        // Sprite/background priority observes a slightly later background bitstream
-                        // than the one we've already committed to the frame buffer. Past the first
-                        // visible tile edge, SMB1's HUD coin helper sprite needs a two-bit lookahead
-                        // here to avoid leaking the hidden black guide pixel.
-                        if x < 9 {
-                            let lo = u8::from((bg_pattern_shift_lo & bit) != 0);
-                            let hi = u8::from((bg_pattern_shift_hi & bit) != 0);
-                            (hi << 1) | lo
-                        } else {
-                            let lo = u8::from(((bg_pattern_shift_lo << 2) & bit) != 0);
-                            let hi = u8::from(((bg_pattern_shift_hi << 2) & bit) != 0);
-                            (hi << 1) | lo
-                        }
+                        let lo = u8::from((bg_pattern_shift_lo & bit) != 0);
+                        let hi = u8::from((bg_pattern_shift_hi & bit) != 0);
+                        (hi << 1) | lo
                     } else {
                         0
                     };
@@ -1114,11 +1108,12 @@ impl PPU {
                 continue;
             }
 
-            let bg_pixel_visible = self.bg_pixel_visible_to_sprite(x);
-            if sprite.sprite_zero && bg_pixel_visible != 0 && x < 255 {
+            let bg_pixel_for_hit = self.bg_pixel_visible_for_sprite_zero_hit(x);
+            if sprite.sprite_zero && bg_pixel_for_hit != 0 && x < 255 {
                 self.status |= STATUS_SPRITE_ZERO_HIT;
             }
 
+            let bg_pixel_visible = self.bg_pixel_visible_to_sprite(x);
             let behind_background = (sprite.attributes & 0x20) != 0;
             if behind_background && bg_pixel_visible != 0 {
                 break;
@@ -1325,6 +1320,10 @@ impl PPU {
         }
 
         let bit = 0x8000 >> self.fine_x;
+        // Sprite/background priority observes a slightly later background bitstream
+        // than the one we've already committed to the frame buffer. Past the first
+        // visible tile edge, SMB1's HUD coin helper sprite needs a two-bit lookahead
+        // here to avoid leaking the hidden black guide pixel.
         if x < 9 {
             let lo = u8::from((self.bg_pattern_shift_lo & bit) != 0);
             let hi = u8::from((self.bg_pattern_shift_hi & bit) != 0);
@@ -1334,6 +1333,22 @@ impl PPU {
             let hi = u8::from(((self.bg_pattern_shift_hi << 2) & bit) != 0);
             (hi << 1) | lo
         }
+    }
+
+    fn bg_pixel_visible_for_sprite_zero_hit(&self, x: usize) -> u8 {
+        if !self.bg_on() {
+            return 0;
+        }
+
+        let show_leftmost = (self.mask & MASK_SHOW_BG_LEFTMOST) != 0;
+        if !show_leftmost && x < 8 {
+            return 0;
+        }
+
+        let bit = 0x8000 >> self.fine_x;
+        let lo = u8::from((self.bg_pattern_shift_lo & bit) != 0);
+        let hi = u8::from((self.bg_pattern_shift_hi & bit) != 0);
+        (hi << 1) | lo
     }
 
     fn increment_x(&mut self) {
