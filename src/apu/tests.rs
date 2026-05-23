@@ -57,18 +57,23 @@ fn pulse_sweep_updates_period_on_half_frame_clock() {
 }
 
 #[test]
-fn pulse_sweep_negate_matches_nesjs_channel_offsets() {
+fn pulse_sweep_negate_uses_ones_complement_for_pulse1() {
+    // Pulse 1 uses one's complement negate: period - change - 1
     let mut pulse1 = PulseChannel::new(true);
     pulse1.timer_reload = 0x0100;
     pulse1.sweep_shift = 2;
     pulse1.sweep_negate = true;
-    assert_eq!(pulse1.target_period(), 0x00C0);
+    // change = 0x0100 >> 2 = 0x40
+    // one's complement: 0x0100 - 0x40 - 1 = 0x00BF
+    assert_eq!(pulse1.target_period(), 0x00BF);
 
+    // Pulse 2 uses two's complement negate: period - change
     let mut pulse2 = PulseChannel::new(false);
     pulse2.timer_reload = 0x0100;
     pulse2.sweep_shift = 2;
     pulse2.sweep_negate = true;
-    assert_eq!(pulse2.target_period(), 0x00C1);
+    // two's complement: 0x0100 - 0x40 = 0x00C0
+    assert_eq!(pulse2.target_period(), 0x00C0);
 }
 
 #[test]
@@ -150,15 +155,27 @@ fn pulse_timers_advance_every_other_cpu_cycle() {
 }
 
 #[test]
-fn triangle_holds_last_step_when_gated_by_counters() {
+fn triangle_silent_when_length_or_linear_counter_is_zero() {
     let mut tri = TriangleChannel::default();
     tri.enabled = true;
     tri.timer_reload = 2;
     tri.seq_step = 5;
-    tri.length_counter = 0;
-    tri.linear_counter = 0;
 
-    assert_eq!(tri.output(), TRIANGLE_TABLE[5]);
+    tri.length_counter = 0;
+    tri.linear_counter = 10;
+    assert_eq!(
+        tri.output(),
+        0,
+        "should be silent when length counter is zero"
+    );
+
+    tri.length_counter = 10;
+    tri.linear_counter = 0;
+    assert_eq!(
+        tri.output(),
+        0,
+        "should be silent when linear counter is zero"
+    );
 }
 
 #[test]
