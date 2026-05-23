@@ -11,10 +11,8 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const AUDIO_TARGET_BUFFER_MS: usize = 50;
-const AUDIO_MAX_BUFFER_MS: usize = 100;
-const AUDIO_CRITICAL_BUFFER_MS: usize = 12;
-const AUDIO_CATCH_UP_FRAME_LIMIT: usize = 1;
+const AUDIO_TARGET_BUFFER_MS: usize = 20;
+const AUDIO_MAX_BUFFER_MS: usize = 40;
 
 fn usage(program: &str) {
     eprintln!("Usage: {program} [--tv-system auto|ntsc|pal|dendy] <rom-path>");
@@ -41,7 +39,6 @@ fn main() -> ExitCode {
         .next()
         .unwrap_or_else(|| "desktop_frontend".to_string());
 
-    let mut tv_system_override = Some(TVSystem::NTSC);
     let mut rom_path = None;
 
     while let Some(arg) = args.next() {
@@ -56,14 +53,11 @@ fn main() -> ExitCode {
                     usage(&program);
                     return ExitCode::from(2);
                 };
-                tv_system_override = match parse_tv_system_override(&value) {
-                    Some(value) => value,
-                    None => {
-                        eprintln!("invalid --tv-system value {value:?}");
-                        usage(&program);
-                        return ExitCode::from(2);
-                    }
-                };
+                if parse_tv_system_override(&value).is_none() {
+                    eprintln!("invalid --tv-system value {value:?}");
+                    usage(&program);
+                    return ExitCode::from(2);
+                }
             }
             _ if rom_path.is_none() => rom_path = Some(arg),
             _ => {
@@ -114,7 +108,7 @@ fn main() -> ExitCode {
         nes_core::FRAME_HEIGHT,
         WindowOptions {
             resize: false,
-            scale: Scale::X4,
+            scale: Scale::X2,
             ..WindowOptions::default()
         },
     ) {
@@ -124,15 +118,16 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    window.set_target_fps(60);
-
     let mut frames_in_window = 0u32;
     let mut fps = 0.0f32;
     let mut fps_window_start = Instant::now();
     let mut status_message = format!("save slot {}", save_path.display());
     let mut apu_mute_mask = runtime.nes().apu_debug_mute_mask();
 
-    let mut snapshot = runtime.snapshot();
+    let mut snapshot;
+
+    let frame_period = Duration::from_micros(16_667);
+    let mut next_frame_deadline = Instant::now() + frame_period;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         if window.is_key_pressed(Key::F5, KeyRepeat::No) {
@@ -168,28 +163,19 @@ fn main() -> ExitCode {
         if let Some(player) = &audio_player {
             player.push_samples(snapshot.audio.samples, snapshot.audio.sample_rate);
 
-            let allow_audio_catch_up = matches!(snapshot.status.mode, RunMode::Running)
-                && !input.reset
-                && !input.toggle_pause
-                && !input.step_frame
-                && !input.step_cpu_instruction
-                && !input.quit;
-
-            if allow_audio_catch_up {
+            if matches!(snapshot.status.mode, RunMode::Running) {
                 let catch_up_input = FrontendInput {
                     controller1: input.controller1,
                     controller2: input.controller2,
                     ..FrontendInput::default()
                 };
 
-                let mut catch_up_frames = 0usize;
-                while player.needs_urgent_refill() && catch_up_frames < AUDIO_CATCH_UP_FRAME_LIMIT {
+                while player.is_queue_low() {
                     snapshot = runtime.step(catch_up_input);
                     if snapshot.status.quit_requested {
                         break;
                     }
                     player.push_samples(snapshot.audio.samples, snapshot.audio.sample_rate);
-                    catch_up_frames += 1;
                 }
             }
         }
@@ -206,12 +192,32 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
 
+        let now = Instant::now();
+        if now < next_frame_deadline {
+            std::thread::sleep(next_frame_deadline - now);
+        }
+        next_frame_deadline += frame_period;
+        if now > next_frame_deadline {
+            next_frame_deadline = now + frame_period;
+        }
+
         frames_in_window += 1;
         let elapsed = fps_window_start.elapsed();
         if elapsed >= Duration::from_secs(1) {
             fps = frames_in_window as f32 / elapsed.as_secs_f32();
             frames_in_window = 0;
             fps_window_start = Instant::now();
+
+            if let Some(player) = &audio_player {
+                if let Some((count, samples)) = player.underrun_stats() {
+                    if count > 0 {
+                        eprintln!(
+                            "AUDIO UNDERRUN: {} callbacks, {} samples dropped ({} fps)",
+                            count, samples, fps
+                        );
+                    }
+                }
+            }
         }
 
         update_window_title(&mut window, &snapshot, fps, &status_message, apu_mute_mask);
@@ -232,7 +238,6 @@ fn parse_tv_system_override(value: &str) -> Option<Option<TVSystem>> {
 
 struct AudioPlayer {
     output_sample_rate: u32,
-    critical_queue_samples: usize,
     target_queue_samples: usize,
     max_queue_samples: usize,
     resampler: Mutex<StreamingLinearResampler>,
@@ -243,6 +248,8 @@ struct AudioPlayer {
 struct AudioOutputState {
     queue: VecDeque<f32>,
     last_sample: f32,
+    underrun_count: u64,
+    underrun_samples: u64,
 }
 
 impl AudioPlayer {
@@ -256,13 +263,14 @@ impl AudioPlayer {
             .map_err(|error| format!("failed to query default output config: {error}"))?;
         let channels = usize::from(default_config.channels());
         let device_sample_rate = default_config.sample_rate().0;
-        let critical_queue_samples = device_sample_rate as usize * AUDIO_CRITICAL_BUFFER_MS / 1000;
         let target_queue_samples = device_sample_rate as usize * AUDIO_TARGET_BUFFER_MS / 1000;
         let max_queue_samples = device_sample_rate as usize * AUDIO_MAX_BUFFER_MS / 1000;
         let resampler = Mutex::new(StreamingLinearResampler::new(device_sample_rate));
         let output_state = Arc::new(Mutex::new(AudioOutputState {
             queue: VecDeque::new(),
             last_sample: 0.0,
+            underrun_count: 0,
+            underrun_samples: 0,
         }));
         let output_state_for_stream = Arc::clone(&output_state);
         let error_callback = |error| eprintln!("audio stream error: {error}");
@@ -310,7 +318,6 @@ impl AudioPlayer {
 
         Ok(Self {
             output_sample_rate: device_sample_rate,
-            critical_queue_samples,
             target_queue_samples,
             max_queue_samples,
             resampler,
@@ -341,27 +348,28 @@ impl AudioPlayer {
                 output_state.queue.push_back(sample.clamp(-1.0, 1.0));
             }
 
-            if output_state.queue.len() > self.max_queue_samples {
-                while output_state.queue.len() > self.target_queue_samples {
-                    if let Some(sample) = output_state.queue.pop_front() {
-                        output_state.last_sample = sample;
-                    }
-                }
-            }
-
             while output_state.queue.len() > self.max_queue_samples {
-                if let Some(sample) = output_state.queue.pop_front() {
-                    output_state.last_sample = sample;
-                }
+                output_state.queue.pop_front();
             }
         }
     }
 
-    fn needs_urgent_refill(&self) -> bool {
+    fn is_queue_low(&self) -> bool {
         if let Ok(output_state) = self.output_state.lock() {
-            output_state.queue.len() < self.critical_queue_samples
+            output_state.queue.len() < self.target_queue_samples
         } else {
             false
+        }
+    }
+
+    fn underrun_stats(&self) -> Option<(u64, u64)> {
+        if let Ok(mut output_state) = self.output_state.lock() {
+            let stats = (output_state.underrun_count, output_state.underrun_samples);
+            output_state.underrun_count = 0;
+            output_state.underrun_samples = 0;
+            Some(stats)
+        } else {
+            None
         }
     }
 }
@@ -456,6 +464,8 @@ fn write_audio_data(
             next_sample = if let Some(sample) = output_state.queue.pop_front() {
                 sample
             } else {
+                output_state.underrun_count += 1;
+                output_state.underrun_samples += 1;
                 let decayed = output_state.last_sample * UNDERRUN_DECAY;
                 if decayed.abs() < SILENCE_EPSILON {
                     0.0
@@ -603,6 +613,8 @@ mod tests {
         let output_state = Arc::new(Mutex::new(AudioOutputState {
             queue: VecDeque::from([0.25]),
             last_sample: -0.5,
+            underrun_count: 0,
+            underrun_samples: 0,
         }));
         let mut output = [0.0f32; 4];
 

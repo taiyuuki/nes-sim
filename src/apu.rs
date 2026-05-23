@@ -1,7 +1,6 @@
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 const CPU_CLOCK_NTSC: f64 = 1_789_773.0;
-const CPU_CLOCK_NTSC_F32: f32 = 1_789_773.0;
 const DEFAULT_SAMPLE_RATE: u32 = 44_100;
 const FRAME_SEQUENCER_DIVIDER: u16 = 7_456;
 const LENGTH_TABLE: [u8; 32] = [
@@ -153,6 +152,23 @@ impl PulseChannel {
             self.envelope_period
         } else {
             self.envelope_decay
+        }
+    }
+
+    fn output(&self) -> u8 {
+        if !self.enabled || self.length_counter == 0 || self.sweep_mute {
+            return 0;
+        }
+        let high = match self.duty & 0x03 {
+            0 => self.seq_step == 1,
+            1 => self.seq_step == 1 || self.seq_step == 2,
+            2 => self.seq_step >= 1 && self.seq_step <= 4,
+            _ => self.seq_step == 0 || self.seq_step >= 3,
+        };
+        if high {
+            self.envelope_volume()
+        } else {
+            0
         }
     }
 
@@ -565,17 +581,15 @@ pub struct APU {
     sample_rate: u32,
     cycles_per_sample: f64,
     sample_phase: f64,
-    sample_accum_nd: f64,
+    sample_accum_pulse: f64,
+    sample_accum_tri: f64,
+    sample_accum_noise: f64,
+    sample_accum_dmc: f64,
     sample_accum_exp: f64,
     sample_accum_count: u32,
     audio_samples: Vec<f32>,
     expansions: Vec<Box<dyn ExpansionAudioChip>>,
     apu_subclock_even: bool,
-    pulse1_phase: f32,
-    pulse2_phase: f32,
-    triangle_phase: f32,
-    dc_killer: f32,
-    lpf_accum: f32,
     debug_mute_mask: u8,
 }
 
@@ -597,17 +611,15 @@ impl APU {
             sample_rate,
             cycles_per_sample: CPU_CLOCK_NTSC / sample_rate as f64,
             sample_phase: 0.0,
-            sample_accum_nd: 0.0,
+            sample_accum_pulse: 0.0,
+            sample_accum_tri: 0.0,
+            sample_accum_noise: 0.0,
+            sample_accum_dmc: 0.0,
             sample_accum_exp: 0.0,
             sample_accum_count: 0,
             audio_samples: Vec::new(),
             expansions: Vec::new(),
             apu_subclock_even: false,
-            pulse1_phase: 0.0,
-            pulse2_phase: 0.0,
-            triangle_phase: 0.0,
-            dc_killer: 0.0,
-            lpf_accum: 0.0,
             debug_mute_mask: 0,
         }
     }
@@ -622,15 +634,13 @@ impl APU {
         self.frame_divider = FRAME_SEQUENCER_DIVIDER;
         self.pending_dmc_dma = None;
         self.sample_phase = 0.0;
-        self.sample_accum_nd = 0.0;
+        self.sample_accum_pulse = 0.0;
+        self.sample_accum_tri = 0.0;
+        self.sample_accum_noise = 0.0;
+        self.sample_accum_dmc = 0.0;
         self.sample_accum_exp = 0.0;
         self.sample_accum_count = 0;
         self.apu_subclock_even = false;
-        self.pulse1_phase = 0.0;
-        self.pulse2_phase = 0.0;
-        self.triangle_phase = 0.0;
-        self.dc_killer = 0.0;
-        self.lpf_accum = 0.0;
     }
 
     pub fn tick_cpu_cycle(&mut self) {
@@ -650,31 +660,58 @@ impl APU {
             chip.tick_cpu_cycle();
         }
 
-        let (tnd_input_nd, exp_out) = self.mix_nonpulse_output();
-        self.sample_accum_nd += tnd_input_nd;
+        let p1 = if (self.debug_mute_mask & 0x01) != 0 { 0 } else { self.pulse1.output() };
+        let p2 = if (self.debug_mute_mask & 0x02) != 0 { 0 } else { self.pulse2.output() };
+        let tri = if (self.debug_mute_mask & 0x04) != 0 { 0 } else { self.triangle.output() };
+        let noise = if (self.debug_mute_mask & 0x08) != 0 { 0 } else { self.noise.output() };
+        let dmc = if (self.debug_mute_mask & 0x10) != 0 { 0 } else { self.dmc.output_level };
+
+        self.sample_accum_pulse += f64::from(p1 + p2);
+        self.sample_accum_tri += f64::from(tri);
+        self.sample_accum_noise += f64::from(noise);
+        self.sample_accum_dmc += f64::from(dmc);
+
+        let mut exp_out = 0.0f64;
+        for chip in &self.expansions {
+            exp_out += chip.output_sample() as f64;
+        }
         self.sample_accum_exp += exp_out;
+
         self.sample_accum_count = self.sample_accum_count.saturating_add(1);
 
         self.sample_phase += 1.0;
         if self.sample_phase >= self.cycles_per_sample {
             self.sample_phase -= self.cycles_per_sample;
             let count = self.sample_accum_count.max(1) as f64;
-            let avg_nd = self.sample_accum_nd / count;
+            let avg_pulse = self.sample_accum_pulse / count;
+            let avg_tri = self.sample_accum_tri / count;
+            let avg_noise = self.sample_accum_noise / count;
+            let avg_dmc = self.sample_accum_dmc / count;
             let avg_exp = self.sample_accum_exp / count;
-            let tri_val = self.sample_blep_triangle();
-            let tnd_input = tri_val as f64 / 8227.0 + avg_nd;
+
+            let pulse_mix = if avg_pulse > 0.0 {
+                (95.88 / ((8128.0 / avg_pulse) + 100.0)) as f32
+            } else {
+                0.0
+            };
+
+            let tnd_input = avg_tri / 8227.0 + avg_noise / 12241.0 + avg_dmc / 22638.0;
             let tnd_mix = if tnd_input > 0.0 {
                 159.79 / ((1.0 / tnd_input) + 100.0)
             } else {
                 0.0
             };
-            let nonpulse = (tnd_mix + avg_exp) as f32;
-            let pulse = self.sample_blep_pulses();
-            self.sample_accum_nd = 0.0;
+
+            let sample = (pulse_mix + tnd_mix as f32 + avg_exp as f32).clamp(-1.0, 1.0);
+
+            self.sample_accum_pulse = 0.0;
+            self.sample_accum_tri = 0.0;
+            self.sample_accum_noise = 0.0;
+            self.sample_accum_dmc = 0.0;
             self.sample_accum_exp = 0.0;
             self.sample_accum_count = 0;
-            let filtered = self.filter_output((pulse + nonpulse).clamp(-1.0, 1.0));
-            self.audio_samples.push(filtered);
+
+            self.audio_samples.push(sample);
         }
     }
 
@@ -710,22 +747,15 @@ impl APU {
             0x4000 => self.pulse1.write_control(data),
             0x4001 => self.pulse1.write_sweep(data),
             0x4002 => self.pulse1.write_timer_low(data),
-            0x4003 => {
-                self.pulse1.write_timer_high(data, self.pulse1.enabled);
-                self.pulse1_phase = 0.0;
-            }
+            0x4003 => self.pulse1.write_timer_high(data, self.pulse1.enabled),
             0x4004 => self.pulse2.write_control(data),
             0x4005 => self.pulse2.write_sweep(data),
             0x4006 => self.pulse2.write_timer_low(data),
-            0x4007 => {
-                self.pulse2.write_timer_high(data, self.pulse2.enabled);
-                self.pulse2_phase = 0.0;
-            }
+            0x4007 => self.pulse2.write_timer_high(data, self.pulse2.enabled),
             0x4008 => self.triangle.write_linear_control(data),
             0x400A => self.triangle.write_timer_low(data),
             0x400B => {
                 self.triangle.write_timer_high(data, self.triangle.enabled);
-                self.triangle_phase = 0.0;
             }
             0x400C => self.noise.write_control(data),
             0x400E => self.noise.write_period(data),
@@ -756,15 +786,13 @@ impl APU {
         self.sample_rate = sample_rate;
         self.cycles_per_sample = CPU_CLOCK_NTSC / sample_rate as f64;
         self.sample_phase = 0.0;
-        self.sample_accum_nd = 0.0;
+        self.sample_accum_pulse = 0.0;
+        self.sample_accum_tri = 0.0;
+        self.sample_accum_noise = 0.0;
+        self.sample_accum_dmc = 0.0;
         self.sample_accum_exp = 0.0;
         self.sample_accum_count = 0;
         self.audio_samples.clear();
-        self.pulse1_phase = 0.0;
-        self.pulse2_phase = 0.0;
-        self.triangle_phase = 0.0;
-        self.dc_killer = 0.0;
-        self.lpf_accum = 0.0;
     }
 
     pub fn audio_samples(&self) -> &[f32] {
@@ -850,14 +878,12 @@ impl APU {
         self.dmc.silence = reader.read_bool()?;
         self.apu_subclock_even = reader.read_bool()?;
         self.pending_dmc_dma = None;
-        self.sample_accum_nd = 0.0;
+        self.sample_accum_pulse = 0.0;
+        self.sample_accum_tri = 0.0;
+        self.sample_accum_noise = 0.0;
+        self.sample_accum_dmc = 0.0;
         self.sample_accum_exp = 0.0;
         self.sample_accum_count = 0;
-        self.pulse1_phase = 0.0;
-        self.pulse2_phase = 0.0;
-        self.triangle_phase = 0.0;
-        self.dc_killer = 0.0;
-        self.lpf_accum = 0.0;
         Ok(())
     }
 
@@ -930,158 +956,12 @@ impl APU {
         self.noise.half_frame_tick();
     }
 
-    fn mix_nonpulse_output(&self) -> (f64, f64) {
-        // Returns (tnd_input_without_triangle, expansion_output).
-        // Triangle is excluded because it gets BLEP-sampled separately.
-        let noise = if (self.debug_mute_mask & 0x08) == 0 {
-            self.noise.output() as f64
-        } else {
-            0.0
-        };
-        let dmc = if (self.debug_mute_mask & 0x10) == 0 {
-            self.dmc.output_level as f64
-        } else {
-            0.0
-        };
-
-        let tnd_input = (noise / 12241.0) + (dmc / 22638.0);
-
-        let mut exp_out = 0.0f64;
-        for chip in &self.expansions {
-            exp_out += chip.output_sample() as f64;
-        }
-
-        (tnd_input, exp_out)
-    }
-
-    fn sample_blep_pulses(&mut self) -> f32 {
-        let pulse1 = if (self.debug_mute_mask & 0x01) == 0 {
-            sample_blep_pulse_channel(self.pulse1, &mut self.pulse1_phase, self.sample_rate)
-        } else {
-            0.0
-        };
-        let pulse2 = if (self.debug_mute_mask & 0x02) == 0 {
-            sample_blep_pulse_channel(self.pulse2, &mut self.pulse2_phase, self.sample_rate)
-        } else {
-            0.0
-        };
-        let pulse_sum = f64::from(pulse1 + pulse2);
-        if pulse_sum > 0.0 {
-            (95.88 / ((8128.0 / pulse_sum) + 100.0)) as f32
-        } else {
-            0.0
-        }
-    }
-
-    fn filter_output(&mut self, input: f32) -> f32 {
-        // Nestopia-style gentle DC blocker.
-        // Transfer function: H(z) = (1 - z^-1) / (1 - (1 - POLE) * z^-1)
-        // POLE = 3/32768 keeps the cut-off around 0.6 Hz at 44.1 kHz,
-        // removing true DC offset while preserving all audible content.
-        const POLE: f32 = 3.0 / 32768.0;
-        let output = self.lpf_accum.mul_add(1.0 - POLE, input - self.dc_killer);
-        self.dc_killer = input;
-        self.lpf_accum = output;
-        output.clamp(-1.0, 1.0)
-    }
-
-    fn sample_blep_triangle(&mut self) -> f32 {
-        if (self.debug_mute_mask & 0x04) != 0 {
-            return 0.0;
-        }
-        sample_blep_triangle_channel(&self.triangle, &mut self.triangle_phase, self.sample_rate)
-    }
 }
 
 impl Default for APU {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn sample_blep_pulse_channel(channel: PulseChannel, phase: &mut f32, sample_rate: u32) -> f32 {
-    if !channel.enabled
-        || channel.length_counter == 0
-        || channel.timer_reload < 8
-        || channel.timer_reload > 0x07FF
-        || channel.sweep_mute
-        || sample_rate == 0
-    {
-        return 0.0;
-    }
-
-    let volume = channel.envelope_volume() as f32;
-    if volume <= 0.0 {
-        return 0.0;
-    }
-
-    let duty = match channel.duty & 0x03 {
-        0 => 0.125,
-        1 => 0.25,
-        2 => 0.5,
-        _ => 0.75,
-    };
-    let freq = CPU_CLOCK_NTSC_F32 / (16.0 * (channel.timer_reload as f32 + 1.0));
-    let mut dt = freq / sample_rate as f32;
-    dt = dt.clamp(1.0 / (sample_rate as f32 * 8.0), 0.49);
-
-    let mut v = if *phase < duty { 1.0 } else { 0.0 };
-    v += poly_blep(*phase, dt);
-    let mut tf = *phase - duty;
-    if tf < 0.0 {
-        tf += 1.0;
-    }
-    v -= poly_blep(tf, dt);
-
-    *phase += dt;
-    if *phase >= 1.0 {
-        *phase -= 1.0;
-    }
-
-    (v * volume).clamp(0.0, 15.0)
-}
-
-fn poly_blep(t: f32, dt: f32) -> f32 {
-    if t < dt {
-        let x = t / dt;
-        x + x - x * x - 1.0
-    } else if t > 1.0 - dt {
-        let x = (t - 1.0) / dt;
-        x * x + x + x + 1.0
-    } else {
-        0.0
-    }
-}
-
-fn sample_blep_triangle_channel(
-    channel: &TriangleChannel,
-    phase: &mut f32,
-    sample_rate: u32,
-) -> f32 {
-    if !channel.enabled
-        || channel.timer_reload < 2
-        || channel.length_counter == 0
-        || channel.linear_counter == 0
-    {
-        return 0.0;
-    }
-
-    let freq = CPU_CLOCK_NTSC_F32 / (32.0 * (channel.timer_reload as f32 + 1.0));
-    let mut dt = freq / sample_rate as f32;
-
-    // Clamp dt to prevent extreme aliasing at ultrasonic frequencies
-    dt = dt.clamp(0.0, 0.5);
-
-    // Hardware-accurate 32-step triangle lookup.
-    let step = (*phase * 32.0) as usize % 32;
-    let v = TRIANGLE_TABLE[step] as f32;
-
-    *phase += dt;
-    if *phase >= 1.0 {
-        *phase -= 1.0;
-    }
-
-    v
 }
 
 #[cfg(test)]
