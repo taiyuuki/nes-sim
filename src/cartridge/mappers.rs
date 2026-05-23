@@ -5,6 +5,7 @@ mod mmc1;
 mod mmc3;
 mod nrom;
 mod uxrom;
+mod vrc2;
 mod vrc4;
 mod vrc6;
 
@@ -15,6 +16,7 @@ use self::mmc1::Mmc1;
 use self::mmc3::Mmc3;
 use self::nrom::Nrom;
 use self::uxrom::Uxrom;
+use self::vrc2::Vrc2;
 use self::vrc4::Vrc4;
 use self::vrc6::new_vrc6;
 use super::{CartridgeError, Mirroring};
@@ -52,6 +54,10 @@ pub(super) fn from_mapper_id(
         3 => Ok((Box::new(Cnrom::new(prg_rom, chr_rom, mirroring)), vec![])),
         4 => Ok((Box::new(Mmc3::new(prg_rom, chr_rom, mirroring)), vec![])),
         7 => Ok((Box::new(Anrom::new(prg_rom, chr_rom, mirroring)), vec![])),
+        22 => Ok((
+            Box::new(Vrc2::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         21 | 23 | 25 => Ok((
             Box::new(Vrc4::new(prg_rom, chr_rom, mirroring, mapper_id)),
             vec![],
