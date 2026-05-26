@@ -6,6 +6,13 @@ mod colordreams;
 mod cprom;
 mod fme7;
 mod gxrom;
+mod irem76;
+mod irem_g101;
+mod irem_h3001;
+mod irem_tams1;
+mod jf13;
+mod jf19;
+mod mapper70;
 mod mapper118;
 mod mapper78;
 mod mapper87;
@@ -18,6 +25,7 @@ mod nrom;
 mod sunsoft3;
 mod taito0190;
 mod taito_x1005;
+mod taito_x1017;
 mod tqrom;
 mod uxrom;
 mod vrc2;
@@ -32,6 +40,13 @@ use self::colordreams::ColorDreams;
 use self::cprom::CpROM;
 use self::fme7::Fme7;
 use self::gxrom::Gxrom;
+use self::irem76::Irem76;
+use self::irem_g101::IremG101;
+use self::irem_h3001::IremH3001;
+use self::irem_tams1::IremTamS1;
+use self::jf13::Jf13;
+use self::jf19::Jf19;
+use self::mapper70::Mapper70;
 use self::mapper78::Mapper78;
 use self::mapper87::Mapper87;
 use self::mapper118::Mapper118;
@@ -43,6 +58,7 @@ use self::nina003::Nina003;
 use self::nrom::Nrom;
 use self::sunsoft3::Sunsoft3;
 use self::taito_x1005::TaitoX1005;
+use self::taito_x1017::TaitoX1017;
 use self::taito0190::Taito0190;
 use self::tqrom::Tqrom;
 use self::uxrom::Uxrom;
@@ -134,6 +150,38 @@ pub(super) fn from_mapper_id(
         )),
         154 => Ok((
             Box::new(Namco3433::new(prg_rom, chr_rom, mirroring, true)),
+            vec![],
+        )),
+        32 => Ok((
+            Box::new(IremG101::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        65 => Ok((
+            Box::new(IremH3001::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        76 => Ok((
+            Box::new(Irem76::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        86 => Ok((
+            Box::new(Jf13::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        70 => Ok((
+            Box::new(Mapper70::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        82 => Ok((
+            Box::new(TaitoX1017::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        92 => Ok((
+            Box::new(Jf19::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        97 => Ok((
+            Box::new(IremTamS1::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         _ => Err(CartridgeError::UnsupportedMapper(mapper_id)),
