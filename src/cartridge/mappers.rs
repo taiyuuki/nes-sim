@@ -47,7 +47,7 @@ use self::camerica::Camerica;
 use self::cnrom::Cnrom;
 use self::colordreams::ColorDreams;
 use self::cprom::CpROM;
-use self::fme7::Fme7;
+use self::fme7::new_fme7;
 use self::gxrom::Gxrom;
 use self::irem_g101::IremG101;
 use self::irem_h3001::IremH3001;
@@ -69,7 +69,7 @@ use self::mapper152::Mapper152;
 use self::mapper162::Mapper162;
 use self::mmc1::Mmc1;
 use self::mmc3::Mmc3;
-use self::namco163::Namco163;
+use self::namco163::new_namco163;
 use self::namco3433::Namco3433;
 use self::nina003::Nina003;
 use self::nrom::Nrom;
@@ -122,7 +122,7 @@ pub(super) fn from_mapper_id(
             vec![],
         )),
         13 => Ok((Box::new(CpROM::new(prg_rom, chr_rom, mirroring)), vec![])),
-        19 => Ok((Box::new(Namco163::new(prg_rom, chr_rom, mirroring)), vec![])),
+        19 => Ok(new_namco163(prg_rom, chr_rom, mirroring)),
         22 => Ok((Box::new(Vrc2::new(prg_rom, chr_rom, mirroring)), vec![])),
         21 | 23 | 25 => Ok((
             Box::new(Vrc4::new(prg_rom, chr_rom, mirroring, mapper_id)),
@@ -131,7 +131,7 @@ pub(super) fn from_mapper_id(
         24 | 26 => Ok(new_vrc6(prg_rom, chr_rom, mirroring, mapper_id)),
         34 => Ok((Box::new(Bnrom::new(prg_rom, chr_rom, mirroring)), vec![])),
         66 => Ok((Box::new(Gxrom::new(prg_rom, chr_rom, mirroring)), vec![])),
-        69 => Ok((Box::new(Fme7::new(prg_rom, chr_rom, mirroring)), vec![])),
+        69 => Ok(new_fme7(prg_rom, chr_rom, mirroring)),
         71 => Ok((Box::new(Camerica::new(prg_rom, chr_rom, mirroring)), vec![])),
         78 => Ok((Box::new(Mapper78::new(prg_rom, chr_rom, mirroring)), vec![])),
         79 => Ok((

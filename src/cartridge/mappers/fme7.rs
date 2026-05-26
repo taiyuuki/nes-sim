@@ -1,6 +1,10 @@
-// TODO: Sunsoft 5B expansion audio
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use super::Mapper;
+use crate::apu::ExpansionAudioChip;
 use crate::cartridge::Mirroring;
+use crate::cartridge::expansion_audio::sunsoft5b::{Sunsoft5bAudio, Sunsoft5bAudioChip};
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 const PRG_RAM_BANK_8K: usize = 0x2000;
@@ -26,10 +30,16 @@ pub(super) struct Fme7 {
     irq_enabled: bool,
     irq_clock: bool,
     mirroring: Mirroring,
+    audio: Rc<RefCell<Sunsoft5bAudio>>,
 }
 
 impl Fme7 {
-    pub(super) fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: Mirroring) -> Self {
+    fn new(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: Mirroring,
+        audio: Rc<RefCell<Sunsoft5bAudio>>,
+    ) -> Self {
         let chr = if chr_rom.is_empty() {
             ChrMemory::Ram(vec![0; 0x2000])
         } else {
@@ -50,6 +60,7 @@ impl Fme7 {
             irq_enabled: false,
             irq_clock: false,
             mirroring,
+            audio,
         }
     }
 
@@ -174,6 +185,14 @@ impl Mapper for Fme7 {
                 self.write_register(data);
                 true
             }
+            0xC000..=0xDFFF => {
+                self.audio.borrow_mut().write_address(data);
+                true
+            }
+            0xE000..=0xFFFF => {
+                self.audio.borrow_mut().write_data(data);
+                true
+            }
             _ => false,
         }
     }
@@ -243,6 +262,7 @@ impl Mapper for Fme7 {
                 writer.write_bytes(chr_ram);
             }
         }
+        self.audio.borrow().save_state(writer);
     }
 
     fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
@@ -267,8 +287,22 @@ impl Mapper for Fme7 {
                 ));
             }
         }
+        self.audio.borrow_mut().load_state(reader)?;
         Ok(())
     }
+}
+
+pub(super) fn new_fme7(
+    prg_rom: Vec<u8>,
+    chr_rom: Vec<u8>,
+    mirroring: Mirroring,
+) -> (Box<dyn Mapper>, Vec<Box<dyn ExpansionAudioChip>>) {
+    let audio = Rc::new(RefCell::new(Sunsoft5bAudio::new()));
+    let chip = Sunsoft5bAudioChip::new(audio.clone());
+    (
+        Box::new(Fme7::new(prg_rom, chr_rom, mirroring, audio)),
+        vec![Box::new(chip)],
+    )
 }
 
 fn encode_mirroring(mirroring: Mirroring) -> u8 {

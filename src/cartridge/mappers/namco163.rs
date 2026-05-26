@@ -1,6 +1,10 @@
-// TODO: Namco 163 wavetable expansion audio
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use super::Mapper;
+use crate::apu::ExpansionAudioChip;
 use crate::cartridge::Mirroring;
+use crate::cartridge::expansion_audio::namco163::{Namco163Audio, Namco163AudioChip};
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 const PRG_BANK_8K: usize = 0x2000;
@@ -23,10 +27,16 @@ pub(super) struct Namco163 {
     irq_counter: u16,
     irq_enabled: bool,
     mirroring: Mirroring,
+    audio: Rc<RefCell<Namco163Audio>>,
 }
 
 impl Namco163 {
-    pub(super) fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: Mirroring) -> Self {
+    fn new(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: Mirroring,
+        audio: Rc<RefCell<Namco163Audio>>,
+    ) -> Self {
         let chr = if chr_rom.is_empty() {
             ChrMemory::Ram(vec![0; 0x2000])
         } else {
@@ -44,6 +54,7 @@ impl Namco163 {
             irq_counter: 0,
             irq_enabled: false,
             mirroring,
+            audio,
         }
     }
 
@@ -62,6 +73,7 @@ impl Namco163 {
 impl Mapper for Namco163 {
     fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
+            0x4800..=0x4FFF => Some(self.audio.borrow_mut().read_ram()),
             0x5000..=0x57FF => Some((self.irq_counter & 0xFF) as u8),
             0x5800..=0x5FFF => {
                 let hi = ((self.irq_counter >> 8) as u8) & 0x7F;
@@ -94,6 +106,10 @@ impl Mapper for Namco163 {
 
     fn cpu_write(&mut self, addr: u16, data: u8) -> bool {
         match addr {
+            0x4800..=0x4FFF => {
+                self.audio.borrow_mut().write_ram(data);
+                true
+            }
             0x5000..=0x57FF => {
                 self.irq_counter = (self.irq_counter & 0xFF00) | data as u16;
                 self.irq_enabled = false;
@@ -121,6 +137,10 @@ impl Mapper for Namco163 {
             }
             0xF000..=0xF7FF => {
                 self.prg_banks[2] = data & 0x3F;
+                true
+            }
+            0xF800..=0xFFFF => {
+                self.audio.borrow_mut().write_addr(data);
                 true
             }
             _ => false,
@@ -218,6 +238,7 @@ impl Mapper for Namco163 {
                 writer.write_bytes(chr_ram);
             }
         }
+        self.audio.borrow().save_state(writer);
     }
 
     fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
@@ -239,8 +260,22 @@ impl Mapper for Namco163 {
                 ));
             }
         }
+        self.audio.borrow_mut().load_state(reader)?;
         Ok(())
     }
+}
+
+pub(super) fn new_namco163(
+    prg_rom: Vec<u8>,
+    chr_rom: Vec<u8>,
+    mirroring: Mirroring,
+) -> (Box<dyn Mapper>, Vec<Box<dyn ExpansionAudioChip>>) {
+    let audio = Rc::new(RefCell::new(Namco163Audio::new()));
+    let chip = Namco163AudioChip::new(audio.clone());
+    (
+        Box::new(Namco163::new(prg_rom, chr_rom, mirroring, audio)),
+        vec![Box::new(chip)],
+    )
 }
 
 fn encode_mirroring(mirroring: Mirroring) -> u8 {
