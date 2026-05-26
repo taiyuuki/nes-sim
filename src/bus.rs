@@ -285,7 +285,7 @@ impl DmaBus for NESBus {
         self.ppu.write_oam_dma(data);
     }
 
-    fn take_dmc_dma_request(&mut self) -> Option<crate::apu::DmcDmaRequest> {
+    fn take_dmc_dma_request(&mut self) -> Option<crate::apu::dmc::DmcDmaRequest> {
         self.apu.take_dmc_dma_request()
     }
 

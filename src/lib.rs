@@ -26,6 +26,18 @@ pub use runtime::{
 pub use savestate::SaveStateError;
 use savestate::{StateReader, StateWriter};
 
+const NTSC_CPU_SCHEDULE: [u8; 1] = [3];
+const PAL_CPU_SCHEDULE: [u8; 5] = [3, 3, 3, 3, 4];
+const DENDY_CPU_SCHEDULE: [u8; 1] = [3];
+
+fn cpu_schedule(tv: TVSystem) -> &'static [u8] {
+    match tv {
+        TVSystem::NTSC => &NTSC_CPU_SCHEDULE,
+        TVSystem::PAL => &PAL_CPU_SCHEDULE,
+        TVSystem::DENDY => &DENDY_CPU_SCHEDULE,
+    }
+}
+
 pub struct NES {
     cpu: cpu::CPU,
     bus: bus::NESBus,
@@ -73,11 +85,11 @@ impl NES {
         self.bus.tick_ppu();
         self.cpu.set_nmi(self.bus.ppu_nmi_line());
 
-        let cpu_schedule = self.bus.ppu().cpu_schedule();
+        let schedule = cpu_schedule(self.bus.ppu().tv_system());
         self.cpu_ppu_counter += 1;
-        if self.cpu_ppu_counter >= cpu_schedule[self.cpu_schedule_index] {
+        if self.cpu_ppu_counter >= schedule[self.cpu_schedule_index] {
             self.cpu_ppu_counter = 0;
-            self.cpu_schedule_index = (self.cpu_schedule_index + 1) % cpu_schedule.len();
+            self.cpu_schedule_index = (self.cpu_schedule_index + 1) % schedule.len();
             self.bus.tick_apu_cpu_cycle();
             self.cpu.clock(&mut self.bus);
             self.cpu.irq_set_level(0x01, self.bus.apu_irq_line());

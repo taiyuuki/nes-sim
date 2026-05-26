@@ -35,7 +35,7 @@ impl PPUMemory {
         if let Some(index) = self
             .cartridge
             .as_ref()
-            .and_then(|cartridge| cartridge.map_nametable_addr(addr))
+            .and_then(|c| c.map_nametable_addr(addr))
         {
             return index;
         }
@@ -64,7 +64,7 @@ impl PPUMemory {
     fn mirroring(&self) -> Mirroring {
         self.cartridge
             .as_ref()
-            .map(Cartridge::mirroring)
+            .map(|c| c.mirroring())
             .unwrap_or(Mirroring::Horizontal)
     }
 
@@ -73,21 +73,17 @@ impl PPUMemory {
     }
 
     pub(super) fn cartridge_cpu_read(&mut self, addr: u16) -> Option<u8> {
-        self.cartridge
-            .as_mut()
-            .and_then(|cartridge| cartridge.cpu_read(addr))
+        self.cartridge.as_mut().and_then(|c| c.cpu_read(addr))
     }
 
     pub(super) fn cartridge_cpu_write(&mut self, addr: u16, data: u8) -> bool {
         self.cartridge
             .as_mut()
-            .is_some_and(|cartridge| cartridge.cpu_write(addr, data))
+            .is_some_and(|c| c.cpu_write(addr, data))
     }
 
     pub(super) fn cartridge_irq_line(&self) -> bool {
-        self.cartridge
-            .as_ref()
-            .is_some_and(|cartridge| cartridge.irq_line())
+        self.cartridge.as_ref().is_some_and(|c| c.irq_line())
     }
 
     pub(super) fn cartridge_tick_cpu_cycle(&mut self) {
@@ -141,7 +137,7 @@ impl PPUBus for PPUMemory {
             0x0000..=0x1FFF => self
                 .cartridge
                 .as_mut()
-                .and_then(|cartridge| cartridge.ppu_read(addr))
+                .and_then(|c| c.ppu_read(addr))
                 .unwrap_or_else(|| self.chr_ram[addr as usize]),
             0x2000..=0x3EFF => self.vram[self.nametable_index(addr)],
             0x3F00..=0x3FFF => self.palette[Self::palette_index(addr)],
@@ -156,7 +152,7 @@ impl PPUBus for PPUMemory {
                 if !self
                     .cartridge
                     .as_mut()
-                    .is_some_and(|cartridge| cartridge.ppu_write(addr, data))
+                    .is_some_and(|c| c.ppu_write(addr, data))
                 {
                     self.chr_ram[addr as usize] = data;
                 }

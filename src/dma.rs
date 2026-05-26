@@ -1,4 +1,4 @@
-use crate::apu::{DmcDmaKind, DmcDmaRequest};
+use crate::apu::dmc::{DmcDmaKind, DmcDmaRequest};
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 pub trait DmaBus {

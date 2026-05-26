@@ -20,9 +20,6 @@ const CTRL_SPRITE_SIZE: u8 = 0x20;
 const CTRL_NMI_ENABLE: u8 = 0x80;
 const DOTS_PER_SCANLINE: u16 = 341;
 const VISIBLE_SCANLINES: i16 = 240;
-const NTSC_CPU_SCHEDULE: [u8; 1] = [3];
-const PAL_CPU_SCHEDULE: [u8; 5] = [3, 3, 3, 3, 4];
-const DENDY_CPU_SCHEDULE: [u8; 1] = [3];
 
 #[cfg(test)]
 const NES_RGB_PALETTE: [[u8; 3]; 64] = [
@@ -439,12 +436,8 @@ impl PPU {
         rgb
     }
 
-    pub fn cpu_schedule(&self) -> &'static [u8] {
-        match self.tv_system {
-            TVSystem::NTSC => &NTSC_CPU_SCHEDULE,
-            TVSystem::PAL => &PAL_CPU_SCHEDULE,
-            TVSystem::DENDY => &DENDY_CPU_SCHEDULE,
-        }
+    pub fn tv_system(&self) -> TVSystem {
+        self.tv_system
     }
 
     pub(crate) fn write_oam_dma(&mut self, data: u8) {
