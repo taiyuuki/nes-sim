@@ -12,14 +12,19 @@ mod irem_h3001;
 mod irem_tams1;
 mod jf13;
 mod jf19;
+mod mapper115;
 mod mapper118;
 mod mapper152;
+mod mapper162;
 mod mapper36;
+mod mapper46;
+mod mapper62;
 mod mapper70;
 mod mapper72;
 mod mapper78;
 mod mapper87;
 mod mapper94;
+
 mod mmc1;
 mod mmc3;
 mod namco163;
@@ -51,13 +56,17 @@ use self::irem76::Irem76;
 use self::jf13::Jf13;
 use self::jf19::Jf19;
 use self::mapper36::Mapper36;
+use self::mapper46::Mapper46;
+use self::mapper62::Mapper62;
 use self::mapper70::Mapper70;
 use self::mapper72::Mapper72;
 use self::mapper78::Mapper78;
 use self::mapper87::Mapper87;
 use self::mapper94::Mapper94;
+use self::mapper115::Mapper115;
 use self::mapper118::Mapper118;
 use self::mapper152::Mapper152;
+use self::mapper162::Mapper162;
 use self::mmc1::Mmc1;
 use self::mmc3::Mmc3;
 use self::namco163::Namco163;
@@ -178,10 +187,20 @@ pub(super) fn from_mapper_id(
             vec![],
         )),
         36 => Ok((Box::new(Mapper36::new(prg_rom, chr_rom, mirroring)), vec![])),
+        46 => Ok((Box::new(Mapper46::new(prg_rom, chr_rom, mirroring)), vec![])),
+        62 => Ok((Box::new(Mapper62::new(prg_rom, chr_rom, mirroring)), vec![])),
         72 => Ok((Box::new(Mapper72::new(prg_rom, chr_rom, mirroring)), vec![])),
         94 => Ok((Box::new(Mapper94::new(prg_rom, chr_rom, mirroring)), vec![])),
+        115 => Ok((
+            Box::new(Mapper115::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         152 => Ok((
             Box::new(Mapper152::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        162 => Ok((
+            Box::new(Mapper162::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         _ => Err(CartridgeError::UnsupportedMapper(mapper_id)),
