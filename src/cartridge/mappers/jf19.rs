@@ -128,8 +128,6 @@ fn decode_mirroring(encoded: u8) -> Result<Mirroring, SaveStateError> {
         2 => Ok(Mirroring::FourScreen),
         3 => Ok(Mirroring::SPAGE0),
         4 => Ok(Mirroring::SPAGE1),
-        _ => Err(SaveStateError::InvalidData(
-            "invalid JF-19 mirroring value",
-        )),
+        _ => Err(SaveStateError::InvalidData("invalid JF-19 mirroring value")),
     }
 }

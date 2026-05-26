@@ -2,7 +2,7 @@ use super::Mapper;
 use crate::cartridge::Mirroring;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
-const PRG_BANK_32K: usize = 0x8000;
+const PRG_BANK_16K: usize = 0x4000;
 const CHR_BANK_8K: usize = 0x2000;
 
 enum ChrMemory {
@@ -10,7 +10,7 @@ enum ChrMemory {
     Ram(Vec<u8>),
 }
 
-pub(super) struct Jf13 {
+pub(super) struct Mapper72 {
     prg_rom: Vec<u8>,
     chr: ChrMemory,
     prg_bank: usize,
@@ -18,7 +18,7 @@ pub(super) struct Jf13 {
     mirroring: Mirroring,
 }
 
-impl Jf13 {
+impl Mapper72 {
     pub(super) fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: Mirroring) -> Self {
         let chr = if chr_rom.is_empty() {
             ChrMemory::Ram(vec![0; 0x2000])
@@ -33,13 +33,23 @@ impl Jf13 {
             mirroring,
         }
     }
+
+    fn prg_bank_count_16k(&self) -> usize {
+        self.prg_rom.len() / PRG_BANK_16K
+    }
 }
 
-impl Mapper for Jf13 {
+impl Mapper for Mapper72 {
     fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
-            0x8000..=0xFFFF => {
-                let offset = self.prg_bank * PRG_BANK_32K + (addr as usize - 0x8000);
+            0x8000..=0xBFFF => {
+                let bank = self.prg_bank % self.prg_bank_count_16k();
+                let offset = bank * PRG_BANK_16K + (addr as usize - 0x8000);
+                Some(self.prg_rom[offset % self.prg_rom.len()])
+            }
+            0xC000..=0xFFFF => {
+                let last = self.prg_bank_count_16k().saturating_sub(1);
+                let offset = last * PRG_BANK_16K + (addr as usize - 0xC000);
                 Some(self.prg_rom[offset % self.prg_rom.len()])
             }
             _ => None,
@@ -48,9 +58,13 @@ impl Mapper for Jf13 {
 
     fn cpu_write(&mut self, addr: u16, data: u8) -> bool {
         match addr {
-            0x6000..=0x6FFF => {
-                self.prg_bank = ((data >> 4) & 0x03) as usize;
-                self.chr_bank = ((data & 0x03) | ((data & 0x40) >> 4)) as usize;
+            0x8000..=0xFFFF => {
+                if (data & 0x80) != 0 {
+                    self.prg_bank = (data & 0x0F) as usize;
+                }
+                if (data & 0x40) != 0 {
+                    self.chr_bank = (data & 0x0F) as usize;
+                }
                 true
             }
             _ => false,
@@ -115,6 +129,8 @@ fn decode_mirroring(encoded: u8) -> Result<Mirroring, SaveStateError> {
         2 => Ok(Mirroring::FourScreen),
         3 => Ok(Mirroring::SPAGE0),
         4 => Ok(Mirroring::SPAGE1),
-        _ => Err(SaveStateError::InvalidData("invalid JF-13 mirroring value")),
+        _ => Err(SaveStateError::InvalidData(
+            "invalid Mapper 72 mirroring value",
+        )),
     }
 }

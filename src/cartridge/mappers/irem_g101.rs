@@ -73,10 +73,7 @@ impl Mapper for IremG101 {
                         0x8000,
                     )
                 } else {
-                    (
-                        self.prg_bank_count_8k().saturating_sub(2),
-                        0xC000,
-                    )
+                    (self.prg_bank_count_8k().saturating_sub(2), 0xC000)
                 };
                 let offset = bank * PRG_BANK_8K + (addr as usize - base_addr);
                 Some(self.prg_rom[offset % self.prg_rom.len()])
