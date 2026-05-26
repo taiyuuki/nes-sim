@@ -20,11 +20,7 @@ pub(super) struct Vrc2 {
 }
 
 impl Vrc2 {
-    pub(super) fn new(
-        prg_rom: Vec<u8>,
-        chr_data: Vec<u8>,
-        mirroring: Mirroring,
-    ) -> Self {
+    pub(super) fn new(prg_rom: Vec<u8>, chr_data: Vec<u8>, mirroring: Mirroring) -> Self {
         let chr_memory = if chr_data.is_empty() {
             ChrMemory::Ram(vec![0; 0x2000])
         } else {
@@ -46,8 +42,7 @@ impl Mapper for Vrc2 {
     fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
             0x8000..=0xFFFF => {
-                let second_last_8k =
-                    self.prg_rom.len().saturating_sub(PRG_BANK_8K * 2);
+                let second_last_8k = self.prg_rom.len().saturating_sub(PRG_BANK_8K * 2);
 
                 let offset = match addr {
                     0x8000..=0x9FFF => {
@@ -87,15 +82,13 @@ impl Mapper for Vrc2 {
                     }
                     0xB000 | 0xC000 | 0xD000 | 0xE000 => {
                         let data = data & 0x0F;
-                        let which_reg = ((addr as usize - 0xB000) >> 11) as u8
-                            + if bit1 { 1 } else { 0 };
+                        let which_reg =
+                            ((addr as usize - 0xB000) >> 11) as u8 + if bit1 { 1 } else { 0 };
                         let old_val = self.chr_banks[which_reg as usize];
                         if bit0 {
-                            self.chr_banks[which_reg as usize] =
-                                (old_val & 0x0F) | (data << 4);
+                            self.chr_banks[which_reg as usize] = (old_val & 0x0F) | (data << 4);
                         } else {
-                            self.chr_banks[which_reg as usize] =
-                                (old_val & 0xF0) | data;
+                            self.chr_banks[which_reg as usize] = (old_val & 0xF0) | data;
                         }
                     }
                     _ => {}
@@ -154,7 +147,7 @@ impl Mapper for Vrc2 {
             _ => {
                 return Err(SaveStateError::InvalidData(
                     "invalid mirroring value in VRC2 state",
-                ))
+                ));
             }
         };
         Ok(())

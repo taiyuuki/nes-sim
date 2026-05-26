@@ -110,9 +110,7 @@ impl Mapper for Vrc4 {
 
                 let offset = if self.prg_mode {
                     match addr {
-                        0x8000..=0x9FFF => {
-                            (addr - 0x8000) as usize + last_8k
-                        }
+                        0x8000..=0x9FFF => (addr - 0x8000) as usize + last_8k,
                         0xA000..=0xBFFF => {
                             let bank = self.prg_bank_0 as usize;
                             (addr - 0xA000) as usize + bank * PRG_BANK_8K
@@ -174,28 +172,24 @@ impl Mapper for Vrc4 {
                     }
                     0xB000 | 0xC000 | 0xD000 | 0xE000 => {
                         let data = data & 0x0F;
-                        let which_reg = ((addr as usize - 0xB000) >> 11) as u8
-                            + if bit1 { 1 } else { 0 };
+                        let which_reg =
+                            ((addr as usize - 0xB000) >> 11) as u8 + if bit1 { 1 } else { 0 };
                         let old_val = self.chr_banks[which_reg as usize];
                         if bit0 {
-                            self.chr_banks[which_reg as usize] =
-                                (old_val & 0x0F) | (data << 4);
+                            self.chr_banks[which_reg as usize] = (old_val & 0x0F) | (data << 4);
                         } else {
-                            self.chr_banks[which_reg as usize] =
-                                (old_val & 0xF0) | data;
+                            self.chr_banks[which_reg as usize] = (old_val & 0xF0) | data;
                         }
                     }
                     0xF000 => {
                         match (bit1, bit0) {
                             (false, false) => {
                                 // F000: IRQ latch 低 4 位
-                                self.irq_latch =
-                                    (self.irq_latch & 0xF0) | (data & 0x0F);
+                                self.irq_latch = (self.irq_latch & 0xF0) | (data & 0x0F);
                             }
                             (false, true) => {
                                 // F001: IRQ latch 高 4 位
-                                self.irq_latch =
-                                    (self.irq_latch & 0x0F) | ((data & 0x0F) << 4);
+                                self.irq_latch = (self.irq_latch & 0x0F) | ((data & 0x0F) << 4);
                             }
                             (true, false) => {
                                 // F002: IRQ 控制
@@ -287,7 +281,7 @@ impl Mapper for Vrc4 {
             _ => {
                 return Err(SaveStateError::InvalidData(
                     "invalid mirroring value in VRC4 state",
-                ))
+                ));
             }
         };
         self.prg_mode = reader.read_bool()?;

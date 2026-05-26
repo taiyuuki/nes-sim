@@ -1,10 +1,10 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-mod mappers;
 pub(crate) mod expansion_audio;
+mod mappers;
 
-use self::mappers::{from_mapper_id, Mapper};
+use self::mappers::{Mapper, from_mapper_id};
 use crate::apu::ExpansionAudioChip;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 

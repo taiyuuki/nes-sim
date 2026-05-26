@@ -165,11 +165,7 @@ impl PulseChannel {
             2 => self.seq_step >= 1 && self.seq_step <= 4,
             _ => self.seq_step == 0 || self.seq_step >= 3,
         };
-        if high {
-            self.envelope_volume()
-        } else {
-            0
-        }
+        if high { self.envelope_volume() } else { 0 }
     }
 
     fn target_period(&self) -> u16 {
@@ -660,11 +656,31 @@ impl APU {
             chip.tick_cpu_cycle();
         }
 
-        let p1 = if (self.debug_mute_mask & 0x01) != 0 { 0 } else { self.pulse1.output() };
-        let p2 = if (self.debug_mute_mask & 0x02) != 0 { 0 } else { self.pulse2.output() };
-        let tri = if (self.debug_mute_mask & 0x04) != 0 { 0 } else { self.triangle.output() };
-        let noise = if (self.debug_mute_mask & 0x08) != 0 { 0 } else { self.noise.output() };
-        let dmc = if (self.debug_mute_mask & 0x10) != 0 { 0 } else { self.dmc.output_level };
+        let p1 = if (self.debug_mute_mask & 0x01) != 0 {
+            0
+        } else {
+            self.pulse1.output()
+        };
+        let p2 = if (self.debug_mute_mask & 0x02) != 0 {
+            0
+        } else {
+            self.pulse2.output()
+        };
+        let tri = if (self.debug_mute_mask & 0x04) != 0 {
+            0
+        } else {
+            self.triangle.output()
+        };
+        let noise = if (self.debug_mute_mask & 0x08) != 0 {
+            0
+        } else {
+            self.noise.output()
+        };
+        let dmc = if (self.debug_mute_mask & 0x10) != 0 {
+            0
+        } else {
+            self.dmc.output_level
+        };
 
         self.sample_accum_pulse += f64::from(p1 + p2);
         self.sample_accum_tri += f64::from(tri);
@@ -955,7 +971,6 @@ impl APU {
         self.triangle.half_frame_tick();
         self.noise.half_frame_tick();
     }
-
 }
 
 impl Default for APU {

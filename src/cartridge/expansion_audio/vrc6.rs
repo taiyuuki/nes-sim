@@ -91,7 +91,10 @@ impl Vrc6Pulse {
         writer.write_u8(self.step);
     }
 
-    pub(crate) fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<(), SaveStateError> {
         self.enabled = reader.read_bool()?;
         self.digitized = reader.read_bool()?;
         self.duty = reader.read_u8()?;
@@ -183,7 +186,10 @@ impl Vrc6Saw {
         writer.write_u8(self.amp);
     }
 
-    pub(crate) fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<(), SaveStateError> {
         self.enabled = reader.read_bool()?;
         self.phase = reader.read_u8()?;
         self.wavelength = reader.read_u16()?;
@@ -232,7 +238,10 @@ impl Vrc6Audio {
         self.saw.save_state(writer);
     }
 
-    pub(crate) fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
+    pub(crate) fn load_state(
+        &mut self,
+        reader: &mut StateReader<'_>,
+    ) -> Result<(), SaveStateError> {
         self.pulse1.load_state(reader)?;
         self.pulse2.load_state(reader)?;
         self.saw.load_state(reader)?;

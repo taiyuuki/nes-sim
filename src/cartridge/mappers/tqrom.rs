@@ -1,6 +1,6 @@
-use super::mmc3::Mmc3Core;
 use super::Mapper;
-use crate::cartridge::{Mirroring};
+use super::mmc3::Mmc3Core;
+use crate::cartridge::Mirroring;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 const PRG_RAM_LEN: usize = 0x2000;
@@ -138,8 +138,6 @@ fn decode_mirroring(encoded: u8) -> Result<Mirroring, SaveStateError> {
         2 => Ok(Mirroring::FourScreen),
         3 => Ok(Mirroring::SPAGE0),
         4 => Ok(Mirroring::SPAGE1),
-        _ => Err(SaveStateError::InvalidData(
-            "invalid TQROM mirroring value",
-        )),
+        _ => Err(SaveStateError::InvalidData("invalid TQROM mirroring value")),
     }
 }

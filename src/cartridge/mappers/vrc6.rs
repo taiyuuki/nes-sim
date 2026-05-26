@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use super::Mapper;
 use crate::apu::ExpansionAudioChip;
-use crate::cartridge::expansion_audio::vrc6::{Vrc6Audio, Vrc6AudioChip};
 use crate::cartridge::Mirroring;
+use crate::cartridge::expansion_audio::vrc6::{Vrc6Audio, Vrc6AudioChip};
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 const PRG_BANK_16K: usize = 0x4000;
@@ -275,7 +275,7 @@ impl Mapper for Vrc6 {
             _ => {
                 return Err(SaveStateError::InvalidData(
                     "invalid mirroring value in VRC6 state",
-                ))
+                ));
             }
         };
         self.irq_latch = reader.read_u8()?;
