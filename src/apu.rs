@@ -48,11 +48,12 @@ pub struct APU {
     sample_rate: u32,
     cycles_per_sample: f64,
     sample_phase: f64,
-    sample_accum_pulse: f64,
-    sample_accum_tri: f64,
-    sample_accum_noise: f64,
-    sample_accum_dmc: f64,
-    sample_accum_exp: f64,
+    // 整数累加器，避免每 CPU 周期的浮点运算
+    sample_accum_pulse: i64,
+    sample_accum_tri: i64,
+    sample_accum_noise: i64,
+    sample_accum_dmc: i64,
+    sample_accum_exp: i64,
     sample_accum_count: u32,
     audio_samples: Vec<f32>,
     expansions: Vec<Box<dyn ExpansionAudioChip>>,
@@ -78,11 +79,11 @@ impl APU {
             sample_rate,
             cycles_per_sample: CPU_CLOCK_NTSC / sample_rate as f64,
             sample_phase: 0.0,
-            sample_accum_pulse: 0.0,
-            sample_accum_tri: 0.0,
-            sample_accum_noise: 0.0,
-            sample_accum_dmc: 0.0,
-            sample_accum_exp: 0.0,
+            sample_accum_pulse: 0,
+            sample_accum_tri: 0,
+            sample_accum_noise: 0,
+            sample_accum_dmc: 0,
+            sample_accum_exp: 0,
             sample_accum_count: 0,
             audio_samples: Vec::new(),
             expansions: Vec::new(),
@@ -101,11 +102,11 @@ impl APU {
         self.frame_divider = FRAME_SEQUENCER_DIVIDER;
         self.pending_dmc_dma = None;
         self.sample_phase = 0.0;
-        self.sample_accum_pulse = 0.0;
-        self.sample_accum_tri = 0.0;
-        self.sample_accum_noise = 0.0;
-        self.sample_accum_dmc = 0.0;
-        self.sample_accum_exp = 0.0;
+        self.sample_accum_pulse = 0;
+        self.sample_accum_tri = 0;
+        self.sample_accum_noise = 0;
+        self.sample_accum_dmc = 0;
+        self.sample_accum_exp = 0;
         self.sample_accum_count = 0;
         self.apu_subclock_even = false;
     }
@@ -153,14 +154,15 @@ impl APU {
             self.dmc.output_level
         };
 
-        self.sample_accum_pulse += f64::from(p1 + p2);
-        self.sample_accum_tri += f64::from(tri);
-        self.sample_accum_noise += f64::from(noise);
-        self.sample_accum_dmc += f64::from(dmc);
+        // 使用整数累加器，避免每 CPU 周期的浮点运算
+        self.sample_accum_pulse += i64::from(p1 + p2);
+        self.sample_accum_tri += i64::from(tri);
+        self.sample_accum_noise += i64::from(noise);
+        self.sample_accum_dmc += i64::from(dmc);
 
-        let mut exp_out = 0.0f64;
+        let mut exp_out = 0i64;
         for chip in &self.expansions {
-            exp_out += chip.output_sample() as f64;
+            exp_out += (chip.output_sample() * 1000.0) as i64;
         }
         self.sample_accum_exp += exp_out;
 
@@ -170,11 +172,12 @@ impl APU {
         if self.sample_phase >= self.cycles_per_sample {
             self.sample_phase -= self.cycles_per_sample;
             let count = self.sample_accum_count.max(1) as f64;
-            let avg_pulse = self.sample_accum_pulse / count;
-            let avg_tri = self.sample_accum_tri / count;
-            let avg_noise = self.sample_accum_noise / count;
-            let avg_dmc = self.sample_accum_dmc / count;
-            let avg_exp = self.sample_accum_exp / count;
+            // 只在输出时转换为浮点
+            let avg_pulse = self.sample_accum_pulse as f64 / count;
+            let avg_tri = self.sample_accum_tri as f64 / count;
+            let avg_noise = self.sample_accum_noise as f64 / count;
+            let avg_dmc = self.sample_accum_dmc as f64 / count;
+            let avg_exp = self.sample_accum_exp as f64 / count / 1000.0;
 
             let pulse_mix = if avg_pulse > 0.0 {
                 (95.88 / ((8128.0 / avg_pulse) + 100.0)) as f32
@@ -191,11 +194,11 @@ impl APU {
 
             let sample = (pulse_mix + tnd_mix as f32 + avg_exp as f32).clamp(-1.0, 1.0);
 
-            self.sample_accum_pulse = 0.0;
-            self.sample_accum_tri = 0.0;
-            self.sample_accum_noise = 0.0;
-            self.sample_accum_dmc = 0.0;
-            self.sample_accum_exp = 0.0;
+            self.sample_accum_pulse = 0;
+            self.sample_accum_tri = 0;
+            self.sample_accum_noise = 0;
+            self.sample_accum_dmc = 0;
+            self.sample_accum_exp = 0;
             self.sample_accum_count = 0;
 
             self.audio_samples.push(sample);
@@ -273,11 +276,11 @@ impl APU {
         self.sample_rate = sample_rate;
         self.cycles_per_sample = CPU_CLOCK_NTSC / sample_rate as f64;
         self.sample_phase = 0.0;
-        self.sample_accum_pulse = 0.0;
-        self.sample_accum_tri = 0.0;
-        self.sample_accum_noise = 0.0;
-        self.sample_accum_dmc = 0.0;
-        self.sample_accum_exp = 0.0;
+        self.sample_accum_pulse = 0;
+        self.sample_accum_tri = 0;
+        self.sample_accum_noise = 0;
+        self.sample_accum_dmc = 0;
+        self.sample_accum_exp = 0;
         self.sample_accum_count = 0;
         self.audio_samples.clear();
     }
@@ -365,11 +368,11 @@ impl APU {
         self.dmc.silence = reader.read_bool()?;
         self.apu_subclock_even = reader.read_bool()?;
         self.pending_dmc_dma = None;
-        self.sample_accum_pulse = 0.0;
-        self.sample_accum_tri = 0.0;
-        self.sample_accum_noise = 0.0;
-        self.sample_accum_dmc = 0.0;
-        self.sample_accum_exp = 0.0;
+        self.sample_accum_pulse = 0;
+        self.sample_accum_tri = 0;
+        self.sample_accum_noise = 0;
+        self.sample_accum_dmc = 0;
+        self.sample_accum_exp = 0;
         self.sample_accum_count = 0;
         Ok(())
     }

@@ -1,6 +1,6 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
-use nes_core::video::frame_to_argb32;
+use nes_core::video::{VideoBuffer, frame_to_argb32, frame_to_argb32_into};
 use nes_core::{
     ControllerButton, ControllerState, FrontendInput, FrontendRuntime, RunMode, TVSystem,
 };
@@ -13,6 +13,38 @@ use std::time::{Duration, Instant};
 
 const AUDIO_TARGET_BUFFER_MS: usize = 20;
 const AUDIO_MAX_BUFFER_MS: usize = 40;
+
+/// Windows 高精度定时器守卫，离开作用域时自动恢复
+#[cfg(target_os = "windows")]
+struct PrecisionTimerGuard;
+
+#[cfg(target_os = "windows")]
+impl PrecisionTimerGuard {
+    fn new() -> Self {
+        unsafe {
+            winmm::timeBeginPeriod(1);
+        }
+        Self
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for PrecisionTimerGuard {
+    fn drop(&mut self) {
+        unsafe {
+            winmm::timeEndPeriod(1);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod winmm {
+    use std::ffi::c_uint;
+    extern "system" {
+        pub fn timeBeginPeriod(uPeriod: c_uint) -> c_uint;
+        pub fn timeEndPeriod(uPeriod: c_uint) -> c_uint;
+    }
+}
 
 fn usage(program: &str) {
     eprintln!("Usage: {program} [--tv-system auto|ntsc|pal|dendy] <rom-path>");
@@ -34,6 +66,10 @@ fn usage(program: &str) {
 }
 
 fn main() -> ExitCode {
+    // Windows 高精度定时器
+    #[cfg(target_os = "windows")]
+    let _timer_guard = PrecisionTimerGuard::new();
+
     let mut args = env::args();
     let program = args
         .next()
@@ -126,6 +162,9 @@ fn main() -> ExitCode {
 
     let mut snapshot;
 
+    // 预分配视频缓冲区，避免每帧堆分配
+    let mut video_buffer = VideoBuffer::new(nes_core::FRAME_WIDTH * nes_core::FRAME_HEIGHT);
+
     let frame_period = Duration::from_micros(16_667);
     let mut next_frame_deadline = Instant::now() + frame_period;
 
@@ -184,9 +223,10 @@ fn main() -> ExitCode {
             break;
         }
 
-        let buffer = frame_to_argb32(snapshot.video);
+        // 使用预分配的缓冲区转换帧数据
+        frame_to_argb32_into(snapshot.video, video_buffer.as_mut_slice());
         if let Err(error) =
-            window.update_with_buffer(&buffer, snapshot.video.width, snapshot.video.height)
+            window.update_with_buffer(video_buffer.as_slice(), snapshot.video.width, snapshot.video.height)
         {
             eprintln!("failed to present frame: {error}");
             return ExitCode::from(1);

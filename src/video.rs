@@ -87,3 +87,32 @@ pub fn frame_to_argb32(frame: VideoFrame<'_>) -> Vec<u32> {
     }
     argb
 }
+
+/// 预分配的视频缓冲区，避免每帧堆分配
+pub struct VideoBuffer {
+    buffer: Vec<u32>,
+}
+
+impl VideoBuffer {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            buffer: vec![0; capacity],
+        }
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u32] {
+        &mut self.buffer
+    }
+
+    pub fn as_slice(&self) -> &[u32] {
+        &self.buffer
+    }
+}
+
+/// 将帧数据转换为 ARGB32 格式，写入预分配的缓冲区
+pub fn frame_to_argb32_into(frame: VideoFrame<'_>, output: &mut [u32]) {
+    for (dst, &pixel) in output.iter_mut().zip(frame.pixels) {
+        let [r, g, b] = palette_index_to_rgb(pixel);
+        *dst = (0xFF_u32 << 24) | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
+    }
+}
