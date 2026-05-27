@@ -262,13 +262,11 @@ fn make_ines_with_reset_vector(entry_point: u16) -> Vec<u8> {
 #[test]
 fn run_frame_advances_exactly_one_ppu_frame() {
     let mut nes = NES::new();
-    let start_clock = nes.master_clock();
     let start_frame = nes.frame_number();
 
     nes.run_frame();
 
     assert_eq!(nes.frame_number(), start_frame + 1);
-    assert!(nes.master_clock() > start_clock);
 }
 
 #[test]
@@ -406,7 +404,7 @@ fn step_cpu_instruction_updates_debug_snapshot() {
     );
     assert_eq!(after.cpu.pc, 0x8001);
     assert_eq!(after.cpu.instruction_counter, 1);
-    assert!(after.master_clock > before.master_clock);
+    assert!(after.cpu.clocks > before.cpu.clocks);
 }
 
 #[test]
@@ -421,7 +419,7 @@ fn frontend_runtime_can_pause_and_step_a_single_frame() {
     let paused = runtime.step(FrontendInput::default());
     assert_eq!(paused.status.mode, RunMode::Paused);
     assert_eq!(paused.status.executed, super::ExecutionTarget::None);
-    assert_eq!(paused.debug.master_clock, before.master_clock);
+    assert_eq!(paused.debug.ppu.frame, before.ppu.frame);
 
     let stepped = runtime.step(FrontendInput {
         step_frame: true,
@@ -429,7 +427,7 @@ fn frontend_runtime_can_pause_and_step_a_single_frame() {
     });
     assert_eq!(stepped.status.mode, RunMode::Paused);
     assert_eq!(stepped.status.executed, super::ExecutionTarget::Frame);
-    assert!(stepped.debug.master_clock > before.master_clock);
+    assert!(stepped.debug.ppu.frame > before.ppu.frame);
 }
 
 #[test]

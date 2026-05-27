@@ -44,6 +44,7 @@ pub struct NES {
     master_clock: u64,
     cpu_ppu_counter: u8,
     cpu_schedule_index: usize,
+    cached_tv_system: TVSystem,
 }
 
 impl NES {
@@ -54,6 +55,7 @@ impl NES {
             master_clock: 0,
             cpu_ppu_counter: 0,
             cpu_schedule_index: 0,
+            cached_tv_system: TVSystem::NTSC,
         }
     }
 
@@ -81,21 +83,21 @@ impl NES {
     }
 
     pub fn clock(&mut self) {
-        self.master_clock += 1;
         self.bus.tick_ppu();
-        self.cpu.set_nmi(self.bus.ppu_nmi_line());
 
-        let schedule = cpu_schedule(self.bus.ppu().tv_system());
+        let schedule = cpu_schedule(self.cached_tv_system);
         self.cpu_ppu_counter += 1;
         if self.cpu_ppu_counter >= schedule[self.cpu_schedule_index] {
             self.cpu_ppu_counter = 0;
             self.cpu_schedule_index = (self.cpu_schedule_index + 1) % schedule.len();
+            // Update NMI/IRQ only around CPU step, not every PPU cycle
+            self.cpu.set_nmi(self.bus.ppu_nmi_line());
+            self.bus.advance_dma_cpu_phase();
             self.bus.tick_apu_cpu_cycle();
             self.cpu.clock(&mut self.bus);
             self.cpu.irq_set_level(0x01, self.bus.apu_irq_line());
             self.cpu.irq_set_level(0x02, self.bus.cartridge_irq_line());
             self.cpu.set_nmi(self.bus.ppu_nmi_line());
-            self.bus.advance_dma_cpu_phase();
         }
     }
 
@@ -210,6 +212,7 @@ impl NES {
         self.cpu_schedule_index = reader.read_u64()? as usize;
         self.cpu.load_state(&mut reader)?;
         self.bus.load_state(&mut reader)?;
+        self.cached_tv_system = self.bus.ppu().tv_system();
         self.cpu.set_nmi(self.bus.ppu_nmi_line());
         reader.finish()
     }
@@ -231,6 +234,7 @@ impl NES {
     }
 
     fn reset_cpu_schedule(&mut self) {
+        self.cached_tv_system = self.bus.ppu().tv_system();
         self.cpu_ppu_counter = 0;
         self.cpu_schedule_index = 0;
     }

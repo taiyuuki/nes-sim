@@ -124,34 +124,50 @@ impl APU {
         if self.pending_dmc_dma.is_none() {
             self.pending_dmc_dma = self.dmc.request_dma_if_needed();
         }
-        for chip in &mut self.expansions {
-            chip.tick_cpu_cycle();
+        if !self.expansions.is_empty() {
+            for chip in &mut self.expansions {
+                chip.tick_cpu_cycle();
+            }
         }
 
-        let p1 = if (self.debug_mute_mask & 0x01) != 0 {
-            0
+        // Fast path: skip mute mask checks when no channels are muted (common case)
+        let mask = self.debug_mute_mask;
+        let (p1, p2, tri, noise, dmc) = if mask == 0 {
+            (
+                self.pulse1.output(),
+                self.pulse2.output(),
+                self.triangle.output(),
+                self.noise.output(),
+                self.dmc.output_level,
+            )
         } else {
-            self.pulse1.output()
-        };
-        let p2 = if (self.debug_mute_mask & 0x02) != 0 {
-            0
-        } else {
-            self.pulse2.output()
-        };
-        let tri = if (self.debug_mute_mask & 0x04) != 0 {
-            0
-        } else {
-            self.triangle.output()
-        };
-        let noise = if (self.debug_mute_mask & 0x08) != 0 {
-            0
-        } else {
-            self.noise.output()
-        };
-        let dmc = if (self.debug_mute_mask & 0x10) != 0 {
-            0
-        } else {
-            self.dmc.output_level
+            (
+                if mask & 0x01 != 0 {
+                    0
+                } else {
+                    self.pulse1.output()
+                },
+                if mask & 0x02 != 0 {
+                    0
+                } else {
+                    self.pulse2.output()
+                },
+                if mask & 0x04 != 0 {
+                    0
+                } else {
+                    self.triangle.output()
+                },
+                if mask & 0x08 != 0 {
+                    0
+                } else {
+                    self.noise.output()
+                },
+                if mask & 0x10 != 0 {
+                    0
+                } else {
+                    self.dmc.output_level
+                },
+            )
         };
 
         // 使用整数累加器，避免每 CPU 周期的浮点运算
@@ -160,11 +176,13 @@ impl APU {
         self.sample_accum_noise += i64::from(noise);
         self.sample_accum_dmc += i64::from(dmc);
 
-        let mut exp_out = 0i64;
-        for chip in &self.expansions {
-            exp_out += (chip.output_sample() * 1000.0) as i64;
+        if !self.expansions.is_empty() {
+            let mut exp_out = 0i64;
+            for chip in &self.expansions {
+                exp_out += (chip.output_sample() * 1000.0) as i64;
+            }
+            self.sample_accum_exp += exp_out;
         }
-        self.sample_accum_exp += exp_out;
 
         self.sample_accum_count = self.sample_accum_count.saturating_add(1);
 
@@ -172,12 +190,13 @@ impl APU {
         if self.sample_phase >= self.cycles_per_sample {
             self.sample_phase -= self.cycles_per_sample;
             let count = self.sample_accum_count.max(1) as f64;
-            // 只在输出时转换为浮点
-            let avg_pulse = self.sample_accum_pulse as f64 / count;
-            let avg_tri = self.sample_accum_tri as f64 / count;
-            let avg_noise = self.sample_accum_noise as f64 / count;
-            let avg_dmc = self.sample_accum_dmc as f64 / count;
-            let avg_exp = self.sample_accum_exp as f64 / count / 1000.0;
+            let inv_count = 1.0 / count;
+            // 只在输出时转换为浮点，使用乘法代替除法
+            let avg_pulse = self.sample_accum_pulse as f64 * inv_count;
+            let avg_tri = self.sample_accum_tri as f64 * inv_count;
+            let avg_noise = self.sample_accum_noise as f64 * inv_count;
+            let avg_dmc = self.sample_accum_dmc as f64 * inv_count;
+            let avg_exp = self.sample_accum_exp as f64 * inv_count * (1.0 / 1000.0);
 
             let pulse_mix = if avg_pulse > 0.0 {
                 (95.88 / ((8128.0 / avg_pulse) + 100.0)) as f32

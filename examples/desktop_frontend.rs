@@ -11,8 +11,9 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const AUDIO_TARGET_BUFFER_MS: usize = 20;
-const AUDIO_MAX_BUFFER_MS: usize = 40;
+const AUDIO_TARGET_BUFFER_MS: usize = 60;
+const AUDIO_MAX_BUFFER_MS: usize = 200;
+const AUDIO_CATCHUP_MAX_FRAMES: usize = 1;
 
 /// Windows 高精度定时器守卫，离开作用域时自动恢复
 #[cfg(target_os = "windows")]
@@ -40,7 +41,7 @@ impl Drop for PrecisionTimerGuard {
 #[cfg(target_os = "windows")]
 mod winmm {
     use std::ffi::c_uint;
-    extern "system" {
+    unsafe extern "system" {
         pub fn timeBeginPeriod(uPeriod: c_uint) -> c_uint;
         pub fn timeEndPeriod(uPeriod: c_uint) -> c_uint;
     }
@@ -125,17 +126,33 @@ fn main() -> ExitCode {
         }
     };
     let save_path = default_save_path(&rom_path);
-    let audio_player = match AudioPlayer::new(runtime.snapshot().audio.sample_rate) {
+    let mut audio_player = match AudioPlayer::new(runtime.snapshot().audio.sample_rate) {
         Ok(player) => Some(player),
         Err(error) => {
             eprintln!("audio disabled: {error}");
             None
         }
     };
-    if let Some(player) = &audio_player {
+    if let Some(player) = &mut audio_player {
         runtime
             .nes_mut()
             .set_apu_sample_rate(player.output_sample_rate());
+        eprintln!(
+            "Audio: {}Hz, target buffer {}ms ({} samples), max {}ms ({} samples), catch-up {} frames",
+            player.output_sample_rate(),
+            AUDIO_TARGET_BUFFER_MS,
+            player.target_queue_samples,
+            AUDIO_MAX_BUFFER_MS,
+            player.max_queue_samples,
+            AUDIO_CATCHUP_MAX_FRAMES,
+        );
+
+        // 立即启动音频播放
+        player.start_playback();
+        eprintln!(
+            "Audio playback started, queue: {} samples",
+            player.queue_len()
+        );
     }
 
     let mut window = match Window::new(
@@ -167,8 +184,17 @@ fn main() -> ExitCode {
 
     let frame_period = Duration::from_micros(16_667);
     let mut next_frame_deadline = Instant::now() + frame_period;
+    let mut frame_times = VecDeque::new();
+    let frame_time_window = 60; // 采样 60 帧计算平均值
+
+    // 每秒帧时间分解统计
+    let mut step_time_acc = Duration::ZERO;
+    let mut catchup_time_acc = Duration::ZERO;
+    let mut render_time_acc = Duration::ZERO;
+    let mut frame_count_acc = 0u32;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        let frame_start = Instant::now();
         if window.is_key_pressed(Key::F5, KeyRepeat::No) {
             status_message = match runtime.save_state() {
                 Ok(bytes) => match std::fs::write(&save_path, bytes) {
@@ -194,13 +220,22 @@ fn main() -> ExitCode {
         }
 
         let input = collect_input(&window);
+        let t_step = Instant::now();
         snapshot = runtime.step(input);
+        let step_elapsed = t_step.elapsed();
+        step_time_acc += step_elapsed;
         if snapshot.status.quit_requested {
             break;
         }
 
-        if let Some(player) = &audio_player {
+        let t_catchup = Instant::now();
+        if let Some(player) = &mut audio_player {
             player.push_samples(snapshot.audio.samples, snapshot.audio.sample_rate);
+
+            // 如果还未开始播放（例如从暂停恢复），启动播放
+            if !player.playback_started && matches!(snapshot.status.mode, RunMode::Running) {
+                player.start_playback();
+            }
 
             if matches!(snapshot.status.mode, RunMode::Running) {
                 let catch_up_input = FrontendInput {
@@ -209,21 +244,28 @@ fn main() -> ExitCode {
                     ..FrontendInput::default()
                 };
 
-                while player.is_queue_low() {
+                let mut catch_up_frames = 0;
+                while player.is_queue_low() && catch_up_frames < AUDIO_CATCHUP_MAX_FRAMES {
                     snapshot = runtime.step(catch_up_input);
                     if snapshot.status.quit_requested {
                         break;
                     }
                     player.push_samples(snapshot.audio.samples, snapshot.audio.sample_rate);
+                    catch_up_frames += 1;
+                }
+                if catch_up_frames > 0 {
+                    eprintln!("Audio catch-up: {} extra frames", catch_up_frames);
                 }
             }
         }
+        catchup_time_acc += t_catchup.elapsed();
 
         if snapshot.status.quit_requested {
             break;
         }
 
         // 使用预分配的缓冲区转换帧数据
+        let t_render = Instant::now();
         frame_to_argb32_into(snapshot.video, video_buffer.as_mut_slice());
         if let Err(error) = window.update_with_buffer(
             video_buffer.as_slice(),
@@ -233,17 +275,32 @@ fn main() -> ExitCode {
             eprintln!("failed to present frame: {error}");
             return ExitCode::from(1);
         }
+        render_time_acc += t_render.elapsed();
 
-        let now = Instant::now();
-        if now < next_frame_deadline {
-            std::thread::sleep(next_frame_deadline - now);
+        // 帧时间统计（包含 catch-up 以反映真实 CPU 占用）
+        let frame_elapsed = frame_start.elapsed();
+        frame_times.push_back(frame_elapsed);
+        if frame_times.len() > frame_time_window {
+            frame_times.pop_front();
         }
-        next_frame_deadline += frame_period;
-        if now > next_frame_deadline {
+
+        // 帧率控制：当模拟器无法维持 60fps 时不添加额外延迟
+        let now = Instant::now();
+        if frame_elapsed < frame_period {
+            // 模拟器快于实时，等待下一个 deadline
+            next_frame_deadline += frame_period;
+            if now < next_frame_deadline {
+                std::thread::sleep(next_frame_deadline - now);
+            } else {
+                next_frame_deadline = now + frame_period;
+            }
+        } else {
+            // 模拟器慢于实时，重置 deadline 避免累积滞后
             next_frame_deadline = now + frame_period;
         }
 
         frames_in_window += 1;
+        frame_count_acc += 1;
         let elapsed = fps_window_start.elapsed();
         if elapsed >= Duration::from_secs(1) {
             fps = frames_in_window as f32 / elapsed.as_secs_f32();
@@ -260,9 +317,44 @@ fn main() -> ExitCode {
                     }
                 }
             }
+
+            if frame_count_acc > 0 {
+                let n = frame_count_acc as f32;
+                let queue_info = audio_player
+                    .as_ref()
+                    .map_or(String::new(), |p| format!(" queue={}", p.queue_len()));
+                eprintln!(
+                    "Frame timing: step={:.2}ms catchup={:.2}ms render={:.2}ms total={:.2}ms ({} frames){}",
+                    step_time_acc.as_secs_f32() * 1000.0 / n,
+                    catchup_time_acc.as_secs_f32() * 1000.0 / n,
+                    render_time_acc.as_secs_f32() * 1000.0 / n,
+                    (step_time_acc + catchup_time_acc + render_time_acc).as_secs_f32() * 1000.0 / n,
+                    frame_count_acc,
+                    queue_info,
+                );
+            }
+            step_time_acc = Duration::ZERO;
+            catchup_time_acc = Duration::ZERO;
+            render_time_acc = Duration::ZERO;
+            frame_count_acc = 0;
         }
 
-        update_window_title(&mut window, &snapshot, fps, &status_message, apu_mute_mask);
+        // 计算平均帧时间
+        let avg_frame_time = if !frame_times.is_empty() {
+            let sum: Duration = frame_times.iter().sum();
+            sum / frame_times.len() as u32
+        } else {
+            Duration::ZERO
+        };
+
+        update_window_title(
+            &mut window,
+            &snapshot,
+            fps,
+            &status_message,
+            apu_mute_mask,
+            avg_frame_time,
+        );
     }
 
     ExitCode::SUCCESS
@@ -284,7 +376,8 @@ struct AudioPlayer {
     max_queue_samples: usize,
     resampler: Mutex<StreamingLinearResampler>,
     output_state: Arc<Mutex<AudioOutputState>>,
-    _stream: cpal::Stream,
+    stream: cpal::Stream,
+    playback_started: bool,
 }
 
 struct AudioOutputState {
@@ -354,22 +447,32 @@ impl AudioPlayer {
                 ));
             }
         };
-        stream
-            .play()
-            .map_err(|error| format!("failed to start audio stream: {error}"))?;
-
         Ok(Self {
             output_sample_rate: device_sample_rate,
             target_queue_samples,
             max_queue_samples,
             resampler,
             output_state,
-            _stream: stream,
+            stream,
+            playback_started: false,
         })
     }
 
     fn output_sample_rate(&self) -> u32 {
         self.output_sample_rate
+    }
+
+    fn start_playback(&mut self) {
+        if !self.playback_started {
+            if let Err(e) = self.stream.play() {
+                eprintln!("failed to start audio stream: {e}");
+            }
+            self.playback_started = true;
+        }
+    }
+
+    fn queue_len(&self) -> usize {
+        self.output_state.lock().map_or(0, |s| s.queue.len())
     }
 
     fn push_samples(&self, samples: &[f32], source_sample_rate: u32) {
@@ -740,19 +843,22 @@ fn update_window_title(
     fps: f32,
     status_message: &str,
     apu_mute_mask: u8,
+    avg_frame_time: Duration,
 ) {
     let mode = match snapshot.status.mode {
         RunMode::Running => "running",
         RunMode::Paused => "paused",
     };
+    let frame_time_ms = avg_frame_time.as_secs_f64() * 1000.0;
     let title = format!(
-        "nes_core | {} | fps {:.1} | frame {} | pc {:04X} | cpu clocks {} | mute {} | {}",
+        "nes_core | {} | fps {:.1} | frame {} | pc {:04X} | cpu clocks {} | mute {} | {:.1}ms/frame | {}",
         mode,
         fps,
         snapshot.debug.ppu.frame,
         snapshot.debug.cpu.pc,
         snapshot.debug.cpu.clocks,
         apu_mute_mask_to_string(apu_mute_mask),
+        frame_time_ms,
         status_message
     );
     window.set_title(&title);

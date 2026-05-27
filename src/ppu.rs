@@ -165,6 +165,11 @@ pub struct PPU {
 
     even: bool,
     dot_clock: u64,
+
+    // Cached rendering state (updated when mask register is written)
+    bg_on: bool,
+    sprites_on: bool,
+    rendering_on: bool,
 }
 
 impl PPU {
@@ -210,12 +215,17 @@ impl PPU {
 
             even: false,
             dot_clock: 0,
+
+            bg_on: false,
+            sprites_on: false,
+            rendering_on: false,
         }
     }
 
     pub fn reset(&mut self) {
         self.ctrl = 0;
         self.mask = 0;
+        self.update_rendering_flags();
         self.status &= !(STATUS_SPRITE_OVERFLOW | STATUS_SPRITE_ZERO_HIT | STATUS_VBLANK);
         self.open_bus = 0;
         self.vram_addr = 0;
@@ -309,7 +319,10 @@ impl PPU {
                     (self.temp_vram_addr & !0x0C00) | (((data as u16) & 0x03) << 10),
                 );
             }
-            0x2001 => self.mask = data,
+            0x2001 => {
+                self.mask = data;
+                self.update_rendering_flags();
+            }
             0x2003 => self.oam_addr = data,
             0x2004 => self.write_oam_data_timed(data, future_scanline),
             0x2005 => self.write_scroll(data),
@@ -320,15 +333,25 @@ impl PPU {
     }
 
     pub fn clock(&mut self, bus: &mut impl PPUBus) {
+        // Vblank 快速路径：跳过所有渲染检查
+        if self.scanline >= self.vblank_lines && self.scanline < self.num_scanlines - 1 {
+            if self.scanline == self.vblank_lines && self.cycles == 1 && !self.suppress_vblank {
+                self.status |= STATUS_VBLANK;
+            }
+            self.cycles += 1;
+            if self.cycles >= DOTS_PER_SCANLINE {
+                self.cycles = 0;
+                self.scanline += 1;
+            }
+            self.dot_clock = self.dot_clock.wrapping_add(1);
+            return;
+        }
+
         let visible_scanline = self.scanline < VISIBLE_SCANLINES;
         let pre_render_scanline = self.scanline == self.num_scanlines - 1;
         let render_scanline = visible_scanline || pre_render_scanline;
         let visible_cycle = self.cycles < 256;
         let fetch_cycle = visible_cycle || (320..337).contains(&self.cycles);
-
-        if self.scanline == self.vblank_lines && self.cycles == 1 && !self.suppress_vblank {
-            self.status |= STATUS_VBLANK;
-        }
 
         if self.scanline == self.num_scanlines - 1 && self.cycles == 1 {
             self.status &= !(STATUS_SPRITE_OVERFLOW | STATUS_SPRITE_ZERO_HIT | STATUS_VBLANK);
@@ -353,9 +376,6 @@ impl PPU {
 
             if self.bg_on() && fetch_cycle {
                 self.update_bg_shifters();
-            }
-
-            if self.bg_on() && fetch_cycle {
                 self.fetch_bg(bus);
             }
 
@@ -396,15 +416,21 @@ impl PPU {
     }
 
     pub fn bg_on(&self) -> bool {
-        (self.mask & MASK_SHOW_BG) != 0
+        self.bg_on
     }
 
     pub fn sprites_on(&self) -> bool {
-        (self.mask & MASK_SHOW_SPRITES) != 0
+        self.sprites_on
     }
 
     pub fn rendering_on(&self) -> bool {
-        self.bg_on() || self.sprites_on()
+        self.rendering_on
+    }
+
+    fn update_rendering_flags(&mut self) {
+        self.bg_on = (self.mask & MASK_SHOW_BG) != 0;
+        self.sprites_on = (self.mask & MASK_SHOW_SPRITES) != 0;
+        self.rendering_on = self.bg_on || self.sprites_on;
     }
 
     pub fn nmi_line(&self) -> bool {
@@ -573,6 +599,7 @@ impl PPU {
         self.suppress_vblank = reader.read_bool()?;
         self.even = reader.read_bool()?;
         self.dot_clock = reader.read_u64()?;
+        self.update_rendering_flags();
         Ok(())
     }
 
