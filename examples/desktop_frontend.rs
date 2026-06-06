@@ -314,22 +314,21 @@ fn main() -> ExitCode {
                     }
                 }
             }
-
-            if frame_count_acc > 0 {
-                let n = frame_count_acc as f32;
-                let queue_info = audio_player
-                    .as_ref()
-                    .map_or(String::new(), |p| format!(" queue={}", p.queue_len()));
-                // eprintln!(
-                //     "Frame timing: step={:.2}ms catchup={:.2}ms render={:.2}ms total={:.2}ms ({} frames){}",
-                //     step_time_acc.as_secs_f32() * 1000.0 / n,
-                //     catchup_time_acc.as_secs_f32() * 1000.0 / n,
-                //     render_time_acc.as_secs_f32() * 1000.0 / n,
-                //     (step_time_acc + catchup_time_acc + render_time_acc).as_secs_f32() * 1000.0 / n,
-                //     frame_count_acc,
-                //     queue_info,
-                // );
-            }
+            // if frame_count_acc > 0 {
+            //     let n = frame_count_acc as f32;
+            //     let queue_info = audio_player
+            // .as_ref()
+            // .map_or(String::new(), |p| format!(" queue={}", p.queue_len()));
+            // eprintln!(
+            //     "Frame timing: step={:.2}ms catchup={:.2}ms render={:.2}ms total={:.2}ms ({} frames){}",
+            //     step_time_acc.as_secs_f32() * 1000.0 / n,
+            //     catchup_time_acc.as_secs_f32() * 1000.0 / n,
+            //     render_time_acc.as_secs_f32() * 1000.0 / n,
+            //     (step_time_acc + catchup_time_acc + render_time_acc).as_secs_f32() * 1000.0 / n,
+            //     frame_count_acc,
+            //     queue_info,
+            // );
+            // }
             step_time_acc = Duration::ZERO;
             catchup_time_acc = Duration::ZERO;
             render_time_acc = Duration::ZERO;
