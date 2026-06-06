@@ -1,5 +1,6 @@
 use super::Mapper;
 use super::mmc3::Mmc3Core;
+use crate::cartridge::mappers::{decode_mirroring, encode_mirroring};
 use crate::cartridge::{CHR_BANK_LEN, Mirroring};
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
@@ -161,28 +162,5 @@ impl Mapper for Mapper118 {
         }
         self.mirroring = decode_mirroring(reader.read_u8()?)?;
         self.core.load_state(reader)
-    }
-}
-
-fn encode_mirroring(mirroring: Mirroring) -> u8 {
-    match mirroring {
-        Mirroring::Horizontal => 0,
-        Mirroring::Vertical => 1,
-        Mirroring::FourScreen => 2,
-        Mirroring::SPAGE0 => 3,
-        Mirroring::SPAGE1 => 4,
-    }
-}
-
-fn decode_mirroring(encoded: u8) -> Result<Mirroring, SaveStateError> {
-    match encoded {
-        0 => Ok(Mirroring::Horizontal),
-        1 => Ok(Mirroring::Vertical),
-        2 => Ok(Mirroring::FourScreen),
-        3 => Ok(Mirroring::SPAGE0),
-        4 => Ok(Mirroring::SPAGE1),
-        _ => Err(SaveStateError::InvalidData(
-            "invalid MMC118 mirroring value",
-        )),
     }
 }

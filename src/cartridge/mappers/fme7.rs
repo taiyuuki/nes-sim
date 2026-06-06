@@ -5,6 +5,7 @@ use super::Mapper;
 use crate::apu::ExpansionAudioChip;
 use crate::cartridge::Mirroring;
 use crate::cartridge::expansion_audio::sunsoft5b::{Sunsoft5bAudio, Sunsoft5bAudioChip};
+use crate::cartridge::mappers::{decode_mirroring, encode_mirroring};
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 const PRG_RAM_BANK_8K: usize = 0x2000;
@@ -303,25 +304,4 @@ pub(super) fn new_fme7(
         Box::new(Fme7::new(prg_rom, chr_rom, mirroring, audio)),
         vec![Box::new(chip)],
     )
-}
-
-fn encode_mirroring(mirroring: Mirroring) -> u8 {
-    match mirroring {
-        Mirroring::Horizontal => 0,
-        Mirroring::Vertical => 1,
-        Mirroring::FourScreen => 2,
-        Mirroring::SPAGE0 => 3,
-        Mirroring::SPAGE1 => 4,
-    }
-}
-
-fn decode_mirroring(encoded: u8) -> Result<Mirroring, SaveStateError> {
-    match encoded {
-        0 => Ok(Mirroring::Horizontal),
-        1 => Ok(Mirroring::Vertical),
-        2 => Ok(Mirroring::FourScreen),
-        3 => Ok(Mirroring::SPAGE0),
-        4 => Ok(Mirroring::SPAGE1),
-        _ => Err(SaveStateError::InvalidData("invalid FME-7 mirroring value")),
-    }
 }

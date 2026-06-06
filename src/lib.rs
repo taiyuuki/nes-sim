@@ -83,6 +83,7 @@ impl NES {
     }
 
     pub fn clock(&mut self) {
+        self.master_clock += 1;
         self.bus.tick_ppu();
 
         let schedule = cpu_schedule(self.cached_tv_system);

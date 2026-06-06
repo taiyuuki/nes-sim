@@ -5,3 +5,6 @@
 /refs
 
 .DS_Store
+.codegraph
+.mcp.json
+.claude/

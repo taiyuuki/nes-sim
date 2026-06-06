@@ -104,6 +104,29 @@ pub(super) trait Mapper {
     fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError>;
 }
 
+pub fn encode_mirroring(mirroring: Mirroring) -> u8 {
+    match mirroring {
+        Mirroring::Horizontal => 0,
+        Mirroring::Vertical => 1,
+        Mirroring::FourScreen => 2,
+        Mirroring::SPAGE0 => 3,
+        Mirroring::SPAGE1 => 4,
+    }
+}
+
+pub fn decode_mirroring(encoded: u8) -> Result<Mirroring, SaveStateError> {
+    match encoded {
+        0 => Ok(Mirroring::Horizontal),
+        1 => Ok(Mirroring::Vertical),
+        2 => Ok(Mirroring::FourScreen),
+        3 => Ok(Mirroring::SPAGE0),
+        4 => Ok(Mirroring::SPAGE1),
+        _ => Err(SaveStateError::InvalidData(
+            "invalid MMC118 mirroring value",
+        )),
+    }
+}
+
 pub(super) fn from_mapper_id(
     mapper_id: u16,
     mirroring: Mirroring,

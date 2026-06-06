@@ -1,6 +1,7 @@
 use super::Mapper;
 use super::mmc3::Mmc3Core;
 use crate::cartridge::Mirroring;
+use crate::cartridge::mappers::{decode_mirroring, encode_mirroring};
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 const PRG_RAM_LEN: usize = 0x2000;
@@ -178,28 +179,5 @@ impl Mapper for Mapper115 {
         self.mirroring = decode_mirroring(reader.read_u8()?)?;
         self.core.load_state(reader)?;
         Ok(())
-    }
-}
-
-fn encode_mirroring(mirroring: Mirroring) -> u8 {
-    match mirroring {
-        Mirroring::Horizontal => 0,
-        Mirroring::Vertical => 1,
-        Mirroring::FourScreen => 2,
-        Mirroring::SPAGE0 => 3,
-        Mirroring::SPAGE1 => 4,
-    }
-}
-
-fn decode_mirroring(encoded: u8) -> Result<Mirroring, SaveStateError> {
-    match encoded {
-        0 => Ok(Mirroring::Horizontal),
-        1 => Ok(Mirroring::Vertical),
-        2 => Ok(Mirroring::FourScreen),
-        3 => Ok(Mirroring::SPAGE0),
-        4 => Ok(Mirroring::SPAGE1),
-        _ => Err(SaveStateError::InvalidData(
-            "invalid Mapper 115 mirroring value",
-        )),
     }
 }
