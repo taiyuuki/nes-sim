@@ -191,7 +191,7 @@ fn main() -> ExitCode {
     let mut step_time_acc = Duration::ZERO;
     let mut catchup_time_acc = Duration::ZERO;
     let mut render_time_acc = Duration::ZERO;
-    let mut frame_count_acc = 0u32;
+    // let mut frame_count_acc = 0u32;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let frame_start = Instant::now();
@@ -297,7 +297,7 @@ fn main() -> ExitCode {
         }
 
         frames_in_window += 1;
-        frame_count_acc += 1;
+        // frame_count_acc += 1;
         let elapsed = fps_window_start.elapsed();
         if elapsed >= Duration::from_secs(1) {
             fps = frames_in_window as f32 / elapsed.as_secs_f32();
@@ -332,7 +332,7 @@ fn main() -> ExitCode {
             step_time_acc = Duration::ZERO;
             catchup_time_acc = Duration::ZERO;
             render_time_acc = Duration::ZERO;
-            frame_count_acc = 0;
+            // frame_count_acc = 0;
         }
 
         // 计算平均帧时间
