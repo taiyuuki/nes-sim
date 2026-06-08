@@ -7,7 +7,7 @@
 - **完整的 CPU 模拟** — 6502 处理器，支持全部寻址模式及未授权指令
 - **PPU 渲染** — 256x240 分辨率，精灵与背景渲染
 - **APU 音频** — 5 个标准声道（Pulse x2、Triangle、Noise、DMC）
-- **扩展音频** — VRC6、Namco 163、Sunsoft 5B
+- **扩展音频** — VRC6、Namco 163、Sunsoft 5B、MMC5
 - **45 种 Mapper** — 覆盖 MMC1/MMC3/VRC 系列/Namco/Taito/Sunsoft 等常见 Mapper
 - **多制式支持** — NTSC、PAL、DENDY
 - **存档功能** — 自定义二进制格式，支持 Mapper 校验
@@ -82,7 +82,7 @@ cargo run --example hash_frame -- "game.nes" 180 "current.ppm"
 
 ## 支持的 Mapper
 
-0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3), 7 (AxROM), 11 (Color Dreams), 13 (CpROM), 19 (Namco 163), 21/23/25 (VRC4), 22 (VRC2), 24/26 (VRC6), 32 (Irem G-101), 33/48 (Taito TC0190), 34 (BNROM), 36, 46, 62, 65 (Irem H-3001), 66 (GxROM), 67 (Sunsoft 3), 69 (FME-7), 70, 71 (Camerica), 72, 76, 78, 79/113 (NINA-003), 80 (Taito X1-005), 82 (Taito X1-017), 86 (JF-13), 87, 88/154 (Namco 3433), 92 (JF-19), 94, 97 (Irem Tam S1), 115, 118 (TxSROM), 119 (TQROM), 152, 162
+0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3), 5 (MMC5) 7 (AxROM), 11 (Color Dreams), 13 (CpROM), 19 (Namco 163), 21/23/25 (VRC4), 22 (VRC2), 24/26 (VRC6), 32 (Irem G-101), 33/48 (Taito TC0190), 34 (BNROM), 36, 46, 62, 65 (Irem H-3001), 66 (GxROM), 67 (Sunsoft 3), 69 (FME-7), 70, 71 (Camerica), 72, 76, 78, 79/113 (NINA-003), 80 (Taito X1-005), 82 (Taito X1-017), 86 (JF-13), 87, 88/154 (Namco 3433), 92 (JF-19), 94, 97 (Irem Tam S1), 115, 118 (TxSROM), 119 (TQROM), 152, 162
 
 ## 项目结构
 
