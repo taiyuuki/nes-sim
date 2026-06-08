@@ -12,15 +12,6 @@ const CHR_BANK_1K: usize = 0x0400;
 const WRAM_SIZE: usize = 0x10000; // 64KB
 const EXRAM_SIZE: usize = 1024;
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-static TRACE_COUNT: AtomicUsize = AtomicUsize::new(0);
-const TRACE_LIMIT: usize = 300;
-
-// CHR读取调试追踪
-static CHR_READ_COUNT: AtomicUsize = AtomicUsize::new(0);
-const CHR_READ_TRACE_LIMIT: usize = 1000;
-static CHR_READ_ENABLED: AtomicBool = AtomicBool::new(false);
-
 enum ChrMemory {
     Rom(Vec<u8>),
     Ram(Vec<u8>),
@@ -86,9 +77,6 @@ impl Mmc5 {
         };
 
         let audio = Rc::new(RefCell::new(Mmc5Audio::new()));
-
-        // 禁用CHR读取日志
-        CHR_READ_ENABLED.store(false, Ordering::Relaxed);
 
         Self {
             prg_rom,
@@ -313,19 +301,6 @@ impl Mmc5 {
         }
     }
 
-    fn is_split_active(&self, coarse_x: u16) -> bool {
-        if self.split_control & 0x80 == 0 {
-            return false;
-        }
-        let target = (self.split_control & 0x1F) as u16;
-        let left_side = (self.split_control & 0x40) == 0;
-        if left_side {
-            coarse_x < target
-        } else {
-            coarse_x >= target
-        }
-    }
-
     fn nt_source(&self, slot: usize) -> NtSource {
         match (self.nt_mapping >> (slot * 2)) & 3 {
             0 => NtSource::Vram(0),
@@ -335,10 +310,6 @@ impl Mmc5 {
             _ => unreachable!(),
         }
     }
-
-    pub fn set_sprite_16_mode(&mut self, _sprite_16: bool) {}
-
-    pub fn set_rendering_enabled(&mut self, _enabled: bool) {}
 }
 
 enum NtSource {
