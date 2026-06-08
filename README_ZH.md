@@ -20,7 +20,7 @@
 
 ```toml
 [dependencies]
-nes-sim = { path = "../nes_rs" }
+nes-sim = "0.1"
 ```
 
 ```rust
