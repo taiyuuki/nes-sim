@@ -1,7 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
-use nes_core::video::{VideoBuffer, frame_to_argb32_into};
-use nes_core::{
+use nes_sim::video::{VideoBuffer, frame_to_argb32_into};
+use nes_sim::{
     ControllerButton, ControllerState, FrontendInput, FrontendRuntime, RunMode, TVSystem,
 };
 use std::collections::VecDeque;
@@ -156,9 +156,9 @@ fn main() -> ExitCode {
     }
 
     let mut window = match Window::new(
-        "nes_core",
-        nes_core::FRAME_WIDTH,
-        nes_core::FRAME_HEIGHT,
+        "nes_sim",
+        nes_sim::FRAME_WIDTH,
+        nes_sim::FRAME_HEIGHT,
         WindowOptions {
             resize: false,
             scale: Scale::X2,
@@ -180,7 +180,7 @@ fn main() -> ExitCode {
     let mut snapshot;
 
     // 预分配视频缓冲区，避免每帧堆分配
-    let mut video_buffer = VideoBuffer::new(nes_core::FRAME_WIDTH * nes_core::FRAME_HEIGHT);
+    let mut video_buffer = VideoBuffer::new(nes_sim::FRAME_WIDTH * nes_sim::FRAME_HEIGHT);
 
     let frame_period = Duration::from_micros(16_667);
     let mut next_frame_deadline = Instant::now() + frame_period;
@@ -834,7 +834,7 @@ fn default_save_path(rom_path: &str) -> PathBuf {
 
 fn update_window_title(
     window: &mut Window,
-    snapshot: &nes_core::RuntimeSnapshot<'_>,
+    snapshot: &nes_sim::RuntimeSnapshot<'_>,
     fps: f32,
     status_message: &str,
     apu_mute_mask: u8,
@@ -846,7 +846,7 @@ fn update_window_title(
     };
     let frame_time_ms = avg_frame_time.as_secs_f64() * 1000.0;
     let title = format!(
-        "nes_core | {} | fps {:.1} | frame {} | pc {:04X} | cpu clocks {} | mute {} | {:.1}ms/frame | {}",
+        "nes_sim | {} | fps {:.1} | frame {} | pc {:04X} | cpu clocks {} | mute {} | {:.1}ms/frame | {}",
         mode,
         fps,
         snapshot.debug.ppu.frame,

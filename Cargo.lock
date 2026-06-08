@@ -640,7 +640,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nes_core"
+name = "nes-sim"
 version = "0.1.0"
 dependencies = [
  "cpal",

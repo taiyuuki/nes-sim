@@ -1,7 +1,14 @@
 [package]
-name = "nes_core"
+name = "nes-sim"
 version = "0.1.0"
 edition = "2024"
+description = "A NES (Famicom) emulator core library written in pure Rust."
+license = "MIT"
+repository = "https://github.com/taiyuuki/nes-sim"
+homepage = "https://github.com/taiyuuki/nes-sim"
+documentation = "https://docs.rs/nes-sim"
+readme = "README.md"
+keywords = ["nes", "game", "emulator"]
 
 [package.metadata.scripts]
 export-rockman2-frame = 'cargo run --example export_frame -- "roms/mmc1/Rockman2(J).nes" "out/rockman2.ppm" 180'

@@ -1,5 +1,5 @@
-use nes_core::NES;
-use nes_core::headless::{frame_to_ppm, stable_byte_hash};
+use nes_sim::NES;
+use nes_sim::headless::{frame_to_ppm, stable_byte_hash};
 use std::env;
 use std::path::Path;
 use std::process::ExitCode;

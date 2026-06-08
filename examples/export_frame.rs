@@ -1,5 +1,5 @@
-use nes_core::NES;
-use nes_core::headless::write_frame_ppm;
+use nes_sim::NES;
+use nes_sim::headless::write_frame_ppm;
 use std::env;
 use std::path::Path;
 use std::process::ExitCode;
