@@ -502,16 +502,16 @@ impl AudioPlayer {
         }
     }
 
-    fn underrun_stats(&self) -> Option<(u64, u64)> {
-        if let Ok(mut output_state) = self.output_state.lock() {
-            let stats = (output_state.underrun_count, output_state.underrun_samples);
-            output_state.underrun_count = 0;
-            output_state.underrun_samples = 0;
-            Some(stats)
-        } else {
-            None
-        }
-    }
+    // fn underrun_stats(&self) -> Option<(u64, u64)> {
+    //     if let Ok(mut output_state) = self.output_state.lock() {
+    //         let stats = (output_state.underrun_count, output_state.underrun_samples);
+    //         output_state.underrun_count = 0;
+    //         output_state.underrun_samples = 0;
+    //         Some(stats)
+    //     } else {
+    //         None
+    //     }
+    // }
 }
 
 struct StreamingLinearResampler {
