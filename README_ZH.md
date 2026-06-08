@@ -36,28 +36,11 @@ let frame = nes.clock();
 let audio = nes.audio_samples();
 ```
 
-### 桌面前端
-
-需要启用 `desktop` feature（依赖 `minifb` + `cpal`）：
-
-```bash
-cargo run --release --features desktop --example desktop_frontend -- "path/to/game.nes"
-```
-
-或使用便捷脚本：
-
-```bash
-cargo run-desktop
-```
-
 ## 构建
 
 ```bash
 # 核心库（无外部依赖）
 cargo build
-
-# 桌面前端
-cargo build --release --features desktop --example desktop_frontend
 
 # 运行测试
 cargo test
@@ -69,15 +52,11 @@ cargo test
 |---|---|
 | `desktop_frontend` | 完整桌面 GUI，支持音频同步、键盘输入、暂停/单步 |
 | `export_frame` | 导出单帧为 PPM 图片 |
-| `hash_frame` | 计算渲染帧的 FNV 哈希（用于回归测试） |
-| `analyze_state` | 分析/保存二进制存档格式 |
 
 ```bash
-# 导出一帧画面
 cargo run --example export_frame -- "game.nes" "output.ppm" 180
 
-# 帧哈希回归测试
-cargo run --example hash_frame -- "game.nes" 180 "current.ppm"
+cargo run --example desktop_frontend -- "game.nes""
 ```
 
 ## 支持的 Mapper
@@ -125,32 +104,3 @@ cargo run --example hash_frame -- "game.nes" 180 "current.ppm"
 - 152
 - 162
 
-## 项目结构
-
-```
-src/
-├── lib.rs          # 顶层 NES 结构体与运行循环
-├── api.rs          # 公共 API 类型（命令/事件/响应）
-├── cpu.rs          # 6502 CPU
-├── ppu.rs          # 图形处理单元
-├── apu/            # 音频处理单元
-│   ├── pulse.rs    #   方波通道 x2
-│   ├── triangle.rs #   三角波通道
-│   ├── noise.rs    #   噪声通道
-│   └── dmc.rs      #   DPCM 采样通道
-├── bus.rs          # 系统总线
-├── cartridge.rs    # ROM 加载与 Mapper 调度
-├── mappers/        # 45 种 Mapper 实现
-├── expansion_audio/# 扩展音频芯片
-├── savestate.rs    # 存档序列化
-├── video.rs        # 调色板转换
-├── runtime.rs      # 前端运行时抽象
-└── headless.rs     # 无头模式工具（PPM 导出/FNV 哈希）
-```
-
-## 设计理念
-
-- **核心与前端分离** — `nes-sim` 是纯模拟库，不包含任何渲染/音频/输入的平台相关代码
-- **命令/事件驱动** — 通过 `CoreCommand` / `CoreResponse` 进行控制，方便嵌入不同环境
-- **索引色输出** — 像素格式为 8 位 NES 原生调色板索引，由前端负责转 RGB
-- **Release 极致优化** — 启用 `lto = "fat"` 和 `codegen-units = 1`

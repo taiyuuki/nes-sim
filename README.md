@@ -36,28 +36,11 @@ let frame = nes.clock();
 let audio = nes.audio_samples();
 ```
 
-### Desktop frontend
-
-Enable the `desktop` feature (requires `minifb` + `cpal`):
-
-```bash
-cargo run --release --features desktop --example desktop_frontend -- "path/to/game.nes"
-```
-
-Or use the convenient script:
-
-```bash
-cargo run-desktop
-```
-
 ## Building
 
 ```bash
 # Core library (no external dependencies)
 cargo build
-
-# Desktop frontend
-cargo build --release --features desktop --example desktop_frontend
 
 # Run tests
 cargo test
@@ -69,15 +52,11 @@ cargo test
 |---|---|
 | `desktop_frontend` | Full desktop GUI with audio sync, keyboard input, pause/step |
 | `export_frame` | Export a single frame as PPM image |
-| `hash_frame` | Compute FNV hash of rendered frame (for regression testing) |
-| `analyze_state` | Analyze/save binary save state format |
 
 ```bash
-# Export a frame
 cargo run --example export_frame -- "game.nes" "output.ppm" 180
 
-# Frame hash regression test
-cargo run --example hash_frame -- "game.nes" 180 "current.ppm"
+cargo run --example desktop_frontend -- "game.nes""
 ```
 
 ## Supported Mappers
@@ -124,33 +103,3 @@ cargo run --example hash_frame -- "game.nes" 180 "current.ppm"
 - 119 (TQROM)
 - 152
 - 162
-
-## Project Structure
-
-```
-src/
-├── lib.rs          # Top-level NES struct and runtime loop
-├── api.rs          # Public API types (commands/events/responses)
-├── cpu.rs          # 6502 CPU
-├── ppu.rs          # Picture Processing Unit
-├── apu/            # Audio Processing Unit
-│   ├── pulse.rs    #   Square wave channels x2
-│   ├── triangle.rs #   Triangle wave channel
-│   ├── noise.rs    #   Noise channel
-│   └── dmc.rs      #   DPCM sample channel
-├── bus.rs          # System bus
-├── cartridge.rs    # ROM loading and mapper dispatch
-├── mappers/        # 45 mapper implementations
-├── expansion_audio/# Expansion audio chips
-├── savestate.rs    # Save state serialization
-├── video.rs        # Palette conversion
-├── runtime.rs      # Frontend runtime abstraction
-└── headless.rs     # Headless utilities (PPM export/FNV hash)
-```
-
-## Design Philosophy
-
-- **Core-frontend separation** — `nes-sim` is a pure emulation library with no platform-specific code for rendering/audio/input
-- **Command/event driven** — Controlled via `CoreCommand`/`CoreResponse` for easy embedding in different environments
-- **Indexed color output** — Pixel format is 8-bit NES native palette index, frontend handles RGB conversion
-- **Extreme release optimization** — Enabled `lto = "fat"` and `codegen-units = 1`
