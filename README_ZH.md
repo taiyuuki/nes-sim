@@ -82,7 +82,48 @@ cargo run --example hash_frame -- "game.nes" 180 "current.ppm"
 
 ## 支持的 Mapper
 
-0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3), 5 (MMC5) 7 (AxROM), 11 (Color Dreams), 13 (CpROM), 19 (Namco 163), 21/23/25 (VRC4), 22 (VRC2), 24/26 (VRC6), 32 (Irem G-101), 33/48 (Taito TC0190), 34 (BNROM), 36, 46, 62, 65 (Irem H-3001), 66 (GxROM), 67 (Sunsoft 3), 69 (FME-7), 70, 71 (Camerica), 72, 76, 78, 79/113 (NINA-003), 80 (Taito X1-005), 82 (Taito X1-017), 86 (JF-13), 87, 88/154 (Namco 3433), 92 (JF-19), 94, 97 (Irem Tam S1), 115, 118 (TxSROM), 119 (TQROM), 152, 162
+0 (NROM)
+1 (MMC1)
+2 (UxROM)
+3 (CNROM)
+4 (MMC3)
+5 (MMC5)
+7 (AxROM)
+11 (Color Dreams)
+13 (CpROM)
+19 (Namco 163)
+21/23/25 (VRC4)
+22 (VRC2)
+24/26 (VRC6)
+32 (Irem G-101)
+33/48 (Taito TC0190)
+34 (BNROM)
+36
+46
+62
+65 (Irem H-3001)
+66 (GxROM)
+67 (Sunsoft 3)
+69 (FME-7)
+70
+71 (Camerica)
+72
+76
+78
+79/113 (NINA-003)
+80 (Taito X1-005)
+82 (Taito X1-017)
+86 (JF-13)
+87
+88/154 (Namco 3433)
+92 (JF-19)
+94
+97 (Irem Tam S1)
+115
+118 (TxSROM)
+119 (TQROM)
+152
+162
 
 ## 项目结构
 
