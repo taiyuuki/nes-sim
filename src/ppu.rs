@@ -367,20 +367,15 @@ impl PPU {
                 self.sprite_behind_bg = [false; 0x100];
             }
 
-            if visible_scanline && visible_cycle {
-                let bg_pixel_x = if self.cycles < 8 {
-                    self.cycles as i16
-                } else {
-                    self.cycles as i16 - 1
-                };
-                self.draw_bg_pixel(bg_pixel_x, bus);
-                self.draw_sprite_pixel(self.cycles as i16, bus);
-            }
-
             if self.bg_on() && fetch_cycle {
                 self.update_bg_shifters();
                 bus.set_ppu_sprite_phase(false);
                 self.fetch_bg(bus);
+            }
+
+            if visible_scanline && visible_cycle {
+                self.draw_bg_pixel(self.cycles as i16, bus);
+                self.draw_sprite_pixel(self.cycles as i16, bus);
             }
 
             match self.cycles {
@@ -1329,29 +1324,10 @@ impl PPU {
     }
 
     fn bg_pixel_visible_to_sprite(&self, x: usize) -> u8 {
-        if !self.bg_on() {
-            return 0;
-        }
-
-        let show_leftmost = (self.mask & MASK_SHOW_BG_LEFTMOST) != 0;
-        if !show_leftmost && x < 8 {
-            return 0;
-        }
-
-        let bit = 0x8000 >> self.fine_x;
-        // Sprite/background priority observes a slightly later background bitstream
-        // than the one we've already committed to the frame buffer. Past the first
-        // visible tile edge, SMB1's HUD coin helper sprite needs a two-bit lookahead
-        // here to avoid leaking the hidden black guide pixel.
-        if x < 9 {
-            let lo = u8::from((self.bg_pattern_shift_lo & bit) != 0);
-            let hi = u8::from((self.bg_pattern_shift_hi & bit) != 0);
-            (hi << 1) | lo
-        } else {
-            let lo = u8::from(((self.bg_pattern_shift_lo << 2) & bit) != 0);
-            let hi = u8::from(((self.bg_pattern_shift_hi << 2) & bit) != 0);
-            (hi << 1) | lo
-        }
+        // draw_bg_pixel runs before draw_sprite_pixel in the same cycle and
+        // writes the committed BG pixel value into bg_pixels[x], so the sprite
+        // priority check can use it directly — no shift-register lookahead needed.
+        self.bg_pixels[x]
     }
 
     fn bg_pixel_visible_for_sprite_zero_hit(&self, x: usize) -> u8 {

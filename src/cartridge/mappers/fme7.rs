@@ -30,6 +30,7 @@ pub(super) struct Fme7 {
     irq_counter: u16,
     irq_enabled: bool,
     irq_clock: bool,
+    irq_pending: bool,
     mirroring: Mirroring,
     audio: Rc<RefCell<Sunsoft5bAudio>>,
 }
@@ -60,6 +61,7 @@ impl Fme7 {
             irq_counter: 0xFFFF,
             irq_enabled: false,
             irq_clock: false,
+            irq_pending: false,
             mirroring,
             audio,
         }
@@ -105,9 +107,7 @@ impl Fme7 {
             0xD => {
                 self.irq_clock = (data & 0x80) != 0;
                 self.irq_enabled = (data & 0x01) != 0;
-                if !self.irq_enabled {
-                    self.irq_counter = 0xFFFF;
-                }
+                self.irq_pending = false;
             }
             0xE => {
                 self.irq_counter = (self.irq_counter & 0xFF00) | data as u16;
@@ -230,7 +230,7 @@ impl Mapper for Fme7 {
     }
 
     fn irq_line(&self) -> bool {
-        self.irq_enabled && self.irq_counter == 0
+        self.irq_pending
     }
 
     fn tick_cpu_cycle(&mut self) {
@@ -241,6 +241,9 @@ impl Mapper for Fme7 {
             self.irq_counter = 0xFFFF;
         } else {
             self.irq_counter = self.irq_counter.wrapping_sub(1);
+            if self.irq_counter == 0 && self.irq_enabled {
+                self.irq_pending = true;
+            }
         }
     }
 
@@ -254,6 +257,7 @@ impl Mapper for Fme7 {
         writer.write_u16(self.irq_counter);
         writer.write_bool(self.irq_enabled);
         writer.write_bool(self.irq_clock);
+        writer.write_bool(self.irq_pending);
         writer.write_u8(encode_mirroring(self.mirroring));
         writer.write_bytes(&self.prg_ram);
         match &self.chr {
@@ -276,6 +280,7 @@ impl Mapper for Fme7 {
         self.irq_counter = reader.read_u16()?;
         self.irq_enabled = reader.read_bool()?;
         self.irq_clock = reader.read_bool()?;
+        self.irq_pending = reader.read_bool()?;
         self.mirroring = decode_mirroring(reader.read_u8()?)?;
         reader.read_bytes_into(&mut self.prg_ram)?;
         let has_chr_ram = reader.read_bool()?;

@@ -157,7 +157,7 @@ fn rendered_palette_reads_do_not_clock_mapper_a12() {
 
     bus.mem[0x2000] = 0x01;
     bus.mem[0x23C0] = 0x00;
-    bus.mem[0x0010] = 0b1000_0000;
+    bus.mem[0x0010] = 0b1100_0000;
     bus.mem[0x0018] = 0x00;
     bus.mem[0x3F00] = 0x09;
     bus.mem[0x3F01] = 0x12;
@@ -432,7 +432,7 @@ fn clock_renders_background_pixels_across_tile_boundaries() {
 
     run_ppu_cycles(&mut ppu, &mut bus, 341 + 16);
 
-    assert_eq!(ppu.bit_map[0], 0x12);
+    assert_eq!(ppu.bit_map[0], 0x09);
     assert_eq!(ppu.bit_map[1], 0x09);
     assert_eq!(ppu.bit_map[7], 0x12);
     assert_eq!(ppu.bit_map[8], 0x12);
@@ -444,7 +444,7 @@ fn clock_uses_fine_x_scroll_for_background_pixels() {
     let mut bus = TestPPUBus::new();
 
     ppu.cpu_write_register(&mut bus, 0x2001, MASK_SHOW_BG | MASK_SHOW_BG_LEFTMOST);
-    ppu.cpu_write_register(&mut bus, 0x2005, 0x03);
+    ppu.cpu_write_register(&mut bus, 0x2005, 0x02);
     ppu.cpu_write_register(&mut bus, 0x2005, 0x00);
 
     bus.mem[0x2000] = 0x01;
@@ -685,7 +685,7 @@ fn grayscale_mask_applies_to_rendered_palette_output() {
 
     bus.mem[0x2000] = 0x01;
     bus.mem[0x23C0] = 0x00;
-    bus.mem[0x0010] = 0b1000_0000;
+    bus.mem[0x0010] = 0b1100_0000;
     bus.mem[0x0018] = 0x00;
     bus.mem[0x3F01] = 0x2D;
 
