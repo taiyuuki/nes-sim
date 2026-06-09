@@ -6,6 +6,9 @@ use crate::ppu::PPU;
 use crate::ppu_memory::PPUMemory;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
+#[cfg(feature = "debug")]
+use crate::api::{Breakpoint, MemorySnapshot};
+
 pub trait CPUBus {
     fn cpu_read(&mut self, addr: u16) -> u8;
     fn cpu_write(&mut self, addr: u16, data: u8);
@@ -36,6 +39,10 @@ pub struct NESBus {
     dma: DmaController,
     controllers: [Joypad; 2],
     cpu_open_bus: u8,
+    #[cfg(feature = "debug")]
+    debug_mem_breakpoints: Vec<Breakpoint>,
+    #[cfg(feature = "debug")]
+    debug_mem_breakpoint_hit: Option<Breakpoint>,
     // Additional components: APU, cartridge, etc. can be added here
 }
 
@@ -49,6 +56,10 @@ impl NESBus {
             dma: DmaController::new(),
             controllers: [Joypad::new(), Joypad::new()],
             cpu_open_bus: 0,
+            #[cfg(feature = "debug")]
+            debug_mem_breakpoints: Vec::new(),
+            #[cfg(feature = "debug")]
+            debug_mem_breakpoint_hit: None,
         }
     }
 
@@ -150,6 +161,48 @@ impl NESBus {
         self.dma.advance_cpu_phase();
     }
 
+    #[cfg(feature = "debug")]
+    pub fn debug_memory_snapshot(&self) -> MemorySnapshot<'_> {
+        MemorySnapshot {
+            ram: &self.ram,
+            vram: self.ppu_memory.debug_vram_snapshot(),
+            chr: self.ppu_memory.debug_chr_snapshot(),
+            palette: self.ppu_memory.debug_palette_snapshot(),
+            oam: self.ppu.debug_oam_snapshot(),
+        }
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn set_debug_mem_breakpoints(&mut self, breakpoints: Vec<Breakpoint>) {
+        self.debug_mem_breakpoints = breakpoints;
+        self.debug_mem_breakpoint_hit = None;
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn take_mem_breakpoint_hit(&mut self) -> Option<Breakpoint> {
+        self.debug_mem_breakpoint_hit.take()
+    }
+
+    #[cfg(feature = "debug")]
+    fn check_mem_breakpoint(&mut self, addr: u16, is_write: bool) {
+        if self.debug_mem_breakpoint_hit.is_some() {
+            return;
+        }
+        for &bp in &self.debug_mem_breakpoints {
+            match bp {
+                Breakpoint::MemoryRead(target) if !is_write && addr == target => {
+                    self.debug_mem_breakpoint_hit = Some(bp);
+                    return;
+                }
+                Breakpoint::MemoryWrite(target) if is_write && addr == target => {
+                    self.debug_mem_breakpoint_hit = Some(bp);
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub(crate) fn save_state(&self, writer: &mut StateWriter) -> Result<(), SaveStateError> {
         writer.write_bytes(&self.ram);
         self.ppu.save_state(writer);
@@ -185,6 +238,9 @@ impl NESBus {
     }
 
     fn cpu_read_internal(&mut self, addr: u16, cycle_offset: u8) -> u8 {
+        #[cfg(feature = "debug")]
+        self.check_mem_breakpoint(addr, false);
+
         match addr {
             0x0000..=0x1FFF => self.latched_cpu_read(self.ram[(addr & 0x7FF) as usize]),
             0x2000..=0x3FFF => {
@@ -221,6 +277,8 @@ impl NESBus {
 
     fn cpu_write_internal(&mut self, addr: u16, data: u8, cycle_offset: u8) {
         self.cpu_open_bus = data;
+        #[cfg(feature = "debug")]
+        self.check_mem_breakpoint(addr, true);
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x7FF) as usize] = data,
             0x2000..=0x3FFF => {

@@ -446,6 +446,11 @@ impl PPU {
         self.scanline
     }
 
+    #[cfg(feature = "debug")]
+    pub fn cycles(&self) -> u16 {
+        self.cycles
+    }
+
     pub fn frame(&self) -> u64 {
         self.frame
     }
@@ -478,6 +483,51 @@ impl PPU {
 
     pub fn oam_addr(&self) -> u8 {
         self.oam_addr
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn debug_oam_snapshot(&self) -> &[u8; 256] {
+        &self.oam
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn debug_ctrl(&self) -> u8 {
+        self.ctrl
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn debug_mask(&self) -> u8 {
+        self.mask
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn debug_status(&self) -> u8 {
+        self.status
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn debug_fine_x(&self) -> u8 {
+        self.fine_x
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn debug_vram_addr(&self) -> u16 {
+        self.vram_addr
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn debug_temp_vram_addr(&self) -> u16 {
+        self.temp_vram_addr
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn debug_write_latch(&self) -> bool {
+        self.write_latch
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn debug_odd_frame(&self) -> bool {
+        self.odd_frame
     }
 
     pub(crate) fn save_state(&self, writer: &mut StateWriter) {

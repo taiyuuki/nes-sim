@@ -111,6 +111,21 @@ impl PPUMemory {
             .is_some_and(|c| c.ppu_write_nametable(addr, data))
     }
 
+    #[cfg(feature = "debug")]
+    pub(super) fn debug_vram_snapshot(&self) -> &[u8; 0x1000] {
+        &self.vram
+    }
+
+    #[cfg(feature = "debug")]
+    pub(super) fn debug_chr_snapshot(&self) -> &[u8; 0x2000] {
+        &self.chr_ram
+    }
+
+    #[cfg(feature = "debug")]
+    pub(super) fn debug_palette_snapshot(&self) -> &[u8; 0x20] {
+        &self.palette
+    }
+
     pub(super) fn save_state(&self, writer: &mut StateWriter) -> Result<(), SaveStateError> {
         writer.write_bytes(&self.chr_ram);
         writer.write_bytes(&self.vram);

@@ -20,3 +20,5 @@ codegen-units = 1
 
 [workspace.metadata.scripts]
 fmt = "cargo fmt"
+cgs = "codegraph sync"
+cginit = "codegraph init"

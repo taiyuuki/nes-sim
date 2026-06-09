@@ -1063,7 +1063,7 @@ impl CPU {
         self.instruction_counter
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "debug"))]
     pub fn pc(&self) -> u16 {
         self.pc
     }

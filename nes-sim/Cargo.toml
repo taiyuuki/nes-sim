@@ -10,8 +10,13 @@ repository.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 
+[features]
+default = []
+debug = []
+
 [package.metadata.scripts]
 test-all = "cargo test -p nes-sim"
 build = "cargo build -p nes-sim --release"
+build-debug = "cargo build -p nes-sim --features debug"
 dry-publish = "cargo publish -p nes-sim --dry-run"
 publish = "cargo publish -p nes-sim"

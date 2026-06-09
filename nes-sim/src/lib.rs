@@ -16,6 +16,8 @@ pub use api::{
     AudioBatch, CoreCommand, CoreEvent, CoreResponse, CpuDebugSnapshot, DebugSnapshot, PixelFormat,
     PpuDebugSnapshot, VIDEO_FRAME_PITCH, VideoFrame,
 };
+#[cfg(feature = "debug")]
+pub use api::{Breakpoint, Debugger, MemorySnapshot};
 pub use apu::ExpansionAudioChip;
 pub use cartridge::{Cartridge, CartridgeError, Mirroring, TVSystem};
 pub use input::{ControllerButton, ControllerState};
@@ -45,6 +47,12 @@ pub struct NES {
     cpu_ppu_counter: u8,
     cpu_schedule_index: usize,
     cached_tv_system: TVSystem,
+    #[cfg(feature = "debug")]
+    breakpoints: Vec<Breakpoint>,
+    #[cfg(feature = "debug")]
+    paused: bool,
+    #[cfg(feature = "debug")]
+    breakpoint_hit: Option<Breakpoint>,
 }
 
 impl NES {
@@ -56,6 +64,12 @@ impl NES {
             cpu_ppu_counter: 0,
             cpu_schedule_index: 0,
             cached_tv_system: TVSystem::NTSC,
+            #[cfg(feature = "debug")]
+            breakpoints: Vec::new(),
+            #[cfg(feature = "debug")]
+            paused: false,
+            #[cfg(feature = "debug")]
+            breakpoint_hit: None,
         }
     }
 
@@ -83,8 +97,20 @@ impl NES {
     }
 
     pub fn clock(&mut self) {
+        #[cfg(feature = "debug")]
+        if self.paused() {
+            return;
+        }
+
         self.master_clock += 1;
         self.bus.tick_ppu();
+
+        #[cfg(feature = "debug")]
+        {
+            if self.check_ppu_breakpoints() {
+                return;
+            }
+        }
 
         let schedule = cpu_schedule(self.cached_tv_system);
         self.cpu_ppu_counter += 1;
@@ -95,10 +121,40 @@ impl NES {
             self.cpu.set_nmi(self.bus.ppu_nmi_line());
             self.bus.advance_dma_cpu_phase();
             self.bus.tick_apu_cpu_cycle();
+
+            #[cfg(feature = "debug")]
+            {
+                let mem_bps: Vec<Breakpoint> = self
+                    .breakpoints
+                    .iter()
+                    .copied()
+                    .filter(|bp| {
+                        matches!(bp, Breakpoint::MemoryRead(_) | Breakpoint::MemoryWrite(_))
+                    })
+                    .collect();
+                self.bus.set_debug_mem_breakpoints(mem_bps);
+            }
+
             self.cpu.clock(&mut self.bus);
+
+            #[cfg(feature = "debug")]
+            {
+                if let Some(bp) = self.bus.take_mem_breakpoint_hit() {
+                    self.breakpoint_hit = Some(bp);
+                    return;
+                }
+            }
+
             self.cpu.irq_set_level(0x01, self.bus.apu_irq_line());
             self.cpu.irq_set_level(0x02, self.bus.cartridge_irq_line());
             self.cpu.set_nmi(self.bus.ppu_nmi_line());
+
+            #[cfg(feature = "debug")]
+            {
+                if self.check_breakpoints() {
+                    return;
+                }
+            }
         }
     }
 
@@ -137,6 +193,21 @@ impl NES {
                 CoreEvent::CpuInstructionComplete {
                     instruction_counter: self.cpu.instruction_counter(),
                 }
+            }
+            #[cfg(feature = "debug")]
+            CoreCommand::AddBreakpoint(bp) => {
+                self.add_breakpoint(bp);
+                CoreEvent::None
+            }
+            #[cfg(feature = "debug")]
+            CoreCommand::RemoveBreakpoint(bp) => {
+                self.remove_breakpoint(&bp);
+                CoreEvent::None
+            }
+            #[cfg(feature = "debug")]
+            CoreCommand::SetPaused(paused) => {
+                self.set_paused(paused);
+                CoreEvent::None
             }
         };
 
@@ -186,6 +257,27 @@ impl NES {
         DebugSnapshot {
             master_clock: self.master_clock,
             cpu: self.cpu.debug_snapshot(),
+            #[cfg(feature = "debug")]
+            ppu: PpuDebugSnapshot {
+                frame: ppu.frame(),
+                scanline: ppu.scanline(),
+                in_vblank: ppu.in_vblank(),
+                nmi_line: ppu.nmi_line(),
+                oam_addr: ppu.oam_addr(),
+                cycles: ppu.cycles(),
+                ctrl: ppu.debug_ctrl(),
+                mask: ppu.debug_mask(),
+                status: ppu.debug_status(),
+                fine_x: ppu.debug_fine_x(),
+                vram_addr: ppu.debug_vram_addr(),
+                temp_vram_addr: ppu.debug_temp_vram_addr(),
+                write_latch: ppu.debug_write_latch(),
+                bg_on: ppu.bg_on(),
+                sprites_on: ppu.sprites_on(),
+                rendering_on: ppu.rendering_on(),
+                odd_frame: ppu.debug_odd_frame(),
+            },
+            #[cfg(not(feature = "debug"))]
             ppu: PpuDebugSnapshot {
                 frame: ppu.frame(),
                 scanline: ppu.scanline(),
@@ -194,6 +286,11 @@ impl NES {
                 oam_addr: ppu.oam_addr(),
             },
         }
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn debug_memory_snapshot(&self) -> MemorySnapshot<'_> {
+        self.bus.debug_memory_snapshot()
     }
 
     pub fn save_state(&self) -> Result<Vec<u8>, SaveStateError> {
@@ -232,6 +329,90 @@ impl NES {
 
     pub fn apu_debug_mute_mask(&self) -> u8 {
         self.bus.apu_debug_mute_mask()
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn add_breakpoint(&mut self, bp: Breakpoint) {
+        if !self.breakpoints.contains(&bp) {
+            self.breakpoints.push(bp);
+        }
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn remove_breakpoint(&mut self, bp: &Breakpoint) {
+        self.breakpoints.retain(|b| b != bp);
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn clear_breakpoints(&mut self) {
+        self.breakpoints.clear();
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn breakpoints(&self) -> &[Breakpoint] {
+        &self.breakpoints
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+        self.breakpoint_hit = None;
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn paused(&self) -> bool {
+        self.paused || self.breakpoint_hit.is_some()
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn breakpoint_hit(&self) -> Option<Breakpoint> {
+        self.breakpoint_hit
+    }
+
+    #[cfg(feature = "debug")]
+    fn check_breakpoints(&mut self) -> bool {
+        if self.breakpoints.is_empty() {
+            return false;
+        }
+
+        let pc = self.cpu.pc();
+
+        for &bp in &self.breakpoints {
+            match bp {
+                Breakpoint::Address(addr) if pc == addr => {
+                    self.breakpoint_hit = Some(bp);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    #[cfg(feature = "debug")]
+    fn check_ppu_breakpoints(&mut self) -> bool {
+        if self.breakpoints.is_empty() {
+            return false;
+        }
+
+        let ppu = self.bus.ppu();
+        let scanline = ppu.scanline();
+        let in_vblank = ppu.in_vblank();
+
+        for &bp in &self.breakpoints {
+            match bp {
+                Breakpoint::PpuScanline(sl) if scanline == sl => {
+                    self.breakpoint_hit = Some(bp);
+                    return true;
+                }
+                Breakpoint::Vblank if in_vblank => {
+                    self.breakpoint_hit = Some(bp);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     fn reset_cpu_schedule(&mut self) {
