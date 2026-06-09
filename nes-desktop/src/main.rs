@@ -759,6 +759,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::f32::consts::PI;
     use std::sync::{Arc, Mutex};
+    use std::time::Instant;
 
     fn estimate_positive_zero_crossing_frequency(samples: &[f32], sample_rate: f32) -> f32 {
         let mut crossings = 0usize;
@@ -804,6 +805,7 @@ mod tests {
             last_sample: -0.5,
             underrun_count: 0,
             underrun_samples: 0,
+            underrun_last_report: Instant::now(),
         }));
         let mut output = [0.0f32; 4];
 

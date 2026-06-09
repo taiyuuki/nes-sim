@@ -1,0 +1,17 @@
+[package]
+name = "nes-sim"
+version = "0.1.1"
+description = "A NES (Famicom) emulator core library written in pure Rust."
+readme = "../README.md"
+documentation = "https://docs.rs/nes-sim"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+
+[package.metadata.scripts]
+test-all = "cargo test -p nes-sim"
+build = "cargo build -p nes-sim --release"
+dry-publish = "cargo publish -p nes-sim --dry-run"
+publish = "cargo publish -p nes-sim"

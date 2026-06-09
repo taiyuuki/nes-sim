@@ -1,0 +1,16 @@
+[package]
+name = "nes-desktop"
+version = "0.1.0"
+description = "Desktop frontend for nes-sim using minifb and cpal"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+nes-sim.workspace = true
+cpal.workspace = true
+minifb.workspace = true
+
+[package.metadata.scripts]
+run-desktop = 'cargo run --release -p nes-desktop -- "../roms/Gimmick! (J) [\!].nes"'
