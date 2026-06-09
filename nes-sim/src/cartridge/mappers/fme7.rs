@@ -302,11 +302,11 @@ pub(super) fn new_fme7(
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,
     mirroring: Mirroring,
-) -> (Box<dyn Mapper>, Vec<Box<dyn ExpansionAudioChip>>) {
+) -> (Fme7, Vec<Box<dyn ExpansionAudioChip>>) {
     let audio = Rc::new(RefCell::new(Sunsoft5bAudio::new()));
     let chip = Sunsoft5bAudioChip::new(audio.clone());
     (
-        Box::new(Fme7::new(prg_rom, chr_rom, mirroring, audio)),
+        Fme7::new(prg_rom, chr_rom, mirroring, audio),
         vec![Box::new(chip)],
     )
 }

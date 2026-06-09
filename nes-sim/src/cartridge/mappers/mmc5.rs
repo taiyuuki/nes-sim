@@ -322,10 +322,10 @@ pub(super) fn new_mmc5(
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,
     mirroring: Mirroring,
-) -> (Box<dyn Mapper>, Vec<Box<dyn ExpansionAudioChip>>) {
+) -> (Mmc5, Vec<Box<dyn ExpansionAudioChip>>) {
     let mmc5 = Mmc5::new(prg_rom, chr_rom, mirroring);
     let audio_chip = Mmc5AudioChip::new(mmc5.audio.clone());
-    (Box::new(mmc5), vec![Box::new(audio_chip)])
+    (mmc5, vec![Box::new(audio_chip)])
 }
 
 impl Mapper for Mmc5 {

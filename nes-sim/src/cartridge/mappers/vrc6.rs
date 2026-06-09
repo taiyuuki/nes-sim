@@ -295,11 +295,11 @@ pub(super) fn new_vrc6(
     chr_rom: Vec<u8>,
     mirroring: Mirroring,
     mapper_id: u16,
-) -> (Box<dyn Mapper>, Vec<Box<dyn ExpansionAudioChip>>) {
+) -> (Vrc6, Vec<Box<dyn ExpansionAudioChip>>) {
     let audio = Rc::new(RefCell::new(Vrc6Audio::new()));
     let chip = Vrc6AudioChip::new(audio.clone());
     (
-        Box::new(Vrc6::new(prg_rom, chr_rom, mirroring, mapper_id, audio)),
+        Vrc6::new(prg_rom, chr_rom, mirroring, mapper_id, audio),
         vec![Box::new(chip)],
     )
 }

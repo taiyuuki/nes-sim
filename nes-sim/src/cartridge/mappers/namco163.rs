@@ -270,11 +270,11 @@ pub(super) fn new_namco163(
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,
     mirroring: Mirroring,
-) -> (Box<dyn Mapper>, Vec<Box<dyn ExpansionAudioChip>>) {
+) -> (Namco163, Vec<Box<dyn ExpansionAudioChip>>) {
     let audio = Rc::new(RefCell::new(Namco163Audio::new()));
     let chip = Namco163AudioChip::new(audio.clone());
     (
-        Box::new(Namco163::new(prg_rom, chr_rom, mirroring, audio)),
+        Namco163::new(prg_rom, chr_rom, mirroring, audio),
         vec![Box::new(chip)],
     )
 }

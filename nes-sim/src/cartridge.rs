@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 pub(crate) mod expansion_audio;
 mod mappers;
 
-use self::mappers::{Mapper, from_mapper_id};
+use self::mappers::{MapperEnum, from_mapper_id};
 use crate::apu::ExpansionAudioChip;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
@@ -313,7 +313,7 @@ impl CartridgeHeader {
 
 #[allow(dead_code)]
 pub struct Cartridge {
-    mapper: Box<dyn Mapper>,
+    mapper: MapperEnum,
     expansion_chips: Vec<Box<dyn ExpansionAudioChip>>,
     header: CartridgeHeader,
 }
