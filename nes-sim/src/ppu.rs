@@ -172,6 +172,14 @@ pub struct PPU {
     bg_on: bool,
     sprites_on: bool,
     rendering_on: bool,
+
+    // Sprite-0 hit prediction cache
+    sprite_zero_hit_predicted: bool,
+    sprite_zero_hit_cache_valid: bool,
+
+    // Palette cache to reduce RAM reads
+    palette_cache: [u8; 32],
+    palette_cache_dirty: bool,
 }
 
 impl PPU {
@@ -221,6 +229,12 @@ impl PPU {
             bg_on: false,
             sprites_on: false,
             rendering_on: false,
+
+            sprite_zero_hit_predicted: false,
+            sprite_zero_hit_cache_valid: false,
+
+            palette_cache: [0; 32],
+            palette_cache_dirty: true,
         }
     }
 
@@ -256,6 +270,9 @@ impl PPU {
         self.scanline_sprite_count = 0;
         self.suppress_vblank = false;
         self.dot_clock = 0;
+        self.invalidate_sprite_zero_hit_cache();
+        self.palette_cache = [0; 32];
+        self.palette_cache_dirty = true;
     }
 
     pub fn set_parameters(&mut self, tv_system: TVSystem) {
@@ -359,12 +376,16 @@ impl PPU {
         if self.scanline == self.num_scanlines - 1 && self.cycles == 1 {
             self.status &= !(STATUS_SPRITE_OVERFLOW | STATUS_SPRITE_ZERO_HIT | STATUS_VBLANK);
             self.suppress_vblank = false;
+            // 清除 sprite-0-hit 状态时也清除预测缓存
+            self.invalidate_sprite_zero_hit_cache();
         }
 
         if render_scanline && self.rendering_on() {
             if visible_scanline && self.cycles == 0 {
                 self.sprite_present = [false; 0x100];
                 self.sprite_behind_bg = [false; 0x100];
+                // 新 scanline 开始，清除预测缓存
+                self.invalidate_sprite_zero_hit_cache();
             }
 
             if self.bg_on() && fetch_cycle {
@@ -432,6 +453,13 @@ impl PPU {
         self.bg_on = (self.mask & MASK_SHOW_BG) != 0;
         self.sprites_on = (self.mask & MASK_SHOW_SPRITES) != 0;
         self.rendering_on = self.bg_on || self.sprites_on;
+        // Mask 变化可能影响 sprite-0-hit 条件，清除缓存
+        self.invalidate_sprite_zero_hit_cache();
+    }
+
+    fn invalidate_sprite_zero_hit_cache(&mut self) {
+        self.sprite_zero_hit_cache_valid = false;
+        self.sprite_zero_hit_predicted = false;
     }
 
     pub fn nmi_line(&self) -> bool {
@@ -726,13 +754,24 @@ impl PPU {
         (scanline, cycles, status)
     }
 
-    fn predict_sprite_zero_hit_within_offset(&self, ppu_cycle_offset: u16) -> bool {
+    fn predict_sprite_zero_hit_within_offset(&mut self, ppu_cycle_offset: u16) -> bool {
+        // 如果当前 scanline 已经发生了 sprite-0-hit，预测未来没有意义
+        if (self.status & STATUS_SPRITE_ZERO_HIT) != 0 {
+            return false;
+        }
+
         if ppu_cycle_offset == 0
             || !self.bg_on()
             || !self.sprites_on()
             || self.scanline < 0
             || self.scanline >= VISIBLE_SCANLINES
         {
+            return false;
+        }
+
+        // 检查缓存：如果缓存有效且结果为 false，直接返回 false
+        //（如果结果为 true，需要重新检查因为可能已经过期）
+        if self.sprite_zero_hit_cache_valid && !self.sprite_zero_hit_predicted {
             return false;
         }
 
@@ -781,8 +820,18 @@ impl PPU {
                     if (show_leftmost_sprites || x >= 8) && x < 255 {
                         let sprite_x = usize::from(sprite.x);
                         if x >= sprite_x && x < sprite_x + 8 {
-                            let sprite_pixel = self.sprite_pixel(&sprite, (x - sprite_x) as u8);
+                            // 内联 sprite_pixel()
+                            let sprite_bit = if (sprite.attributes & 0x40) != 0 {
+                                (x - sprite_x) as u8
+                            } else {
+                                7 - (x - sprite_x) as u8
+                            };
+                            let sprite_pixel = ((sprite.pattern_hi >> sprite_bit) & 0x01) << 1
+                                | (sprite.pattern_lo >> sprite_bit) & 0x01;
                             if sprite_pixel != 0 && bg_pixel != 0 {
+                                // 缓存预测结果
+                                self.sprite_zero_hit_predicted = true;
+                                self.sprite_zero_hit_cache_valid = true;
                                 return true;
                             }
                         }
@@ -842,6 +891,9 @@ impl PPU {
             }
         }
 
+        // 缓存预测结果
+        self.sprite_zero_hit_predicted = false;
+        self.sprite_zero_hit_cache_valid = true;
         false
     }
 
@@ -849,7 +901,24 @@ impl PPU {
         let addr = self.loopy_v & 0x3FFF;
         let data = if addr >= 0x3F00 {
             self.read_buffer = self.ppu_read_bus(bus, addr.wrapping_sub(0x1000));
-            let palette_data = self.ppu_read_bus(bus, addr);
+
+            // 使用 palette 缓存
+            let cache_idx = (addr & 0x1F) as usize;
+            let palette_data = if self.palette_cache_dirty {
+                // 缓存无效，重新读取并更新缓存
+                let data = self.ppu_read_bus(bus, addr);
+                // Palette 0x3F10 和 0x3F00 是镜像的
+                let actual_idx = if cache_idx >= 0x10 && cache_idx % 4 == 0 {
+                    cache_idx - 0x10
+                } else {
+                    cache_idx
+                };
+                self.palette_cache[actual_idx] = data;
+                data
+            } else {
+                self.palette_cache[cache_idx]
+            };
+
             self.mask_palette_color(palette_data)
         } else {
             let buffered = self.read_buffer;
@@ -865,6 +934,20 @@ impl PPU {
     fn write_data_timed(&mut self, bus: &mut impl PPUBus, data: u8, effective_scanline: i16) {
         let addr = self.loopy_v & 0x3FFF;
         self.ppu_write_bus_exposed(bus, addr, data);
+
+        // 更新 palette 缓存
+        if addr >= 0x3F00 && addr <= 0x3F1F {
+            let cache_idx = (addr & 0x1F) as usize;
+            // Palette 0x3F10 和 0x3F00 是镜像的
+            let actual_idx = if cache_idx >= 0x10 && cache_idx % 4 == 0 {
+                cache_idx - 0x10
+            } else {
+                cache_idx
+            };
+            self.palette_cache[actual_idx] = data;
+            self.palette_cache_dirty = false;
+        }
+
         self.increment_data_access_vram_addr_on_scanline(effective_scanline);
     }
 
@@ -928,6 +1011,8 @@ impl PPU {
 
         self.oam[self.oam_addr as usize] = data;
         self.oam_addr = self.oam_addr.wrapping_add(1);
+        // OAM 数据变化，清除 sprite-0-hit 预测缓存
+        self.invalidate_sprite_zero_hit_cache();
     }
 
     fn read_oam_data(&self) -> u8 {
@@ -1115,15 +1200,23 @@ impl PPU {
         }
 
         let show_leftmost = (self.mask & MASK_SHOW_BG_LEFTMOST) != 0;
+        // 内联 current_bg_pixel()
         let bg_pixel = if self.bg_on() && (show_leftmost || x >= 8) {
-            self.current_bg_pixel()
+            let bit = 0x8000 >> self.fine_x;
+            let lo = u8::from((self.bg_pattern_shift_lo & bit) != 0);
+            let hi = u8::from((self.bg_pattern_shift_hi & bit) != 0);
+            (hi << 1) | lo
         } else {
             0
         };
+        // 内联 current_bg_palette()
         let bg_palette = if bg_pixel == 0 {
             0
         } else {
-            self.current_bg_palette()
+            let bit = 0x8000 >> self.fine_x;
+            let lo = u8::from((self.bg_attr_shift_lo & bit) != 0);
+            let hi = u8::from((self.bg_attr_shift_hi & bit) != 0);
+            (hi << 1) | lo
         };
 
         let palette_addr = if bg_pixel == 0 {
@@ -1131,7 +1224,23 @@ impl PPU {
         } else {
             0x3F00 | (u16::from(bg_palette) << 2) | u16::from(bg_pixel)
         };
-        let palette_data = self.ppu_read_bus(bus, palette_addr);
+
+        // 使用 palette 缓存
+        let cache_idx = (palette_addr & 0x1F) as usize;
+        let palette_data = if self.palette_cache_dirty {
+            // 缓存无效，重新读取并更新缓存
+            let data = self.ppu_read_bus(bus, palette_addr);
+            let actual_idx = if cache_idx >= 0x10 && cache_idx % 4 == 0 {
+                cache_idx - 0x10
+            } else {
+                cache_idx
+            };
+            self.palette_cache[actual_idx] = data;
+            data
+        } else {
+            self.palette_cache[cache_idx]
+        };
+
         let color = self.mask_palette_color(palette_data);
         let pixel_index = y * 256 + x;
 
@@ -1171,17 +1280,40 @@ impl PPU {
                 continue;
             }
 
-            let sprite_pixel = self.sprite_pixel(&sprite, (x - sprite_x) as u8);
+            // 内联 sprite_pixel()
+            let sprite_bit = if (sprite.attributes & 0x40) != 0 {
+                (x - sprite_x) as u8
+            } else {
+                7 - (x - sprite_x) as u8
+            };
+            let sprite_pixel = ((sprite.pattern_hi >> sprite_bit) & 0x01) << 1
+                | (sprite.pattern_lo >> sprite_bit) & 0x01;
             if sprite_pixel == 0 {
                 continue;
             }
 
-            let bg_pixel_for_hit = self.bg_pixel_visible_for_sprite_zero_hit(x);
+            // 内联 bg_pixel_visible_for_sprite_zero_hit()
+            let bg_pixel_for_hit = if !self.bg_on() {
+                0
+            } else {
+                let show_leftmost_bg = (self.mask & MASK_SHOW_BG_LEFTMOST) != 0;
+                if !show_leftmost_bg && x < 8 {
+                    0
+                } else {
+                    let bit = 0x8000 >> self.fine_x;
+                    let lo = u8::from((self.bg_pattern_shift_lo & bit) != 0);
+                    let hi = u8::from((self.bg_pattern_shift_hi & bit) != 0);
+                    (hi << 1) | lo
+                }
+            };
             if sprite.sprite_zero && bg_pixel_for_hit != 0 && x < 255 {
                 self.status |= STATUS_SPRITE_ZERO_HIT;
+                // 实际发生 sprite-0-hit，清除预测缓存
+                self.invalidate_sprite_zero_hit_cache();
             }
 
-            let bg_pixel_visible = self.bg_pixel_visible_to_sprite(x);
+            // 内联 bg_pixel_visible_to_sprite()
+            let bg_pixel_visible = self.bg_pixels[x];
             let behind_background = (sprite.attributes & 0x20) != 0;
             if behind_background && bg_pixel_visible != 0 {
                 break;
@@ -1189,7 +1321,23 @@ impl PPU {
 
             let palette = sprite.attributes & 0x03;
             let palette_addr = 0x3F10 | (u16::from(palette) << 2) | u16::from(sprite_pixel);
-            let palette_data = self.ppu_read_bus(bus, palette_addr);
+
+            // 使用 palette 缓存
+            let cache_idx = (palette_addr & 0x1F) as usize;
+            let palette_data = if self.palette_cache_dirty {
+                // 缓存无效，重新读取并更新缓存
+                let data = self.ppu_read_bus(bus, palette_addr);
+                let actual_idx = if cache_idx >= 0x10 && cache_idx % 4 == 0 {
+                    cache_idx - 0x10
+                } else {
+                    cache_idx
+                };
+                self.palette_cache[actual_idx] = data;
+                data
+            } else {
+                self.palette_cache[cache_idx]
+            };
+
             let color = self.mask_palette_color(palette_data);
             self.bit_map[y * 256 + x] = color;
             self.sprite_present[x] = true;
@@ -1307,17 +1455,6 @@ impl PPU {
         }
     }
 
-    fn sprite_pixel(&self, sprite: &SpriteRenderData, offset: u8) -> u8 {
-        let bit = if (sprite.attributes & 0x40) != 0 {
-            offset
-        } else {
-            7 - offset
-        };
-        let lo = (sprite.pattern_lo >> bit) & 0x01;
-        let hi = (sprite.pattern_hi >> bit) & 0x01;
-        (hi << 1) | lo
-    }
-
     fn mask_palette_color(&self, color: u8) -> u8 {
         let color = color & 0x3F;
         if (self.mask & MASK_GRAYSCALE) != 0 {
@@ -1357,43 +1494,6 @@ impl PPU {
 
         self.bg_attr_shift_lo = (self.bg_attr_shift_lo & 0xFF00) | attr_lo;
         self.bg_attr_shift_hi = (self.bg_attr_shift_hi & 0xFF00) | attr_hi;
-    }
-
-    fn current_bg_pixel(&self) -> u8 {
-        let bit = 0x8000 >> self.fine_x;
-        let lo = u8::from((self.bg_pattern_shift_lo & bit) != 0);
-        let hi = u8::from((self.bg_pattern_shift_hi & bit) != 0);
-        (hi << 1) | lo
-    }
-
-    fn current_bg_palette(&self) -> u8 {
-        let bit = 0x8000 >> self.fine_x;
-        let lo = u8::from((self.bg_attr_shift_lo & bit) != 0);
-        let hi = u8::from((self.bg_attr_shift_hi & bit) != 0);
-        (hi << 1) | lo
-    }
-
-    fn bg_pixel_visible_to_sprite(&self, x: usize) -> u8 {
-        // draw_bg_pixel runs before draw_sprite_pixel in the same cycle and
-        // writes the committed BG pixel value into bg_pixels[x], so the sprite
-        // priority check can use it directly — no shift-register lookahead needed.
-        self.bg_pixels[x]
-    }
-
-    fn bg_pixel_visible_for_sprite_zero_hit(&self, x: usize) -> u8 {
-        if !self.bg_on() {
-            return 0;
-        }
-
-        let show_leftmost = (self.mask & MASK_SHOW_BG_LEFTMOST) != 0;
-        if !show_leftmost && x < 8 {
-            return 0;
-        }
-
-        let bit = 0x8000 >> self.fine_x;
-        let lo = u8::from((self.bg_pattern_shift_lo & bit) != 0);
-        let hi = u8::from((self.bg_pattern_shift_hi & bit) != 0);
-        (hi << 1) | lo
     }
 
     fn increment_x(&mut self) {
