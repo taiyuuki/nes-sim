@@ -48,8 +48,9 @@ mod winmm {
 }
 
 fn usage(program: &str) {
-    eprintln!("Usage: {program} [--tv-system auto|ntsc|pal|dendy] <rom-path>");
+    eprintln!("Usage: {program} [--tv-system auto|ntsc|pal|dendy] [rom-path]");
     eprintln!(r#"Example: {program} --tv-system ntsc "roms/mmc1/Rockman2(J).nes""#);
+    eprintln!("说明: 如果不指定 ROM 路径，运行后会弹出文件选择对话框");
     eprintln!("Controls:");
     eprintln!("  Arrows  D-pad");
     eprintln!("  X/Z     A/B");
@@ -63,6 +64,7 @@ fn usage(program: &str) {
     eprintln!("  0       Clear APU mute");
     eprintln!("  F5      Save state");
     eprintln!("  F8      Load state");
+    eprintln!("  O       Open ROM file");
     eprintln!("  Esc     Quit");
 }
 
@@ -105,15 +107,32 @@ fn main() -> ExitCode {
         }
     }
 
-    let Some(rom_path) = rom_path else {
-        usage(&program);
-        return ExitCode::from(2);
+    let rom_path = match rom_path {
+        Some(path) => path,
+        None => {
+            eprintln!("未指定 ROM 文件，打开文件选择对话框...");
+            match rfd::FileDialog::new()
+                .add_filter("NES ROM", &["nes"])
+                .add_filter("All Files", &["*"])
+                .pick_file()
+            {
+                Some(path) => {
+                    let path_str = path.to_string_lossy().to_string();
+                    eprintln!("已选择: {}", path_str);
+                    path_str
+                }
+                None => {
+                    eprintln!("未选择文件");
+                    return ExitCode::SUCCESS;
+                }
+            }
+        }
     };
 
     let rom = match std::fs::read(&rom_path) {
         Ok(rom) => rom,
         Err(error) => {
-            eprintln!("failed to read ROM {rom_path:?}: {error}");
+            eprintln!("无法读取 ROM {rom_path:?}: {error}");
             return ExitCode::from(1);
         }
     };
@@ -227,6 +246,69 @@ fn main() -> ExitCode {
 
         if handle_apu_debug_hotkeys(&window, &mut runtime, &mut apu_mute_mask) {
             status_message = format!("apu mute {}", apu_mute_mask_to_string(apu_mute_mask));
+        }
+
+        // O 键：加载新 ROM
+        if window.is_key_pressed(Key::O, KeyRepeat::No) {
+            status_message = match prompt_and_load_rom() {
+                Ok(new_rom_path) => {
+                    match std::fs::read(&new_rom_path) {
+                        Ok(rom_bytes) => match FrontendRuntime::from_rom_bytes(&rom_bytes) {
+                            Ok(mut new_runtime) => {
+                                // 停止旧音频播放
+                                if let Some(player) = &mut audio_player {
+                                    player.stop_playback();
+                                }
+                                // 创建新音频播放器
+                                audio_player = match AudioPlayer::new(
+                                    new_runtime.snapshot().audio.sample_rate,
+                                ) {
+                                    Ok(player) => {
+                                        new_runtime
+                                            .nes_mut()
+                                            .set_apu_sample_rate(player.output_sample_rate());
+                                        Some(player)
+                                    }
+                                    Err(error) => {
+                                        eprintln!("音频初始化失败: {error}");
+                                        None
+                                    }
+                                };
+                                // 预填充音频缓冲区
+                                if let Some(player) = &mut audio_player {
+                                    let input = FrontendInput {
+                                        controller1: ControllerState::new(),
+                                        ..Default::default()
+                                    };
+                                    while player.queue_len() < player.target_queue_len() {
+                                        let snap = new_runtime.step(input);
+                                        player.push_samples(
+                                            snap.audio.samples,
+                                            snap.audio.sample_rate,
+                                        );
+                                    }
+                                    player.start_playback();
+                                }
+                                // 更新状态
+                                runtime = new_runtime;
+                                let new_apu_mute_mask = runtime.nes().apu_debug_mute_mask();
+                                apu_mute_mask = new_apu_mute_mask;
+                                // 返回新状态信息
+                                format!(
+                                    "已加载: {}",
+                                    PathBuf::from(&new_rom_path)
+                                        .file_name()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                )
+                            }
+                            Err(error) => format!("加载 ROM 失败: {error}"),
+                        },
+                        Err(error) => format!("读取文件失败: {error}"),
+                    }
+                }
+                Err(msg) => msg,
+            };
         }
 
         let input = collect_input(&window);
@@ -480,6 +562,19 @@ impl AudioPlayer {
                 eprintln!("failed to start audio stream: {e}");
             }
             self.playback_started = true;
+        }
+    }
+
+    fn stop_playback(&mut self) {
+        if self.playback_started {
+            if let Err(e) = self.stream.pause() {
+                eprintln!("failed to pause audio stream: {e}");
+            }
+            self.playback_started = false;
+        }
+        // 清空音频队列
+        if let Ok(mut output_state) = self.output_state.lock() {
+            output_state.queue.clear();
         }
     }
 
@@ -753,71 +848,6 @@ fn collect_input(window: &Window) -> FrontendInput {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{AudioOutputState, StreamingLinearResampler, write_audio_data};
-    use std::collections::VecDeque;
-    use std::f32::consts::PI;
-    use std::sync::{Arc, Mutex};
-    use std::time::Instant;
-
-    fn estimate_positive_zero_crossing_frequency(samples: &[f32], sample_rate: f32) -> f32 {
-        let mut crossings = 0usize;
-        for window in samples.windows(2) {
-            if window[0] <= 0.0 && window[1] > 0.0 {
-                crossings += 1;
-            }
-        }
-        crossings as f32 * sample_rate / samples.len() as f32
-    }
-
-    #[test]
-    fn streaming_resampler_preserves_tone_across_chunk_boundaries() {
-        let source_rate = 44_100u32;
-        let target_rate = 48_000u32;
-        let tone_hz = 440.0f32;
-        let phase_step = 2.0 * PI * tone_hz / source_rate as f32;
-        let mut phase = 0.0f32;
-        let mut resampler = StreamingLinearResampler::new(target_rate);
-        let mut output = Vec::new();
-
-        for _ in 0..120 {
-            let mut chunk = Vec::with_capacity(367);
-            for _ in 0..367 {
-                chunk.push(phase.sin());
-                phase += phase_step;
-            }
-            output.extend(resampler.resample_chunk(&chunk, source_rate));
-        }
-
-        let measured_hz =
-            estimate_positive_zero_crossing_frequency(&output[1024..], target_rate as f32);
-        assert!(
-            (measured_hz - tone_hz).abs() < 3.0,
-            "expected about {tone_hz:.2} Hz, measured {measured_hz:.2} Hz"
-        );
-    }
-
-    #[test]
-    fn audio_callback_decays_to_silence_on_underrun() {
-        let output_state = Arc::new(Mutex::new(AudioOutputState {
-            queue: VecDeque::from([0.25]),
-            last_sample: -0.5,
-            underrun_count: 0,
-            underrun_samples: 0,
-            underrun_last_report: Instant::now(),
-        }));
-        let mut output = [0.0f32; 4];
-
-        write_audio_data(&mut output, 1, &output_state);
-
-        assert_eq!(output[0], 0.25);
-        assert!(output[1] < 0.25 && output[1] > 0.0);
-        assert!(output[2] < output[1]);
-        assert!(output[3] < output[2]);
-    }
-}
-
 fn handle_apu_debug_hotkeys(
     window: &Window,
     runtime: &mut FrontendRuntime,
@@ -883,6 +913,25 @@ fn default_save_path(rom_path: &str) -> PathBuf {
     PathBuf::from(rom_path).with_extension("state")
 }
 
+/// 弹出文件选择对话框并尝试加载 ROM
+/// 返回 Ok(新 rom 路径) 或 Err(错误信息)
+fn prompt_and_load_rom() -> Result<String, String> {
+    match rfd::FileDialog::new()
+        .add_filter("NES ROM", &["nes"])
+        .add_filter("All Files", &["*"])
+        .pick_file()
+    {
+        Some(path) => {
+            let path_str = path.to_string_lossy().to_string();
+            // 验证文件可以读取
+            std::fs::read(&path_str)
+                .map(|_| path_str)
+                .map_err(|error| format!("无法读取文件: {error}"))
+        }
+        None => Err("用户取消选择".to_string()),
+    }
+}
+
 fn update_window_title(
     window: &mut Window,
     snapshot: &nes_sim::RuntimeSnapshot<'_>,
@@ -909,3 +958,6 @@ fn update_window_title(
     );
     window.set_title(&title);
 }
+
+#[cfg(test)]
+mod tests;

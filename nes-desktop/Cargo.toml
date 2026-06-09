@@ -11,6 +11,7 @@ homepage.workspace = true
 nes-sim.workspace = true
 cpal.workspace = true
 minifb.workspace = true
+rfd = "0.15"
 
 [package.metadata.scripts]
-run-desktop = 'cargo run --release -p nes-desktop -- "../roms/Gimmick! (J) [\!].nes"'
+run-desktop = 'cargo run --release -p nes-desktop'

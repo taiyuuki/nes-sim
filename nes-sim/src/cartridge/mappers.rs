@@ -143,6 +143,7 @@ pub(super) fn from_mapper_id(
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,
 ) -> Result<(Box<dyn Mapper>, Vec<Box<dyn ExpansionAudioChip>>), CartridgeError> {
+    println!("{mapper_id}");
     match mapper_id {
         0 => Ok((Box::new(Nrom::new(prg_rom, chr_rom, mirroring)), vec![])),
         1 => Ok((Box::new(Mmc1::new(prg_rom, chr_rom, mirroring)), vec![])),
