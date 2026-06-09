@@ -28,17 +28,7 @@ pub use runtime::{
 pub use savestate::SaveStateError;
 use savestate::{StateReader, StateWriter};
 
-const NTSC_CPU_SCHEDULE: [u8; 1] = [3];
 const PAL_CPU_SCHEDULE: [u8; 5] = [3, 3, 3, 3, 4];
-const DENDY_CPU_SCHEDULE: [u8; 1] = [3];
-
-fn cpu_schedule(tv: TVSystem) -> &'static [u8] {
-    match tv {
-        TVSystem::NTSC => &NTSC_CPU_SCHEDULE,
-        TVSystem::PAL => &PAL_CPU_SCHEDULE,
-        TVSystem::DENDY => &DENDY_CPU_SCHEDULE,
-    }
-}
 
 pub struct NES {
     cpu: cpu::CPU,
@@ -112,11 +102,14 @@ impl NES {
             }
         }
 
-        let schedule = cpu_schedule(self.cached_tv_system);
+        let threshold = match self.cached_tv_system {
+            TVSystem::NTSC | TVSystem::DENDY => (3, 1),
+            TVSystem::PAL => (PAL_CPU_SCHEDULE[self.cpu_schedule_index], 5),
+        };
         self.cpu_ppu_counter += 1;
-        if self.cpu_ppu_counter >= schedule[self.cpu_schedule_index] {
+        if self.cpu_ppu_counter >= threshold.0 {
             self.cpu_ppu_counter = 0;
-            self.cpu_schedule_index = (self.cpu_schedule_index + 1) % schedule.len();
+            self.cpu_schedule_index = (self.cpu_schedule_index + 1) % threshold.1;
             // Update NMI/IRQ only around CPU step, not every PPU cycle
             self.cpu.set_nmi(self.bus.ppu_nmi_line());
             self.bus.advance_dma_cpu_phase();

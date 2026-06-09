@@ -67,6 +67,7 @@ pub struct APU {
     audio_samples: Vec<f32>,
     expansions: Vec<Box<dyn ExpansionAudioChip>>,
     apu_subclock_even: bool,
+    has_expansions: bool,
     debug_mute_mask: u8,
 }
 
@@ -100,11 +101,13 @@ impl APU {
             audio_samples: Vec::new(),
             expansions: Vec::new(),
             apu_subclock_even: false,
+            has_expansions: false,
             debug_mute_mask: 0,
         }
     }
 
     pub fn add_expansion_chip(&mut self, chip: Box<dyn ExpansionAudioChip>) {
+        self.has_expansions = true;
         self.expansions.push(chip);
     }
 
@@ -140,7 +143,7 @@ impl APU {
         if self.pending_dmc_dma.is_none() {
             self.pending_dmc_dma = self.dmc.request_dma_if_needed();
         }
-        if !self.expansions.is_empty() {
+        if self.has_expansions {
             for chip in &mut self.expansions {
                 chip.tick_cpu_cycle();
             }
@@ -377,6 +380,7 @@ impl APU {
         writer.write_u16(self.dmc.bytes_remaining);
         writer.write_bool(self.dmc.silence);
         writer.write_bool(self.apu_subclock_even);
+        writer.write_bool(self.has_expansions);
     }
 
     pub fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
@@ -404,6 +408,7 @@ impl APU {
         self.dmc.bytes_remaining = reader.read_u16()?;
         self.dmc.silence = reader.read_bool()?;
         self.apu_subclock_even = reader.read_bool()?;
+        self.has_expansions = reader.read_bool()?;
         self.pending_dmc_dma = None;
         self.sample_accum_pulse = 0;
         self.sample_accum_tri = 0;
