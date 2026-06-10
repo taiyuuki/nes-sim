@@ -287,6 +287,11 @@ impl NES {
     }
 
     #[cfg(feature = "debug")]
+    pub fn debug_read_chr(&mut self) -> [u8; 0x2000] {
+        self.bus.debug_read_chr()
+    }
+
+    #[cfg(feature = "debug")]
     pub fn debug_disassemble(&mut self, rows: usize) -> DisassemblyResult {
         let pc = self.cpu.pc();
         cpu::disassemble_range(&mut self.bus, pc, rows, rows)

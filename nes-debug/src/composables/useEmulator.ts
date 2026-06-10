@@ -1,4 +1,4 @@
-import { ref, shallowRef } from "vue";
+import { ref, shallowRef, onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import type { DebugInfo, DisasmResult, FrameData } from "../types";
 
@@ -11,9 +11,30 @@ const romPath = ref("");
 const error = ref("");
 const tick = ref(0);
 
+// Controller bits: A=0x01, B=0x02, Select=0x04, Start=0x08, Up=0x10, Down=0x20, Left=0x40, Right=0x80
+const KEY_MAP: Record<string, number> = {
+  KeyX: 0x01,      // A
+  KeyZ: 0x02,      // B
+  ShiftRight: 0x04, // Select
+  Enter: 0x08,     // Start
+  ArrowUp: 0x10,
+  ArrowDown: 0x20,
+  ArrowLeft: 0x40,
+  ArrowRight: 0x80,
+};
+
+const pressedKeys = new Set<string>();
 let loopId = 0;
 
 export function useEmulator() {
+  function getControllerBits(): number {
+    let bits = 0;
+    for (const key of pressedKeys) {
+      if (KEY_MAP[key]) bits |= KEY_MAP[key];
+    }
+    return bits;
+  }
+
   async function loadRom(path: string) {
     try {
       error.value = "";
@@ -91,7 +112,8 @@ export function useEmulator() {
     const loop = async () => {
       if (loopId !== id || paused.value) return;
       try {
-        const info = await invoke<DebugInfo>("run_frame");
+        const controller = getControllerBits();
+        const info = await invoke<DebugInfo>("run_frame", { controller });
         debugInfo.value = info;
         const frame = await invoke<FrameData>("get_frame");
         frameData.value = frame;
@@ -162,6 +184,49 @@ export function useEmulator() {
       disasmResult.value = null;
     }
   }
+
+  // Keyboard handling
+  function onKeyDown(e: KeyboardEvent) {
+    pressedKeys.add(e.code);
+
+    // Debug shortcuts (only when input not focused)
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+
+    switch (e.code) {
+      case "F5":
+        e.preventDefault();
+        togglePause();
+        break;
+      case "F6":
+        e.preventDefault();
+        stepFrame();
+        break;
+      case "F7":
+        e.preventDefault();
+        stepInstruction();
+        break;
+      case "KeyR":
+        if (!e.ctrlKey && !e.metaKey) {
+          reset();
+        }
+        break;
+    }
+  }
+
+  function onKeyUp(e: KeyboardEvent) {
+    pressedKeys.delete(e.code);
+  }
+
+  onMounted(() => {
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+  });
+
+  onUnmounted(() => {
+    window.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("keyup", onKeyUp);
+    stopLoop();
+  });
 
   return {
     debugInfo,

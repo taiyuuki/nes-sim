@@ -112,10 +112,13 @@ pub fn step_instruction() -> Result<DebugInfo, String> {
 }
 
 #[tauri::command]
-pub fn run_frame() -> Result<DebugInfo, String> {
+pub fn run_frame(controller: u8) -> Result<DebugInfo, String> {
     with_runtime(|rt| {
         rt.nes_mut().set_paused(false);
-        let input = FrontendInput::default();
+        let input = FrontendInput {
+            controller1: nes_sim::ControllerState::from_bits(controller),
+            ..Default::default()
+        };
         let snap = rt.step(input);
         Ok(debug_info_from_snapshot(&snap))
     })
@@ -166,6 +169,71 @@ pub fn read_vram() -> Result<Vec<u8>, String> {
 #[tauri::command]
 pub fn read_chr() -> Result<Vec<u8>, String> {
     with_runtime(|rt| Ok(rt.nes().debug_memory_snapshot().chr.to_vec()))
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct PatternTableData {
+    // 2 tables, each 128x128 pixels, RGBA
+    pub table0: Vec<u8>,
+    pub table1: Vec<u8>,
+    pub size: usize,
+}
+
+#[tauri::command]
+pub fn get_pattern_tables() -> Result<PatternTableData, String> {
+    with_runtime(|rt| {
+        let chr = rt.nes_mut().debug_read_chr();
+
+        let size = 128;
+        let table0 = render_pattern_table(&chr, 0x0000);
+        let table1 = render_pattern_table(&chr, 0x1000);
+
+        Ok(PatternTableData {
+            table0,
+            table1,
+            size,
+        })
+    })
+}
+
+fn render_pattern_table(chr: &[u8], offset: usize) -> Vec<u8> {
+    let size = 128;
+    let mut pixels = vec![0u8; size * size * 4];
+
+    const COLORS: [[u8; 4]; 4] = [
+        [24, 24, 24, 255],
+        [96, 96, 96, 255],
+        [180, 180, 180, 255],
+        [255, 255, 255, 255],
+    ];
+
+    for tile_idx in 0..256 {
+        let tile_row = tile_idx / 16;
+        let tile_col = tile_idx % 16;
+        let tile_addr = offset + tile_idx * 16;
+
+        for y in 0..8 {
+            let lo = chr.get(tile_addr + y).copied().unwrap_or(0);
+            let hi = chr.get(tile_addr + 8 + y).copied().unwrap_or(0);
+
+            for x in 0..8 {
+                let bit_lo = (lo >> (7 - x)) & 1;
+                let bit_hi = (hi >> (7 - x)) & 1;
+                let color_idx = ((bit_hi << 1) | bit_lo) as usize;
+
+                let px = tile_col * 8 + x;
+                let py = tile_row * 8 + y;
+                let idx = (py * size + px) * 4;
+
+                let c = &COLORS[color_idx];
+                pixels[idx] = c[0];
+                pixels[idx + 1] = c[1];
+                pixels[idx + 2] = c[2];
+                pixels[idx + 3] = c[3];
+            }
+        }
+    }
+    pixels
 }
 
 #[tauri::command]

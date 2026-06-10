@@ -2,7 +2,7 @@ use crate::apu::APU;
 use crate::cartridge::{Cartridge, CartridgeError};
 use crate::dma::{DmaBusRequest, DmaController};
 use crate::input::{ControllerState, Joypad};
-use crate::ppu::PPU;
+use crate::ppu::{PPU, PPUBus};
 use crate::ppu_memory::PPUMemory;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
@@ -159,6 +159,15 @@ impl NESBus {
 
     pub fn advance_dma_cpu_phase(&mut self) {
         self.dma.advance_cpu_phase();
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn debug_read_chr(&mut self) -> [u8; 0x2000] {
+        let mut chr = [0u8; 0x2000];
+        for i in 0..0x2000 {
+            chr[i] = self.ppu_memory.ppu_read(i as u16);
+        }
+        chr
     }
 
     #[cfg(feature = "debug")]

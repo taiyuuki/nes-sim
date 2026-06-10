@@ -59,3 +59,9 @@ export interface DisasmResult {
   instructions: DisasmInstruction[];
   pc_index: number;
 }
+
+export interface PatternTableData {
+  table0: number[];
+  table1: number[];
+  size: number;
+}
