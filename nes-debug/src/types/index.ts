@@ -74,3 +74,8 @@ export interface NametableData {
     width:  number;
     height: number;
 }
+
+export interface AudioData {
+    samples:     number[];
+    sample_rate: number;
+}

@@ -25,6 +25,8 @@ pub fn run() {
             emulator::disassemble,
             emulator::get_pattern_tables,
             emulator::get_nametables,
+            emulator::get_audio_samples,
+            emulator::set_audio_volume,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

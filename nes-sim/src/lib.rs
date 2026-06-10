@@ -241,6 +241,18 @@ impl NES {
         }
     }
 
+    pub fn apu_audio_samples(&self) -> &[f32] {
+        self.bus.apu_audio_samples()
+    }
+
+    pub fn apu_sample_rate(&self) -> u32 {
+        self.bus.apu_sample_rate()
+    }
+
+    pub fn clear_apu_audio_samples(&mut self) {
+        self.bus.clear_apu_audio_samples();
+    }
+
     pub fn add_expansion_audio_chip(&mut self, chip: Box<dyn ExpansionAudioChip>) {
         self.bus.add_expansion_audio_chip(chip);
     }

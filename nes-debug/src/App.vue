@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { watch } from 'vue'
 import { useEmulator } from './composables/useEmulator'
+import { useAudioPlayer } from './composables/useAudioPlayer'
 import ToolBar from './components/ToolBar.vue'
 import GameScreen from './components/GameScreen.vue'
 import DisassemblyView from './components/DisassemblyView.vue'
@@ -10,8 +12,17 @@ import BreakpointPanel from './components/BreakpointPanel.vue'
 import StatusPanel from './components/StatusPanel.vue'
 import PatternTableView from './components/PatternTableView.vue'
 import NametableView from './components/NametableView.vue'
+import AudioPanel from './components/AudioPanel.vue'
 
 const emu = useEmulator()
+const audio = useAudioPlayer()
+
+// 当 ROM 加载成功后启用音频
+watch(() => emu.running.value, running => {
+    if (running && audio.enabled.value) {
+        audio.enable()
+    }
+})
 
 async function onToolbarAction(action: string) {
     switch (action) {
@@ -85,6 +96,7 @@ function onToolbarEvent(event: string, payload?: string) {
           :running="emu.running.value"
           :tick="emu.tick.value"
         />
+        <AudioPanel />
         <BreakpointPanel
           @add="emu.addBreakpoint"
           @remove="emu.removeBreakpoint"

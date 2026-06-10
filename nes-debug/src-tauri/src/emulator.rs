@@ -1,5 +1,6 @@
 use nes_sim::{Breakpoint, FrontendInput, FrontendRuntime, Mirroring, RunMode};
 use std::cell::RefCell;
+use tauri::Emitter;
 
 thread_local! {
     static RUNTIME: RefCell<Option<FrontendRuntime>> = const { RefCell::new(None) };
@@ -67,8 +68,8 @@ pub struct FrameData {
 #[tauri::command]
 pub fn load_rom(path: String) -> Result<(), String> {
     let rom = std::fs::read(&path).map_err(|e| format!("读取 ROM 失败: {e}"))?;
-    let runtime = FrontendRuntime::from_rom_bytes(&rom)
-        .map_err(|e| format!("加载 ROM 失败: {e}"))?;
+    let runtime =
+        FrontendRuntime::from_rom_bytes(&rom).map_err(|e| format!("加载 ROM 失败: {e}"))?;
     RUNTIME.with(|cell| {
         *cell.borrow_mut() = Some(runtime);
     });
@@ -112,15 +113,38 @@ pub fn step_instruction() -> Result<DebugInfo, String> {
 }
 
 #[tauri::command]
-pub fn run_frame(controller: u8) -> Result<DebugInfo, String> {
+pub fn run_frame(controller: u8, window: tauri::Window) -> Result<DebugInfo, String> {
     with_runtime(|rt| {
         rt.nes_mut().set_paused(false);
         let input = FrontendInput {
             controller1: nes_sim::ControllerState::from_bits(controller),
             ..Default::default()
         };
+
+        // 运行一帧
         let snap = rt.step(input);
-        Ok(debug_info_from_snapshot(&snap))
+
+        // 先完成 debug_info 的处理，避免借用冲突
+        let debug_info = debug_info_from_snapshot(&snap);
+
+        // 然后处理音频数据
+        let audio_samples = rt.nes().apu_audio_samples();
+        if !audio_samples.is_empty() {
+            let audio_data = AudioData {
+                samples: audio_samples.to_vec(),
+                sample_rate: rt.nes().apu_sample_rate(),
+            };
+
+            // 发送音频数据事件到前端
+            if let Err(e) = window.emit("audio_data", audio_data) {
+                eprintln!("发送音频数据失败: {}", e);
+            }
+
+            // 清空音频缓冲区
+            rt.nes_mut().clear_apu_audio_samples();
+        }
+
+        Ok(debug_info)
     })
 }
 
@@ -318,22 +342,70 @@ fn render_nametable(
     };
 
     const COLORS: [[u8; 3]; 64] = [
-        [84, 84, 84], [0, 30, 116], [8, 16, 144], [48, 0, 136],
-        [68, 0, 100], [92, 0, 48], [84, 4, 0], [60, 24, 0],
-        [32, 42, 0], [8, 58, 0], [0, 64, 0], [0, 60, 0],
-        [0, 50, 60], [0, 0, 0], [0, 0, 0], [0, 0, 0],
-        [152, 150, 152], [8, 76, 196], [48, 50, 236], [92, 30, 228],
-        [136, 20, 176], [160, 20, 100], [152, 34, 32], [120, 60, 0],
-        [84, 90, 0], [40, 114, 0], [8, 124, 0], [0, 118, 40],
-        [0, 102, 120], [0, 0, 0], [0, 0, 0], [0, 0, 0],
-        [236, 238, 236], [76, 154, 236], [120, 124, 236], [176, 98, 236],
-        [228, 84, 236], [236, 88, 180], [236, 106, 100], [212, 136, 32],
-        [160, 170, 0], [116, 196, 0], [76, 208, 32], [56, 204, 108],
-        [56, 180, 204], [60, 60, 60], [0, 0, 0], [0, 0, 0],
-        [236, 238, 236], [168, 204, 236], [188, 188, 236], [212, 178, 236],
-        [236, 174, 236], [236, 174, 212], [236, 180, 176], [228, 196, 144],
-        [204, 210, 120], [180, 222, 120], [168, 226, 144], [152, 226, 180],
-        [160, 214, 228], [160, 162, 160], [0, 0, 0], [0, 0, 0],
+        [84, 84, 84],
+        [0, 30, 116],
+        [8, 16, 144],
+        [48, 0, 136],
+        [68, 0, 100],
+        [92, 0, 48],
+        [84, 4, 0],
+        [60, 24, 0],
+        [32, 42, 0],
+        [8, 58, 0],
+        [0, 64, 0],
+        [0, 60, 0],
+        [0, 50, 60],
+        [0, 0, 0],
+        [0, 0, 0],
+        [0, 0, 0],
+        [152, 150, 152],
+        [8, 76, 196],
+        [48, 50, 236],
+        [92, 30, 228],
+        [136, 20, 176],
+        [160, 20, 100],
+        [152, 34, 32],
+        [120, 60, 0],
+        [84, 90, 0],
+        [40, 114, 0],
+        [8, 124, 0],
+        [0, 118, 40],
+        [0, 102, 120],
+        [0, 0, 0],
+        [0, 0, 0],
+        [0, 0, 0],
+        [236, 238, 236],
+        [76, 154, 236],
+        [120, 124, 236],
+        [176, 98, 236],
+        [228, 84, 236],
+        [236, 88, 180],
+        [236, 106, 100],
+        [212, 136, 32],
+        [160, 170, 0],
+        [116, 196, 0],
+        [76, 208, 32],
+        [56, 204, 108],
+        [56, 180, 204],
+        [60, 60, 60],
+        [0, 0, 0],
+        [0, 0, 0],
+        [236, 238, 236],
+        [168, 204, 236],
+        [188, 188, 236],
+        [212, 178, 236],
+        [236, 174, 236],
+        [236, 174, 212],
+        [236, 180, 176],
+        [228, 196, 144],
+        [204, 210, 120],
+        [180, 222, 120],
+        [168, 226, 144],
+        [152, 226, 180],
+        [160, 214, 228],
+        [160, 162, 160],
+        [0, 0, 0],
+        [0, 0, 0],
     ];
 
     for tile_y in 0..NT_HEIGHT {
@@ -351,7 +423,8 @@ fn render_nametable(
             let attr_shift = ((tile_y % 4) / 2) * 2 + ((tile_x % 4) / 2);
             let attr_byte_idx = attr_block_y * 8 + attr_block_x;
             let attr_addr = nt_base_offset + 0x03C0 + attr_byte_idx;
-            let palette_idx = ((vram.get(attr_addr).copied().unwrap_or(0) >> attr_shift) & 0x03) as usize;
+            let palette_idx =
+                ((vram.get(attr_addr).copied().unwrap_or(0) >> attr_shift) & 0x03) as usize;
 
             let palette_base = [0, 4, 8, 12][palette_idx];
             let base_color = palette.get(0).copied().unwrap_or(0) as usize;
@@ -395,6 +468,41 @@ pub fn read_oam() -> Result<Vec<u8>, String> {
 #[tauri::command]
 pub fn read_palette() -> Result<Vec<u8>, String> {
     with_runtime(|rt| Ok(rt.nes().debug_memory_snapshot().palette.to_vec()))
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct AudioData {
+    pub samples: Vec<f32>,
+    pub sample_rate: u32,
+}
+
+#[tauri::command]
+pub fn get_audio_samples() -> Result<AudioData, String> {
+    with_runtime(|rt| {
+        let samples = rt.nes().apu_audio_samples().to_vec();
+        let sample_rate = rt.nes().apu_sample_rate();
+        rt.nes_mut().clear_apu_audio_samples();
+        println!(
+            "获取音频样本: {} 个样本, 采样率: {}",
+            samples.len(),
+            sample_rate
+        );
+        Ok(AudioData {
+            samples,
+            sample_rate,
+        })
+    })
+}
+
+#[tauri::command]
+pub fn set_audio_volume(percent: f64) -> Result<(), String> {
+    with_runtime(|_rt| {
+        // 将百分比转换为 APU 音量（0-255）
+        let _volume = (percent / 100.0 * 255.0) as u8;
+        // 设置为全局音量控制
+        // 这里可以添加音量控制逻辑
+        Ok(())
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -483,9 +591,7 @@ pub fn disassemble(rows: usize) -> Result<DisasmResult, String> {
     })
 }
 
-fn debug_info_from_snapshot(
-    snap: &nes_sim::RuntimeSnapshot,
-) -> DebugInfo {
+fn debug_info_from_snapshot(snap: &nes_sim::RuntimeSnapshot) -> DebugInfo {
     let d = &snap.debug;
     DebugInfo {
         master_clock: d.master_clock,
