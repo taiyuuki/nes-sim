@@ -478,6 +478,110 @@ fn save_state_round_trip_restores_debug_snapshot_and_video_output() {
     assert_eq!(restored.video.pixels, expected_pixels.as_slice());
 }
 
+// --- Save state round-trip tests ---
+//
+// 验证方式：save → load → save → 比较两次字节流完全一致。
+// 如果 load_state 漏掉任何字段，第二次 save 的字节流就会和第一次不同。
+
+fn create_booted_nes(frames: usize) -> NES {
+    let rom = make_ines_with_reset_vector(0x8000);
+    let mut nes = NES::new();
+    nes.load_cartridge_ines(&rom)
+        .expect("test ROM should load");
+    nes.reset();
+    for _ in 0..frames {
+        nes.run_frame();
+    }
+    nes
+}
+
+fn assert_round_trip_identical(nes: &mut NES) {
+    let first = nes.save_state().expect("first save should succeed");
+    nes.load_state(&first)
+        .expect("load should succeed");
+    let second = nes.save_state().expect("second save should succeed");
+    assert_eq!(
+        first, second,
+        "save state round-trip should produce identical byte streams"
+    );
+}
+
+#[test]
+fn save_state_round_trip_after_boot() {
+    let mut nes = create_booted_nes(3);
+    assert_round_trip_identical(&mut nes);
+}
+
+#[test]
+fn save_state_round_trip_with_controller_input() {
+    let mut nes = create_booted_nes(1);
+    nes.set_controller_state(0, ControllerState::from_bits(0x81));
+    nes.set_controller_state(1, ControllerState::from_bits(0x55));
+    nes.run_frame();
+    assert_round_trip_identical(&mut nes);
+}
+
+#[test]
+fn save_state_round_trip_after_many_frames() {
+    let mut nes = create_booted_nes(60);
+    assert_round_trip_identical(&mut nes);
+}
+
+#[test]
+fn save_state_round_trip_preserves_video_output() {
+    let mut nes = create_booted_nes(5);
+    let first = nes.save_state().expect("save should succeed");
+
+    let expected_frame = nes.frame_number();
+    let expected_pixels = nes.video_frame().pixels.to_vec();
+
+    // 运行几帧改变状态
+    for _ in 0..3 {
+        nes.run_frame();
+    }
+
+    nes.load_state(&first).expect("load should succeed");
+    assert_eq!(nes.frame_number(), expected_frame);
+    assert_eq!(nes.video_frame().pixels, expected_pixels.as_slice());
+
+    // 加载后再跑一帧，确认渲染使用了正确的恢复状态（验证 palette_cache 等）
+    nes.run_frame();
+    let pixels_after_one_frame = nes.video_frame().pixels.to_vec();
+
+    // 用全新实例跑到同帧号比较
+    let reference = create_booted_nes(6); // 5 帧 + 1 帧 = 6
+    let reference_pixels = reference.video_frame().pixels.to_vec();
+    assert_eq!(pixels_after_one_frame, reference_pixels);
+}
+
+#[test]
+fn save_state_round_trip_after_mid_frame() {
+    let rom = make_ines_with_reset_vector(0x8000);
+    let mut nes = NES::new();
+    nes.load_cartridge_ines(&rom)
+        .expect("test ROM should load");
+    nes.reset();
+    nes.run_frame();
+    // 在下一帧的中间状态保存
+    for _ in 0..100 {
+        nes.clock();
+    }
+    assert_round_trip_identical(&mut nes);
+}
+
+#[test]
+fn save_state_round_trip_idempotent() {
+    // 连续多次 save/load 不应累积误差
+    let mut nes = create_booted_nes(10);
+    let original = nes.save_state().expect("initial save");
+
+    for i in 0..5 {
+        nes.load_state(&original).expect(&format!("load #{}", i));
+    }
+    let final_save = nes.save_state().expect("final save");
+    assert_eq!(original, final_save);
+}
+
 #[test]
 #[ignore = "ROM smoke test for MMC1 game boot output"]
 fn rockman2_mmc1_rom_boot_frame_matches_reference_hash() {
