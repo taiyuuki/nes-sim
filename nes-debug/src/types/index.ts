@@ -1,0 +1,48 @@
+export interface CpuInfo {
+  a: number;
+  x: number;
+  y: number;
+  sp: number;
+  pc: number;
+  status: number;
+  clocks: number;
+  instruction_counter: number;
+  irq_pending: boolean;
+  nmi_line: boolean;
+}
+
+export interface PpuInfo {
+  frame: number;
+  scanline: number;
+  in_vblank: boolean;
+  nmi_line: boolean;
+  oam_addr: number;
+  cycles: number;
+  ctrl: number;
+  mask: number;
+  status: number;
+  vram_addr: number;
+  temp_vram_addr: number;
+  bg_on: boolean;
+  sprites_on: boolean;
+  rendering_on: boolean;
+}
+
+export interface DebugInfo {
+  master_clock: number;
+  cpu: CpuInfo;
+  ppu: PpuInfo;
+  paused: boolean;
+  frame_number: number;
+}
+
+export interface FrameData {
+  width: number;
+  height: number;
+  pixels: number[];
+}
+
+export interface BreakpointDef {
+  type: "address" | "memory_read" | "memory_write" | "ppu_scanline" | "vblank";
+  value?: number;
+}
