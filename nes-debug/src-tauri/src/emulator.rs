@@ -132,11 +132,10 @@ pub fn run_frame(controller: u8, window: tauri::Window) -> Result<RunFrameResult
         let debug_info = debug_info_from_snapshot(&snap);
 
         let video = snap.video;
-        let rgba = nes_sim::video::frame_to_rgba(video);
         let frame = FrameData {
             width: video.width,
             height: video.height,
-            pixels_b64: STANDARD.encode(&rgba),
+            pixels_b64: STANDARD.encode(video.pixels),
         };
 
         let audio_samples = rt.nes().apu_audio_samples();
@@ -177,11 +176,10 @@ pub fn get_debug_info() -> Result<DebugInfo, String> {
 pub fn get_frame() -> Result<FrameData, String> {
     with_runtime(|rt| {
         let video = rt.snapshot().video;
-        let rgba = nes_sim::video::frame_to_rgba(video);
         Ok(FrameData {
             width: video.width,
             height: video.height,
-            pixels_b64: STANDARD.encode(&rgba),
+            pixels_b64: STANDARD.encode(video.pixels),
         })
     })
 }
@@ -341,73 +339,6 @@ fn render_nametable(
         }
     };
 
-    const COLORS: [[u8; 3]; 64] = [
-        [84, 84, 84],
-        [0, 30, 116],
-        [8, 16, 144],
-        [48, 0, 136],
-        [68, 0, 100],
-        [92, 0, 48],
-        [84, 4, 0],
-        [60, 24, 0],
-        [32, 42, 0],
-        [8, 58, 0],
-        [0, 64, 0],
-        [0, 60, 0],
-        [0, 50, 60],
-        [0, 0, 0],
-        [0, 0, 0],
-        [0, 0, 0],
-        [152, 150, 152],
-        [8, 76, 196],
-        [48, 50, 236],
-        [92, 30, 228],
-        [136, 20, 176],
-        [160, 20, 100],
-        [152, 34, 32],
-        [120, 60, 0],
-        [84, 90, 0],
-        [40, 114, 0],
-        [8, 124, 0],
-        [0, 118, 40],
-        [0, 102, 120],
-        [0, 0, 0],
-        [0, 0, 0],
-        [0, 0, 0],
-        [236, 238, 236],
-        [76, 154, 236],
-        [120, 124, 236],
-        [176, 98, 236],
-        [228, 84, 236],
-        [236, 88, 180],
-        [236, 106, 100],
-        [212, 136, 32],
-        [160, 170, 0],
-        [116, 196, 0],
-        [76, 208, 32],
-        [56, 204, 108],
-        [56, 180, 204],
-        [60, 60, 60],
-        [0, 0, 0],
-        [0, 0, 0],
-        [236, 238, 236],
-        [168, 204, 236],
-        [188, 188, 236],
-        [212, 178, 236],
-        [236, 174, 236],
-        [236, 174, 212],
-        [236, 180, 176],
-        [228, 196, 144],
-        [204, 210, 120],
-        [180, 222, 120],
-        [168, 226, 144],
-        [152, 226, 180],
-        [160, 214, 228],
-        [160, 162, 160],
-        [0, 0, 0],
-        [0, 0, 0],
-    ];
-
     for tile_y in 0..NT_HEIGHT {
         for tile_x in 0..NT_WIDTH {
             let tile_idx = tile_y * NT_WIDTH + tile_x;
@@ -448,10 +379,11 @@ fn render_nametable(
                     let py = tile_y * TILE_SIZE + y;
                     let out_idx = (py * width + px) * 4;
 
-                    let color = COLORS[palette_colors[pixel_idx] & 0x3F];
-                    pixels[out_idx] = color[0];
-                    pixels[out_idx + 1] = color[1];
-                    pixels[out_idx + 2] = color[2];
+                    let [r, g, b] =
+                        nes_sim::video::palette_index_to_rgb(palette_colors[pixel_idx] as u8);
+                    pixels[out_idx] = r;
+                    pixels[out_idx + 1] = g;
+                    pixels[out_idx + 2] = b;
                     pixels[out_idx + 3] = 255;
                 }
             }
