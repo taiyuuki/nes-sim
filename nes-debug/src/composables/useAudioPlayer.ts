@@ -14,9 +14,6 @@ export function useAudioPlayer() {
 
     let unlisten: (() => void) | null = null
     let gainNode: GainNode | null = null
-    let audioBuffer: Float32Array | null = null
-    let accumulatedSamples = 0
-    const BUFFER_THRESHOLD = 1470 // 约 33ms 的缓冲
 
     // 从 localStorage 读取状态
     onMounted(() => {
@@ -44,7 +41,6 @@ export function useAudioPlayer() {
 
             // 不强制设置采样率，使用系统默认值
             audioContext.value = new AudioContext()
-            console.log(`[Audio] AudioContext 创建，采样率: ${audioContext.value.sampleRate}Hz`)
         }
 
         // 恢复 AudioContext（浏览器可能暂停它）
@@ -56,7 +52,6 @@ export function useAudioPlayer() {
         if (!workletNode.value) {
             try {
                 await audioContext.value.audioWorklet.addModule(workletUrl)
-                console.log('[AudioWorklet] Module 加载成功')
 
                 // 创建 AudioWorkletNode，设置更大的 buffer size 以降低消费频率
                 workletNode.value = new AudioWorkletNode(
@@ -79,10 +74,6 @@ export function useAudioPlayer() {
                 workletNode.value.connect(gainNode)
                 gainNode.connect(audioContext.value.destination)
 
-                console.log('[AudioWorklet] 音频节点已连接')
-
-                // 通知后端使用正确的采样率
-                console.log(`[Audio] 需要后端采样率: ${audioContext.value.sampleRate}Hz`)
             }
             catch(error) {
                 console.error('[AudioWorklet] 初始化失败:', error)
@@ -110,8 +101,6 @@ export function useAudioPlayer() {
             output[i] = samples[srcIndexLow] * (1 - frac) + samples[srcIndexHigh] * frac
         }
 
-        console.log(`[Audio] 重采样: ${fromRate}Hz -> ${toRate}Hz, 样本: ${samples.length} -> ${outputLength}`)
-
         return output
     }
 
@@ -121,57 +110,25 @@ export function useAudioPlayer() {
             return
         }
 
-        let samples = new Float32Array(audioData.samples)
+        let samples: Float32Array = new Float32Array(audioData.samples)
         const targetRate = audioContext.value?.sampleRate || 44100
 
         // 如果采样率不匹配，进行重采样
         if (audioData.sample_rate && audioData.sample_rate !== targetRate) {
-            samples = resampleAudio(samples, audioData.sample_rate, targetRate) as Float32Array<ArrayBuffer>
+            samples = resampleAudio(samples, audioData.sample_rate, targetRate)
         }
 
-        // 累积音频数据
-        if (!audioBuffer || audioBuffer.length - accumulatedSamples < samples.length) {
+        // 直接发送给 AudioWorklet，不要前端缓冲
+        // 复制到新 buffer 避免 transfer 污染原数据
+        const bufferCopy = new Float32Array(samples.length)
+        bufferCopy.set(samples)
 
-            // 需要扩展或创建新缓冲区
-            const newBuffer = new Float32Array((audioBuffer?.length || 0) + samples.length + BUFFER_THRESHOLD)
-            if (audioBuffer) {
-                newBuffer.set(audioBuffer, 0)
-            }
-            audioBuffer = newBuffer
-        }
+        workletNode.value.port.postMessage({
+            type: 'audio-data',
+            data: bufferCopy.buffer,
+        }, [bufferCopy.buffer])
 
-        // 添加新样本到缓冲区
-        audioBuffer!.set(samples, accumulatedSamples)
-        accumulatedSamples += samples.length
-
-        // 当累积足够数据时，发送到 AudioWorklet
-        if (accumulatedSamples >= BUFFER_THRESHOLD) {
-            const samplesToSend = audioBuffer!.subarray(0, accumulatedSamples)
-
-            console.log(`[Audio] 发送 ${accumulatedSamples} 样本到 AudioWorklet`)
-
-            workletNode.value.port.postMessage({
-                type: 'audio-data',
-                data: samplesToSend.buffer,
-            }, [samplesToSend.buffer])
-
-            // 重置缓冲区（保留剩余部分）
-            const remaining = audioBuffer!.length - accumulatedSamples
-            if (remaining > 0) {
-                audioBuffer = audioBuffer!.subarray(accumulatedSamples)
-
-                // 创建新副本避免使用 subarray
-                const newBuffer = new Float32Array(remaining)
-                newBuffer.set(audioBuffer)
-                audioBuffer = newBuffer
-            }
-            else {
-                audioBuffer = null
-            }
-            accumulatedSamples = 0
-
-            isPlaying.value = true
-        }
+        isPlaying.value = true
 
         // 更新增益
         if (gainNode) {
@@ -191,7 +148,6 @@ export function useAudioPlayer() {
                     playAudioSamples(event.payload)
                 }
             })
-            console.log('[AudioWorklet] 音频事件监听已设置')
         }
         catch(error) {
             console.error('[AudioWorklet] 设置音频监听失败:', error)
@@ -234,8 +190,6 @@ export function useAudioPlayer() {
         }
 
         // 清空缓冲区
-        audioBuffer = null
-        accumulatedSamples = 0
         isPlaying.value = false
         gainNode = null
     }

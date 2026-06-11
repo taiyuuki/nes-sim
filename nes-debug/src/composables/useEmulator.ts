@@ -1,6 +1,6 @@
 import { onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import type { DebugInfo, DisasmResult, FrameData } from '../types'
+import type { DebugInfo, DisasmResult, FrameData, RunFrameResult } from '../types'
 
 const debugInfo = shallowRef<DebugInfo | null>(null)
 const disasmResult = shallowRef<DisasmResult | null>(null)
@@ -119,16 +119,17 @@ export function useEmulator() {
             if (loopId !== id || paused.value) return
             try {
                 const controller = getControllerBits()
-                const info = await invoke<DebugInfo>('run_frame', { controller })
-                debugInfo.value = info
-                const frame = await invoke<FrameData>('get_frame')
-                frameData.value = frame
+                const result = await invoke<RunFrameResult>('run_frame', { controller })
+                debugInfo.value = result.debug_info
+                frameData.value = result.frame
+
                 const now = performance.now()
-                if (now - lastTick >= 500) {
-                    tick.value++
+                if (now - lastTick > 500) {
                     lastTick = now
+                    tick.value++
                 }
-                if (info.paused) {
+
+                if (result.debug_info.paused) {
                     paused.value = true
                     tick.value++
 

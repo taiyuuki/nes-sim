@@ -24,7 +24,7 @@ pub fn run() {
             emulator::set_paused,
             emulator::disassemble,
             emulator::get_pattern_tables,
-            emulator::get_nametables,
+            emulator::get_nametable,
             emulator::get_audio_samples,
             emulator::set_audio_volume,
         ])

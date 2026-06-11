@@ -40,6 +40,8 @@ pub struct NES {
     #[cfg(feature = "debug")]
     breakpoints: Vec<Breakpoint>,
     #[cfg(feature = "debug")]
+    cached_mem_breakpoints: Vec<Breakpoint>,
+    #[cfg(feature = "debug")]
     paused: bool,
     #[cfg(feature = "debug")]
     breakpoint_hit: Option<Breakpoint>,
@@ -56,6 +58,8 @@ impl NES {
             cached_tv_system: TVSystem::NTSC,
             #[cfg(feature = "debug")]
             breakpoints: Vec::new(),
+            #[cfg(feature = "debug")]
+            cached_mem_breakpoints: Vec::new(),
             #[cfg(feature = "debug")]
             paused: false,
             #[cfg(feature = "debug")]
@@ -117,15 +121,7 @@ impl NES {
 
             #[cfg(feature = "debug")]
             {
-                let mem_bps: Vec<Breakpoint> = self
-                    .breakpoints
-                    .iter()
-                    .copied()
-                    .filter(|bp| {
-                        matches!(bp, Breakpoint::MemoryRead(_) | Breakpoint::MemoryWrite(_))
-                    })
-                    .collect();
-                self.bus.set_debug_mem_breakpoints(mem_bps);
+                self.bus.set_debug_mem_breakpoints(&self.cached_mem_breakpoints);
             }
 
             self.cpu.clock(&mut self.bus);
@@ -352,20 +348,35 @@ impl NES {
     }
 
     #[cfg(feature = "debug")]
+    fn update_mem_breakpoint_cache(&mut self) {
+        self.cached_mem_breakpoints = self
+            .breakpoints
+            .iter()
+            .copied()
+            .filter(|bp| {
+                matches!(bp, Breakpoint::MemoryRead(_) | Breakpoint::MemoryWrite(_))
+            })
+            .collect();
+    }
+
+    #[cfg(feature = "debug")]
     pub fn add_breakpoint(&mut self, bp: Breakpoint) {
         if !self.breakpoints.contains(&bp) {
             self.breakpoints.push(bp);
+            self.update_mem_breakpoint_cache();
         }
     }
 
     #[cfg(feature = "debug")]
     pub fn remove_breakpoint(&mut self, bp: &Breakpoint) {
         self.breakpoints.retain(|b| b != bp);
+        self.update_mem_breakpoint_cache();
     }
 
     #[cfg(feature = "debug")]
     pub fn clear_breakpoints(&mut self) {
         self.breakpoints.clear();
+        self.cached_mem_breakpoints.clear();
     }
 
     #[cfg(feature = "debug")]

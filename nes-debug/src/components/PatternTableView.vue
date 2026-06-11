@@ -11,25 +11,34 @@ const props = defineProps<{
 const canvas0 = ref<HTMLCanvasElement | null>(null)
 const canvas1 = ref<HTMLCanvasElement | null>(null)
 
+function b64ToBytes(b64: string): Uint8Array {
+    const bin = atob(b64)
+    const len = bin.length
+    const bytes = new Uint8Array(len)
+    for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i)
+
+    return bytes
+}
+
 async function fetchData() {
     if (!props.running) return
     try {
         const data = await invoke<PatternTableData>('get_pattern_tables')
-        renderTable(canvas0.value, data.table0, data.size)
-        renderTable(canvas1.value, data.table1, data.size)
+        renderTable(canvas0.value, data.table0_b64, data.size)
+        renderTable(canvas1.value, data.table1_b64, data.size)
     }
     catch {
 
-    // ignore
+        // ignore
     }
 }
 
-function renderTable(canvas: HTMLCanvasElement | null, pixels: number[], size: number) {
-    if (!canvas || pixels.length === 0) return
+function renderTable(canvas: HTMLCanvasElement | null, pixelsB64: string, size: number) {
+    if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     const imageData = ctx.createImageData(size, size)
-    imageData.data.set(pixels)
+    imageData.data.set(b64ToBytes(pixelsB64))
     ctx.putImageData(imageData, 0, 0)
 }
 

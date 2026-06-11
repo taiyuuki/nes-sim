@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD, Engine};
 use nes_sim::{Breakpoint, FrontendInput, FrontendRuntime, Mirroring, RunMode};
 use std::cell::RefCell;
 use tauri::Emitter;
@@ -62,7 +63,13 @@ pub struct DebugInfo {
 pub struct FrameData {
     pub width: usize,
     pub height: usize,
-    pub pixels: Vec<u8>,
+    pub pixels_b64: String,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct RunFrameResult {
+    pub debug_info: DebugInfo,
+    pub frame: FrameData,
 }
 
 #[tauri::command]
@@ -113,7 +120,7 @@ pub fn step_instruction() -> Result<DebugInfo, String> {
 }
 
 #[tauri::command]
-pub fn run_frame(controller: u8, window: tauri::Window) -> Result<DebugInfo, String> {
+pub fn run_frame(controller: u8, window: tauri::Window) -> Result<RunFrameResult, String> {
     with_runtime(|rt| {
         rt.nes_mut().set_paused(false);
         let input = FrontendInput {
@@ -121,30 +128,27 @@ pub fn run_frame(controller: u8, window: tauri::Window) -> Result<DebugInfo, Str
             ..Default::default()
         };
 
-        // 运行一帧
         let snap = rt.step(input);
-
-        // 先完成 debug_info 的处理，避免借用冲突
         let debug_info = debug_info_from_snapshot(&snap);
 
-        // 然后处理音频数据
+        let video = snap.video;
+        let frame = FrameData {
+            width: video.width,
+            height: video.height,
+            pixels_b64: STANDARD.encode(video.pixels),
+        };
+
         let audio_samples = rt.nes().apu_audio_samples();
         if !audio_samples.is_empty() {
             let audio_data = AudioData {
                 samples: audio_samples.to_vec(),
                 sample_rate: rt.nes().apu_sample_rate(),
             };
-
-            // 发送音频数据事件到前端
-            if let Err(e) = window.emit("audio_data", audio_data) {
-                eprintln!("发送音频数据失败: {}", e);
-            }
-
-            // 清空音频缓冲区
+            let _ = window.emit("audio_data", audio_data);
             rt.nes_mut().clear_apu_audio_samples();
         }
 
-        Ok(debug_info)
+        Ok(RunFrameResult { debug_info, frame })
     })
 }
 
@@ -175,7 +179,7 @@ pub fn get_frame() -> Result<FrameData, String> {
         Ok(FrameData {
             width: video.width,
             height: video.height,
-            pixels: video.pixels.to_vec(),
+            pixels_b64: STANDARD.encode(video.pixels),
         })
     })
 }
@@ -197,19 +201,14 @@ pub fn read_chr() -> Result<Vec<u8>, String> {
 
 #[derive(serde::Serialize, Clone)]
 pub struct PatternTableData {
-    // 2 tables, each 128x128 pixels, RGBA
-    pub table0: Vec<u8>,
-    pub table1: Vec<u8>,
+    pub table0_b64: String,
+    pub table1_b64: String,
     pub size: usize,
 }
 
 #[derive(serde::Serialize, Clone)]
 pub struct NametableData {
-    // 4 nametables, each 256x240 pixels, RGBA
-    pub table0: Vec<u8>,
-    pub table1: Vec<u8>,
-    pub table2: Vec<u8>,
-    pub table3: Vec<u8>,
+    pub pixels_b64: String,
     pub width: usize,
     pub height: usize,
 }
@@ -224,15 +223,15 @@ pub fn get_pattern_tables() -> Result<PatternTableData, String> {
         let table1 = render_pattern_table(&chr, 0x1000);
 
         Ok(PatternTableData {
-            table0,
-            table1,
+            table0_b64: STANDARD.encode(&table0),
+            table1_b64: STANDARD.encode(&table1),
             size,
         })
     })
 }
 
 #[tauri::command]
-pub fn get_nametables() -> Result<NametableData, String> {
+pub fn get_nametable(table_index: u8) -> Result<NametableData, String> {
     with_runtime(|rt| {
         let snap = rt.snapshot();
         let ctrl = snap.debug.ppu.ctrl;
@@ -244,11 +243,10 @@ pub fn get_nametables() -> Result<NametableData, String> {
         let width = NT_WIDTH * TILE_SIZE;
         let height = NT_HEIGHT * TILE_SIZE;
 
+        let pixels = render_nametable(&vram, &chr, &palette, table_index as usize, ctrl, mirroring);
+
         Ok(NametableData {
-            table0: render_nametable(&vram, &chr, &palette, 0, ctrl, mirroring),
-            table1: render_nametable(&vram, &chr, &palette, 1, ctrl, mirroring),
-            table2: render_nametable(&vram, &chr, &palette, 2, ctrl, mirroring),
-            table3: render_nametable(&vram, &chr, &palette, 3, ctrl, mirroring),
+            pixels_b64: STANDARD.encode(&pixels),
             width,
             height,
         })

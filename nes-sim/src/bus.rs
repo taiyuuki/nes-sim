@@ -188,8 +188,9 @@ impl NESBus {
     }
 
     #[cfg(feature = "debug")]
-    pub fn set_debug_mem_breakpoints(&mut self, breakpoints: Vec<Breakpoint>) {
-        self.debug_mem_breakpoints = breakpoints;
+    pub fn set_debug_mem_breakpoints(&mut self, breakpoints: &[Breakpoint]) {
+        self.debug_mem_breakpoints.clear();
+        self.debug_mem_breakpoints.extend_from_slice(breakpoints);
         self.debug_mem_breakpoint_hit = None;
     }
 

@@ -116,3 +116,16 @@ pub fn frame_to_argb32_into(frame: VideoFrame<'_>, output: &mut [u32]) {
         *dst = (0xFF_u32 << 24) | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
     }
 }
+
+/// 将帧数据转换为 RGBA 字节格式（用于 Tauri IPC）
+pub fn frame_to_rgba(frame: VideoFrame<'_>) -> Vec<u8> {
+    let mut rgba = Vec::with_capacity(frame.pixels.len() * 4);
+    for &pixel in frame.pixels {
+        let [r, g, b] = palette_index_to_rgb(pixel);
+        rgba.push(r);
+        rgba.push(g);
+        rgba.push(b);
+        rgba.push(255);
+    }
+    rgba
+}

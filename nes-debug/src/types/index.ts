@@ -37,9 +37,14 @@ export interface DebugInfo {
 }
 
 export interface FrameData {
-    width:  number;
-    height: number;
-    pixels: number[];
+    width:      number;
+    height:     number;
+    pixels_b64: string;
+}
+
+export interface RunFrameResult {
+    debug_info: DebugInfo;
+    frame:      FrameData;
 }
 
 export interface BreakpointDef {
@@ -61,18 +66,15 @@ export interface DisasmResult {
 }
 
 export interface PatternTableData {
-    table0: number[];
-    table1: number[];
-    size:   number;
+    table0_b64: string;
+    table1_b64: string;
+    size:       number;
 }
 
 export interface NametableData {
-    table0: number[];
-    table1: number[];
-    table2: number[];
-    table3: number[];
-    width:  number;
-    height: number;
+    pixels_b64: string;
+    width:      number;
+    height:     number;
 }
 
 export interface AudioData {

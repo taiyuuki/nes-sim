@@ -8,15 +8,11 @@ const props = defineProps<{
     tick:    number;
 }>()
 
-const canvas0 = ref<HTMLCanvasElement | null>(null)
-const canvas1 = ref<HTMLCanvasElement | null>(null)
-const canvas2 = ref<HTMLCanvasElement | null>(null)
-const canvas3 = ref<HTMLCanvasElement | null>(null)
+const canvas = ref<HTMLCanvasElement | null>(null)
 
 const selectedTable = ref(0)
 const enabled = ref(false)
 
-// 从 localStorage 读取状态
 onMounted(() => {
     const saved = localStorage.getItem('nametable-enabled')
     if (saved !== null) {
@@ -24,7 +20,6 @@ onMounted(() => {
     }
 })
 
-// 监听状态变化并保存
 watch(enabled, value => {
     localStorage.setItem('nametable-enabled', String(value))
     if (value && props.running) {
@@ -32,40 +27,30 @@ watch(enabled, value => {
     }
 })
 
+function b64ToBytes(b64: string): Uint8Array {
+    const bin = atob(b64)
+    const len = bin.length
+    const bytes = new Uint8Array(len)
+    for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i)
+
+    return bytes
+}
+
 async function fetchData() {
     if (!props.running || !enabled.value) return
     try {
-        const data = await invoke<NametableData>('get_nametables')
-
-        // 只渲染当前选中的 nametable
-        switch (selectedTable.value) {
-            case 0:
-                renderTable(canvas0.value, data.table0, data.width, data.height)
-                break
-            case 1:
-                renderTable(canvas1.value, data.table1, data.width, data.height)
-                break
-            case 2:
-                renderTable(canvas2.value, data.table2, data.width, data.height)
-                break
-            case 3:
-                renderTable(canvas3.value, data.table3, data.width, data.height)
-                break
-        }
+        const data = await invoke<NametableData>('get_nametable', { tableIndex: selectedTable.value })
+        if (!canvas.value) return
+        const ctx = canvas.value.getContext('2d')
+        if (!ctx) return
+        const imageData = ctx.createImageData(data.width, data.height)
+        imageData.data.set(b64ToBytes(data.pixels_b64))
+        ctx.putImageData(imageData, 0, 0)
     }
     catch {
 
         // ignore
     }
-}
-
-function renderTable(canvas: HTMLCanvasElement | null, pixels: number[], width: number, height: number) {
-    if (!canvas || pixels.length === 0) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    const imageData = ctx.createImageData(width, height)
-    imageData.data.set(pixels)
-    ctx.putImageData(imageData, 0, 0)
 }
 
 watch(() => props.tick, fetchData)
@@ -110,29 +95,7 @@ const tableNames = ['$2000', '$2400', '$2800', '$2C00']
       class="nametable-container"
     >
       <canvas
-        v-show="selectedTable === 0"
-        ref="canvas0"
-        :width="256"
-        :height="240"
-        class="nametable-canvas"
-      />
-      <canvas
-        v-show="selectedTable === 1"
-        ref="canvas1"
-        :width="256"
-        :height="240"
-        class="nametable-canvas"
-      />
-      <canvas
-        v-show="selectedTable === 2"
-        ref="canvas2"
-        :width="256"
-        :height="240"
-        class="nametable-canvas"
-      />
-      <canvas
-        v-show="selectedTable === 3"
-        ref="canvas3"
+        ref="canvas"
         :width="256"
         :height="240"
         class="nametable-canvas"

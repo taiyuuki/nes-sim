@@ -2055,6 +2055,7 @@ dependencies = [
 name = "nes-debug"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "nes-sim",
  "serde",
  "serde_json",
