@@ -217,10 +217,11 @@ pub struct NametableData {
 pub fn get_pattern_tables() -> Result<PatternTableData, String> {
     with_runtime(|rt| {
         let chr = rt.nes_mut().debug_read_chr();
+        let palette = rt.nes().debug_memory_snapshot().palette.to_vec();
 
         let size = 128;
-        let table0 = render_pattern_table(&chr, 0x0000);
-        let table1 = render_pattern_table(&chr, 0x1000);
+        let table0 = render_pattern_table(&chr, 0x0000, &palette);
+        let table1 = render_pattern_table(&chr, 0x1000, &palette);
 
         Ok(PatternTableData {
             table0_b64: STANDARD.encode(&table0),
@@ -253,15 +254,17 @@ pub fn get_nametable(table_index: u8) -> Result<NametableData, String> {
     })
 }
 
-fn render_pattern_table(chr: &[u8], offset: usize) -> Vec<u8> {
+fn render_pattern_table(chr: &[u8], offset: usize, palette: &[u8]) -> Vec<u8> {
     let size = 128;
     let mut pixels = vec![0u8; size * size * 4];
 
-    const COLORS: [[u8; 4]; 4] = [
-        [24, 24, 24, 255],
-        [96, 96, 96, 255],
-        [180, 180, 180, 255],
-        [255, 255, 255, 255],
+    // 与 render_nametable 一致：使用 NES 调色板，默认取背景子调色板 0
+    let base_color = palette.get(0).copied().unwrap_or(0) as usize;
+    let palette_colors = [
+        base_color,
+        palette.get(0).copied().unwrap_or(0) as usize,
+        palette.get(1).copied().unwrap_or(0) as usize,
+        palette.get(2).copied().unwrap_or(0) as usize,
     ];
 
     for tile_idx in 0..256 {
@@ -282,11 +285,12 @@ fn render_pattern_table(chr: &[u8], offset: usize) -> Vec<u8> {
                 let py = tile_row * 8 + y;
                 let idx = (py * size + px) * 4;
 
-                let c = &COLORS[color_idx];
-                pixels[idx] = c[0];
-                pixels[idx + 1] = c[1];
-                pixels[idx + 2] = c[2];
-                pixels[idx + 3] = c[3];
+                let [r, g, b] =
+                    nes_sim::video::palette_index_to_rgb(palette_colors[color_idx] as u8);
+                pixels[idx] = r;
+                pixels[idx + 1] = g;
+                pixels[idx + 2] = b;
+                pixels[idx + 3] = 255;
             }
         }
     }
