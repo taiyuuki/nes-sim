@@ -26,14 +26,22 @@ nes-sim = "0.1"
 ```rust
 use nes_sim::NES;
 
-let mut nes = NES::new("game.nes")?;
+let mut nes = NES::new();
+let rom = std::fs::read("game.nes")?;
+nes.load_cartridge_ines(&rom)?;
 nes.reset();
 
-// Run one frame (returns indexed color pixel data)
-let frame = nes.clock();
+// Run one frame
+nes.run_frame();
 
-// Output 44100Hz mono audio samples
-let audio = nes.audio_samples();
+// Get indexed color pixel data (256x240)
+let video = nes.video_frame();
+let pixels = video.pixels; // &[u8], indexed 8-bit
+
+// Get mono audio samples since last clear
+let audio = nes.audio_batch();
+let samples = audio.samples; // &[f32]
+nes.clear_audio_samples();
 ```
 
 ## Project Structure

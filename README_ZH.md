@@ -26,14 +26,22 @@ nes-sim = "0.1"
 ```rust
 use nes_sim::NES;
 
-let mut nes = NES::new("game.nes")?;
+let mut nes = NES::new();
+let rom = std::fs::read("game.nes")?;
+nes.load_cartridge_ines(&rom)?;
 nes.reset();
 
-// 运行一帧（返回索引色像素数据）
-let frame = nes.clock();
+// 运行一帧
+nes.run_frame();
 
-// 输出 44100Hz 单声道音频采样
-let audio = nes.audio_samples();
+// 获取索引色像素数据（256x240）
+let video = nes.video_frame();
+let pixels = video.pixels; // &[u8]，8位索引色
+
+// 获取上次清空后的单声道音频采样
+let audio = nes.audio_batch();
+let samples = audio.samples; // &[f32]
+nes.clear_audio_samples();
 ```
 
 ## 项目结构
