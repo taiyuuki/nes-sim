@@ -488,10 +488,10 @@ impl Mapper for Mmc5 {
                     self.chr_index_b(addr)
                 }
             };
-            return Some(match &self.chr {
+            Some(match &self.chr {
                 ChrMemory::Rom(c) => c[index],
                 ChrMemory::Ram(c) => c[index],
-            });
+            })
         } else {
             None
         }

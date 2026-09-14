@@ -699,7 +699,7 @@ impl StreamingLinearResampler {
     }
 
     fn can_emit_sample(&self) -> bool {
-        self.latest_input_index >= self.next_output_position.floor() as i64 + 1
+        self.latest_input_index > self.next_output_position.floor() as i64
     }
 
     fn current_output_sample(&self) -> f32 {

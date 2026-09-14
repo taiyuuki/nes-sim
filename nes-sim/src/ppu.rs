@@ -909,7 +909,7 @@ impl PPU {
                 // 缓存无效，重新读取并更新缓存
                 let data = self.ppu_read_bus(bus, addr);
                 // Palette 0x3F10 和 0x3F00 是镜像的
-                let actual_idx = if cache_idx >= 0x10 && cache_idx % 4 == 0 {
+                let actual_idx = if cache_idx >= 0x10 && cache_idx.is_multiple_of(4) {
                     cache_idx - 0x10
                 } else {
                     cache_idx
@@ -940,7 +940,7 @@ impl PPU {
         if (0x3F00..=0x3F1F).contains(&addr) {
             let cache_idx = (addr & 0x1F) as usize;
             // Palette 0x3F10 和 0x3F00 是镜像的
-            let actual_idx = if cache_idx >= 0x10 && cache_idx % 4 == 0 {
+            let actual_idx = if cache_idx >= 0x10 && cache_idx.is_multiple_of(4) {
                 cache_idx - 0x10
             } else {
                 cache_idx
@@ -1226,7 +1226,7 @@ impl PPU {
         let palette_data = if self.palette_cache_dirty {
             // 缓存无效，重新读取并更新缓存
             let data = self.ppu_read_bus(bus, palette_addr);
-            let actual_idx = if cache_idx >= 0x10 && cache_idx % 4 == 0 {
+            let actual_idx = if cache_idx >= 0x10 && cache_idx.is_multiple_of(4) {
                 cache_idx - 0x10
             } else {
                 cache_idx
@@ -1323,7 +1323,7 @@ impl PPU {
             let palette_data = if self.palette_cache_dirty {
                 // 缓存无效，重新读取并更新缓存
                 let data = self.ppu_read_bus(bus, palette_addr);
-                let actual_idx = if cache_idx >= 0x10 && cache_idx % 4 == 0 {
+                let actual_idx = if cache_idx >= 0x10 && cache_idx.is_multiple_of(4) {
                     cache_idx - 0x10
                 } else {
                     cache_idx
