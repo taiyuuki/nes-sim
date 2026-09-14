@@ -184,9 +184,8 @@ fn triangle_silent_when_length_or_linear_counter_is_zero() {
 #[test]
 fn triangle_disabled_outputs_zero() {
     let tri = TriangleChannel {
-        enabled: true,
-        timer_reload: 2,
-        seq_step: 5,
+        enabled: false,
+        seq_step: 11,
         length_counter: 10,
         linear_counter: 10,
         ..Default::default()
@@ -200,7 +199,7 @@ fn triangle_timer_below_two_is_silenced() {
     let mut tri = TriangleChannel {
         enabled: true,
         timer_reload: 1,
-        seq_step: 5,
+        seq_step: 11,
         length_counter: 10,
         linear_counter: 10,
         ..Default::default()
