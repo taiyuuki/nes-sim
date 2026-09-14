@@ -141,8 +141,7 @@ impl NES {
 
             #[cfg(feature = "debug")]
             {
-                if self.check_breakpoints() {
-                }
+                if self.check_breakpoints() {}
             }
         }
     }

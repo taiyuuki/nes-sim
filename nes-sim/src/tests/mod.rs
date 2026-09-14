@@ -573,7 +573,8 @@ fn save_state_round_trip_idempotent() {
     let original = nes.save_state().expect("initial save");
 
     for i in 0..5 {
-        nes.load_state(&original).unwrap_or_else(|_| panic!("load #{}", i));
+        nes.load_state(&original)
+            .unwrap_or_else(|_| panic!("load #{}", i));
     }
     let final_save = nes.save_state().expect("final save");
     assert_eq!(original, final_save);

@@ -165,7 +165,7 @@ fn triangle_silent_when_length_or_linear_counter_is_zero() {
         linear_counter: 10,
         ..Default::default()
     };
-    
+
     assert_eq!(
         tri.output(),
         0,
