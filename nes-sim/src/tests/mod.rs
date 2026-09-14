@@ -614,6 +614,237 @@ fn supercontra_mmc3_rom_boot_frame_matches_reference_hash() {
 }
 
 #[test]
+#[ignore = "ROM smoke test for MMC2 game boot output"]
+fn punchout_mmc2_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_009/Mike Tyson's Punch-Out!! (JU) (PRG0) [!].nes",
+        300,
+        0xCF91D5D895BF4762,
+        "out/failed-punchout-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for MMC4 game boot output"]
+fn fireemblem_mmc4_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_010/Fire Emblem (J) [!].nes",
+        900,
+        0xE4444AE5C1B0AB20,
+        "out/failed-fireemblem-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for Tengen RAMBO-1 game boot output"]
+fn klax_rambo1_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_064/Klax (U) [!].nes",
+        400,
+        0x94350B3E8920DEF2,
+        "out/failed-klax-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for VRC3 game boot output"]
+fn salamander_vrc3_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_073/Salamander (J) [!].nes",
+        600,
+        0xF9C8335D1200B886,
+        "out/failed-salamander-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for VRC1 game boot output"]
+fn goemon_vrc1_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_075/Ganbare Goemon! (J) [!].nes",
+        600,
+        0x578D4EFD052B9A02,
+        "out/failed-goemon-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for Jaleco SS8805 game boot output"]
+fn ninja_jajamaru_ss8805_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_018/Ninja Jajamaru - Ginga Daisakusen (J) [!].nes",
+        600,
+        0xE70B3FBED82EF53A,
+        "out/failed-ninjajajamaru-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for Bandai mapper 16 game boot output"]
+fn crayon_shinchan_bandai_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_016/Crayon Shin-chan - Ora to Poi Poi (J) [!].nes",
+        600,
+        0xD554AAACABE112C6,
+        "out/failed-crayonshinchan-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for Sunsoft-1 (185) game boot output"]
+fn bwings_sunsoft185_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_185/B-Wings (J) [!].nes",
+        600,
+        0xC5C8D9D601EE0792,
+        "out/failed-bwings-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for Waixing mapper 74 game boot output"]
+fn metalmax_mapper74_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_074/Metal Max (J) [T+ChS_Leesoft].nes",
+        900,
+        0xDE146719B8A8A638,
+        "out/failed-metalmax-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for NTDEC mapper 112 game boot output"]
+fn sanguo_ntdec112_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_112/San Guo Zhi - Chi Bi Zhi Zhan (CN20) (ChT) [!].nes",
+        600,
+        0x7723088F030EC9DE,
+        "out/failed-sanguo-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for VRC7 game boot output"]
+fn lagrange_point_vrc7_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_085/Lagrange Point (J) [!].nes",
+        600,
+        0xDC9ACD700F322242,
+        "out/failed-lagrangepoint-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for mapper 15 multicart boot output"]
+fn baoxiao_sanguo_mapper15_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_015/Bao Xiao San Guo (ES1005) (ChS) (970261).nes",
+        600,
+        0x878D8FDC1EBEB6D4,
+        "out/failed-baoxiao-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for mapper 180 game boot output"]
+fn crazy_climber_mapper180_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_180/Crazy Climber (J) [!].nes",
+        600,
+        0x0C9F7DCAE817F9CA,
+        "out/failed-crazyclimber-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for Jaleco mapper 140 game boot output"]
+fn bio_senshi_dan_mapper140_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_140/Bio Senshi Dan (J) [!].nes",
+        600,
+        0x924B1F811E74073A,
+        "out/failed-biosenshi-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for Sunsoft-4 game boot output"]
+fn maharaja_sunsoft4_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_068/Maharaja (J) [!].nes",
+        3000,
+        0xDDF25DE9C3103588,
+        "out/failed-maharaja-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for Sunsoft-2 game boot output"]
+fn mito_koumon_sunsoft2_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_089/Mito Koumon (J) [!].nes",
+        600,
+        0x357B3A5E075BF55E,
+        "out/failed-mito-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for Sunsoft-1 (93) game boot output"]
+fn fantasy_zone_sunsoft1_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_093/Fantasy Zone (J) [!].nes",
+        600,
+        0xC04DB18135DFFFFC,
+        "out/failed-fantasyzone-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for Sunsoft-1 (184) game boot output"]
+fn madoola_sunsoft184_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_184/The Wing of Madoola (J) [!].nes",
+        600,
+        0x1E3F9ECEFE68D1B4,
+        "out/failed-madoola-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for mapper 107 game boot output"]
+fn magic_dragon_mapper107_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_107/Magic Dragon (As).nes",
+        600,
+        0x0C8B4D49ACAD9428,
+        "out/failed-magicdragon-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for Bit Corp mapper 38 game boot output"]
+fn crime_busters_mapper38_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_038/Crime Busters (Bra) [!].nes",
+        600,
+        0x8DDC7F2B34CB2C30,
+        "out/failed-crimebusters-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for pirate mapper 182 game boot output"]
+fn super_donkey_kong_mapper182_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_182/Super Donkey Kong (Unl) [!].nes",
+        600,
+        0xE07FD1E20FD60038,
+        "out/failed-superdonkeykong-boot.ppm",
+    );
+}
+
+#[test]
 #[ignore = "long-running nestest automation ROM validation"]
 fn nestest_automation_mode_reports_zero_error_bytes() {
     let Some(rom) = read_optional_binary_fixture("roms/nestest/nestest.nes") else {

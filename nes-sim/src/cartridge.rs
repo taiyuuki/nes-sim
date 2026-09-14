@@ -266,21 +266,14 @@ impl CartridgeHeader {
             }
             RomFormat::INES => {
                 let has_trusted_ines_extension = raw[12..INES_HEADER_LEN].iter().all(|b| *b == 0);
-                let mapper_id = if has_sram {
-                    (flags6 >> 4) | (flags7 & 0xF0)
-                } else {
-                    flags6 >> 4
-                };
+                // The mapper number always combines flags6's low nibble with
+                // flags7's high nibble; dumps of boards such as Waixing's
+                // MMC3 derivatives rely on this even with unusual mirroring
+                // flag combinations.
+                let mapper_id = (flags6 >> 4) | (flags7 & 0xF0);
 
                 let prg_rom_size = (raw[4] as u32) * (PRG_BANK_LEN as u32);
                 let chr_rom_size = (raw[5] as u32) * (CHR_BANK_LEN as u32);
-
-                let required_bytes =
-                    INES_HEADER_LEN + trainer_size + (prg_rom_size + chr_rom_size) as usize;
-
-                if required_bytes > total_len {
-                    return Err(CartridgeError::TruncatedData);
-                }
 
                 let inferred_prg_ram_size = if has_trusted_ines_extension {
                     decode_ines_prg_ram_size(raw[8]) as u32
@@ -363,10 +356,13 @@ impl Cartridge {
         let prg_len = rom[4] as usize * PRG_BANK_LEN;
         let chr_len = rom[5] as usize * CHR_BANK_LEN;
         let data_start = INES_HEADER_LEN + trainer_len;
+        // Some dumps declare more CHR/PRG in the header than the file
+        // actually carries; trust the file and hand the mapper whatever is
+        // present so bank wraps absorb the difference.
+        let available = rom.len().saturating_sub(data_start);
+        let prg_len = prg_len.min(available);
+        let chr_len = chr_len.min(available - prg_len);
         let data_end = data_start + prg_len + chr_len;
-        if rom.len() < data_end {
-            return Err(CartridgeError::TruncatedData);
-        }
 
         let prg_rom = rom[data_start..data_start + prg_len].to_vec();
         let chr_rom = rom[data_start + prg_len..data_end].to_vec();

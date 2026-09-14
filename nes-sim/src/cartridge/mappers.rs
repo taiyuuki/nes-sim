@@ -1,89 +1,127 @@
 mod anrom;
+mod bandai;
+mod bitcorp38;
 mod bnrom;
 mod camerica;
 mod cnrom;
 mod colordreams;
 mod cprom;
+mod crazy_climber;
 mod fme7;
 mod gxrom;
 mod irem76;
 mod irem_g101;
 mod irem_h3001;
 mod irem_tams1;
+mod jaleco140;
 mod jf13;
 mod jf19;
+mod mapper107;
 mod mapper115;
 mod mapper118;
+mod mapper15;
 mod mapper152;
 mod mapper162;
+mod mapper182;
 mod mapper36;
 mod mapper46;
 mod mapper62;
 mod mapper70;
 mod mapper72;
+mod mapper74;
 mod mapper78;
 mod mapper87;
 mod mapper94;
 
 mod mmc1;
+mod mmc2;
 mod mmc3;
+mod mmc4;
 mod mmc5;
 mod namco163;
 mod namco3433;
 mod nina003;
 mod nrom;
+mod ntdec112;
+mod rambo1;
+mod ss8805;
+mod sunsoft1;
+mod sunsoft2;
 mod sunsoft3;
+mod sunsoft4;
 mod taito0190;
 mod taito_x1005;
 mod taito_x1017;
 mod tqrom;
 mod uxrom;
+mod vrc1;
 mod vrc2;
+mod vrc3;
 mod vrc4;
 mod vrc6;
+mod vrc7;
 
 use self::anrom::Anrom;
+use self::bandai::Bandai;
+use self::bitcorp38::BitCorp38;
 use self::bnrom::Bnrom;
 use self::camerica::Camerica;
 use self::cnrom::Cnrom;
 use self::colordreams::ColorDreams;
 use self::cprom::CpROM;
+use self::crazy_climber::CrazyClimber;
 use self::fme7::{Fme7, new_fme7};
 use self::gxrom::Gxrom;
 use self::irem_g101::IremG101;
 use self::irem_h3001::IremH3001;
 use self::irem_tams1::IremTamS1;
 use self::irem76::Irem76;
+use self::jaleco140::Jaleco140;
 use self::jf13::Jf13;
 use self::jf19::Jf19;
+use self::mapper15::Mapper15;
 use self::mapper36::Mapper36;
 use self::mapper46::Mapper46;
 use self::mapper62::Mapper62;
 use self::mapper70::Mapper70;
 use self::mapper72::Mapper72;
+use self::mapper74::Mapper74;
 use self::mapper78::Mapper78;
 use self::mapper87::Mapper87;
 use self::mapper94::Mapper94;
+use self::mapper107::Mapper107;
 use self::mapper115::Mapper115;
 use self::mapper118::Mapper118;
 use self::mapper152::Mapper152;
 use self::mapper162::Mapper162;
+use self::mapper182::Mapper182;
 use self::mmc1::Mmc1;
+use self::mmc2::Mmc2;
 use self::mmc3::Mmc3;
+use self::mmc4::Mmc4;
 use self::mmc5::{Mmc5, new_mmc5};
 use self::namco163::{Namco163, new_namco163};
 use self::namco3433::Namco3433;
 use self::nina003::Nina003;
 use self::nrom::Nrom;
+use self::ntdec112::Ntdec112;
+use self::rambo1::Rambo1;
+use self::ss8805::Ss8805;
+use self::sunsoft1::{Sunsoft1, Sunsoft184, Sunsoft185};
+use self::sunsoft2::Sunsoft2;
 use self::sunsoft3::Sunsoft3;
+use self::sunsoft4::Sunsoft4;
 use self::taito_x1005::TaitoX1005;
 use self::taito_x1017::TaitoX1017;
 use self::taito0190::Taito0190;
 use self::tqrom::Tqrom;
 use self::uxrom::Uxrom;
+use self::vrc1::Vrc1;
 use self::vrc2::Vrc2;
+use self::vrc3::Vrc3;
 use self::vrc4::Vrc4;
 use self::vrc6::{Vrc6, new_vrc6};
+use self::vrc7::{Vrc7, new_vrc7};
 use super::{CartridgeError, Mirroring};
 use crate::apu::ExpansionAudioChip;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
@@ -175,17 +213,24 @@ macro_rules! dispatch_mapper {
             Self::NoMapper(m) => m.$method($($arg),*),
             Self::Nrom(m) => m.$method($($arg),*),
             Self::Mmc1(m) => m.$method($($arg),*),
+            Self::Mmc2(m) => m.$method($($arg),*),
+            Self::Mmc4(m) => m.$method($($arg),*),
             Self::Uxrom(m) => m.$method($($arg),*),
             Self::Cnrom(m) => m.$method($($arg),*),
             Self::Mmc3(m) => m.$method($($arg),*),
+            Self::Mapper74(m) => m.$method($($arg),*),
             Self::Mmc5(m) => m.$method($($arg),*),
             Self::Anrom(m) => m.$method($($arg),*),
             Self::ColorDreams(m) => m.$method($($arg),*),
             Self::CpROM(m) => m.$method($($arg),*),
             Self::Namco163(m) => m.$method($($arg),*),
+            Self::Vrc1(m) => m.$method($($arg),*),
             Self::Vrc2(m) => m.$method($($arg),*),
+            Self::Vrc3(m) => m.$method($($arg),*),
             Self::Vrc4(m) => m.$method($($arg),*),
             Self::Vrc6(m) => m.$method($($arg),*),
+            Self::Vrc7(m) => m.$method($($arg),*),
+            Self::Rambo1(m) => m.$method($($arg),*),
             Self::Bnrom(m) => m.$method($($arg),*),
             Self::Gxrom(m) => m.$method($($arg),*),
             Self::Fme7(m) => m.$method($($arg),*),
@@ -196,7 +241,12 @@ macro_rules! dispatch_mapper {
             Self::Mapper118(m) => m.$method($($arg),*),
             Self::Tqrom(m) => m.$method($($arg),*),
             Self::Taito0190(m) => m.$method($($arg),*),
+            Self::Sunsoft1(m) => m.$method($($arg),*),
+            Self::Sunsoft184(m) => m.$method($($arg),*),
+            Self::Sunsoft185(m) => m.$method($($arg),*),
+            Self::Sunsoft2(m) => m.$method($($arg),*),
             Self::Sunsoft3(m) => m.$method($($arg),*),
+            Self::Sunsoft4(m) => m.$method($($arg),*),
             Self::TaitoX1005(m) => m.$method($($arg),*),
             Self::Namco3433(m) => m.$method($($arg),*),
             Self::IremG101(m) => m.$method($($arg),*),
@@ -207,6 +257,15 @@ macro_rules! dispatch_mapper {
             Self::TaitoX1017(m) => m.$method($($arg),*),
             Self::Jf19(m) => m.$method($($arg),*),
             Self::IremTamS1(m) => m.$method($($arg),*),
+            Self::Ss8805(m) => m.$method($($arg),*),
+            Self::Bandai(m) => m.$method($($arg),*),
+            Self::Jaleco140(m) => m.$method($($arg),*),
+            Self::CrazyClimber(m) => m.$method($($arg),*),
+            Self::Ntdec112(m) => m.$method($($arg),*),
+            Self::Mapper107(m) => m.$method($($arg),*),
+            Self::Mapper15(m) => m.$method($($arg),*),
+            Self::Mapper182(m) => m.$method($($arg),*),
+            Self::BitCorp38(m) => m.$method($($arg),*),
             Self::Mapper36(m) => m.$method($($arg),*),
             Self::Mapper46(m) => m.$method($($arg),*),
             Self::Mapper62(m) => m.$method($($arg),*),
@@ -224,17 +283,24 @@ pub(super) enum MapperEnum {
     NoMapper(NoMapper),
     Nrom(Nrom),
     Mmc1(Mmc1),
+    Mmc2(Mmc2),
+    Mmc4(Mmc4),
     Uxrom(Uxrom),
     Cnrom(Cnrom),
     Mmc3(Mmc3),
+    Mapper74(Mapper74),
     Mmc5(Mmc5),
     Anrom(Anrom),
     ColorDreams(ColorDreams),
     CpROM(CpROM),
     Namco163(Namco163),
+    Vrc1(Vrc1),
     Vrc2(Vrc2),
+    Vrc3(Vrc3),
     Vrc4(Vrc4),
     Vrc6(Vrc6),
+    Vrc7(Vrc7),
+    Rambo1(Rambo1),
     Bnrom(Bnrom),
     Gxrom(Gxrom),
     Fme7(Fme7),
@@ -245,7 +311,12 @@ pub(super) enum MapperEnum {
     Mapper118(Mapper118),
     Tqrom(Tqrom),
     Taito0190(Taito0190),
+    Sunsoft1(Sunsoft1),
+    Sunsoft184(Sunsoft184),
+    Sunsoft185(Sunsoft185),
+    Sunsoft2(Sunsoft2),
     Sunsoft3(Sunsoft3),
+    Sunsoft4(Sunsoft4),
     TaitoX1005(TaitoX1005),
     Namco3433(Namco3433),
     IremG101(IremG101),
@@ -256,6 +327,15 @@ pub(super) enum MapperEnum {
     TaitoX1017(TaitoX1017),
     Jf19(Jf19),
     IremTamS1(IremTamS1),
+    Ss8805(Ss8805),
+    Bandai(Bandai),
+    Jaleco140(Jaleco140),
+    CrazyClimber(CrazyClimber),
+    Ntdec112(Ntdec112),
+    Mapper107(Mapper107),
+    Mapper15(Mapper15),
+    Mapper182(Mapper182),
+    BitCorp38(BitCorp38),
     Mapper36(Mapper36),
     Mapper46(Mapper46),
     Mapper62(Mapper62),
@@ -362,6 +442,14 @@ pub(super) fn from_mapper_id(
             MapperEnum::Mmc3(Mmc3::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
+        9 => Ok((
+            MapperEnum::Mmc2(Mmc2::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        10 => Ok((
+            MapperEnum::Mmc4(Mmc4::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         5 => {
             let (mapper, chips) = new_mmc5(prg_rom, chr_rom, mirroring);
             Ok((MapperEnum::Mmc5(mapper), chips))
@@ -398,8 +486,16 @@ pub(super) fn from_mapper_id(
             MapperEnum::Bnrom(Bnrom::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
+        64 => Ok((
+            MapperEnum::Rambo1(Rambo1::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         66 => Ok((
             MapperEnum::Gxrom(Gxrom::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        68 => Ok((
+            MapperEnum::Sunsoft4(Sunsoft4::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         69 => {
@@ -504,6 +600,74 @@ pub(super) fn from_mapper_id(
         )),
         72 => Ok((
             MapperEnum::Mapper72(Mapper72::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        73 => Ok((
+            MapperEnum::Vrc3(Vrc3::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        74 => Ok((
+            MapperEnum::Mapper74(Mapper74::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        75 => Ok((
+            MapperEnum::Vrc1(Vrc1::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        89 => Ok((
+            MapperEnum::Sunsoft2(Sunsoft2::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        93 => Ok((
+            MapperEnum::Sunsoft1(Sunsoft1::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        107 => Ok((
+            MapperEnum::Mapper107(Mapper107::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        112 => Ok((
+            MapperEnum::Ntdec112(Ntdec112::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        140 => Ok((
+            MapperEnum::Jaleco140(Jaleco140::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        15 => Ok((
+            MapperEnum::Mapper15(Mapper15::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        16 | 159 => Ok((
+            MapperEnum::Bandai(Bandai::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        18 => Ok((
+            MapperEnum::Ss8805(Ss8805::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        38 => Ok((
+            MapperEnum::BitCorp38(BitCorp38::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        85 => {
+            let (mapper, chips) = new_vrc7(prg_rom, chr_rom, mirroring);
+            Ok((MapperEnum::Vrc7(mapper), chips))
+        }
+        180 => Ok((
+            MapperEnum::CrazyClimber(CrazyClimber::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        182 => Ok((
+            MapperEnum::Mapper182(Mapper182::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        184 => Ok((
+            MapperEnum::Sunsoft184(Sunsoft184::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        185 => Ok((
+            MapperEnum::Sunsoft185(Sunsoft185::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         94 => Ok((
