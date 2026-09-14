@@ -614,6 +614,17 @@ fn supercontra_mmc3_rom_boot_frame_matches_reference_hash() {
 }
 
 #[test]
+#[ignore = "ROM smoke test for VRC4 game boot output"]
+fn contra_j_vrc4_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_023/Contra (J) [!].nes",
+        300,
+        0x923713B96078F454,
+        "out/failed-contra-j-boot.ppm",
+    );
+}
+
+#[test]
 #[ignore = "ROM smoke test for MMC2 game boot output"]
 fn punchout_mmc2_rom_boot_frame_matches_reference_hash() {
     assert_rom_boot_frame_hash(

@@ -26,6 +26,7 @@ pub(super) struct Vrc4 {
     irq_mode: bool,
     irq_pending: bool,
     irq_ack: bool,
+    microwire_latch: u8,
     /// (bit0_a, bit1_a, bit0_b, bit1_b) — 从地址线中提取 bit0/bit1 的位移
     reg_bits: (u8, u8, u8, u8),
 }
@@ -65,6 +66,7 @@ impl Vrc4 {
             irq_mode: false,
             irq_pending: false,
             irq_ack: false,
+            microwire_latch: 0,
             reg_bits,
         }
     }
@@ -104,41 +106,31 @@ impl Vrc4 {
 impl Mapper for Vrc4 {
     fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
+            // VRC2 boards expose a 1-bit microwire latch here; games such as
+            // Contra (J) read the written bit back and lock up otherwise.
+            0x6000..=0x6FFF => Some(0x60 | self.microwire_latch),
             0x8000..=0xFFFF => {
                 let last_8k = self.prg_rom.len().saturating_sub(PRG_BANK_8K);
                 let second_last_8k = last_8k.saturating_sub(PRG_BANK_8K);
 
-                let offset = if self.prg_mode {
-                    match addr {
-                        0x8000..=0x9FFF => (addr - 0x8000) as usize + last_8k,
-                        0xA000..=0xBFFF => {
-                            let bank = self.prg_bank_0 as usize;
-                            (addr - 0xA000) as usize + bank * PRG_BANK_8K
-                        }
-                        0xC000..=0xDFFF => {
-                            let bank = self.prg_bank_1 as usize;
-                            (addr - 0xC000) as usize + bank * PRG_BANK_8K
-                        }
-                        _ => {
-                            // $E000-$FFFF: fixed last 8K
-                            (addr - 0xE000) as usize + last_8k
-                        }
+                let offset = match addr {
+                    // Swap mode moves the $800x-controlled bank to $C000 and
+                    // fixes the second-to-last bank at $8000.
+                    0x8000..=0x9FFF if self.prg_mode => (addr - 0x8000) as usize + second_last_8k,
+                    0x8000..=0x9FFF => {
+                        let bank = self.prg_bank_0 as usize;
+                        (addr - 0x8000) as usize + bank * PRG_BANK_8K
                     }
-                } else {
-                    match addr {
-                        0x8000..=0x9FFF => {
-                            let bank = self.prg_bank_0 as usize;
-                            (addr - 0x8000) as usize + bank * PRG_BANK_8K
-                        }
-                        0xA000..=0xBFFF => {
-                            let bank = self.prg_bank_1 as usize;
-                            (addr - 0xA000) as usize + bank * PRG_BANK_8K
-                        }
-                        _ => {
-                            // $C000-$FFFF: fixed last 16K
-                            (addr - 0xC000) as usize + second_last_8k
-                        }
+                    0xA000..=0xBFFF => {
+                        let bank = self.prg_bank_1 as usize;
+                        (addr - 0xA000) as usize + bank * PRG_BANK_8K
                     }
+                    0xC000..=0xDFFF if self.prg_mode => {
+                        let bank = self.prg_bank_0 as usize;
+                        (addr - 0xC000) as usize + bank * PRG_BANK_8K
+                    }
+                    0xC000..=0xDFFF => (addr - 0xC000) as usize + second_last_8k,
+                    _ => (addr - 0xE000) as usize + last_8k,
                 };
                 Some(self.prg_rom[offset % self.prg_rom.len()])
             }
@@ -148,6 +140,10 @@ impl Mapper for Vrc4 {
 
     fn cpu_write(&mut self, addr: u16, data: u8) -> bool {
         match addr {
+            0x6000..=0x6FFF => {
+                self.microwire_latch = data & 0x01;
+                true
+            }
             0x8000..=0xFFFF => {
                 let (bit0, bit1) = self.extract_bits(addr);
                 match addr & 0xF000 {
@@ -264,6 +260,7 @@ impl Mapper for Vrc4 {
         writer.write_bool(self.irq_mode);
         writer.write_bool(self.irq_pending);
         writer.write_bool(self.irq_ack);
+        writer.write_u8(self.microwire_latch);
     }
 
     fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
@@ -292,6 +289,7 @@ impl Mapper for Vrc4 {
         self.irq_mode = reader.read_bool()?;
         self.irq_pending = reader.read_bool()?;
         self.irq_ack = reader.read_bool()?;
+        self.microwire_latch = reader.read_u8()?;
         Ok(())
     }
 }
