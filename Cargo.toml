@@ -22,3 +22,6 @@ codegen-units = 1
 fmt = "cargo fmt"
 cgs = "codegraph sync"
 cginit = "codegraph init"
+
+[workspace.lints.clippy]
+upper_case_acronyms = "allow"
