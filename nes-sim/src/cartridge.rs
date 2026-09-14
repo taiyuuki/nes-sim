@@ -224,7 +224,7 @@ impl CartridgeHeader {
         let console_type = raw[7] & 0x03;
         let console_type_data = raw[13];
 
-        return match format {
+        match format {
             RomFormat::NES20 => {
                 let timing_mode = TimingMode::decode_nes20(raw[12] & 0x03);
                 let mapper_id = (flags6 >> 4) | (flags7 & 0xF0) | ((flags8 & 0x0F) << 8);
@@ -334,7 +334,7 @@ impl CartridgeHeader {
                     uses_exponent_rom_size_encoding: false,
                 })
             }
-        };
+        }
     }
 }
 

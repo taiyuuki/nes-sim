@@ -157,13 +157,15 @@ fn pulse_timers_advance_every_other_cpu_cycle() {
 
 #[test]
 fn triangle_silent_when_length_or_linear_counter_is_zero() {
-    let mut tri = TriangleChannel::default();
-    tri.enabled = true;
-    tri.timer_reload = 2;
-    tri.seq_step = 5;
-
-    tri.length_counter = 0;
-    tri.linear_counter = 10;
+    let mut tri = TriangleChannel {
+        enabled: true,
+        timer_reload: 2,
+        seq_step: 5,
+        length_counter: 0,
+        linear_counter: 10,
+        ..Default::default()
+    };
+    
     assert_eq!(
         tri.output(),
         0,
@@ -181,23 +183,28 @@ fn triangle_silent_when_length_or_linear_counter_is_zero() {
 
 #[test]
 fn triangle_disabled_outputs_zero() {
-    let mut tri = TriangleChannel::default();
-    tri.enabled = false;
-    tri.seq_step = 11;
-    tri.length_counter = 10;
-    tri.linear_counter = 10;
+    let tri = TriangleChannel {
+        enabled: true,
+        timer_reload: 2,
+        seq_step: 5,
+        length_counter: 10,
+        linear_counter: 10,
+        ..Default::default()
+    };
 
     assert_eq!(tri.output(), 0);
 }
 
 #[test]
 fn triangle_timer_below_two_is_silenced() {
-    let mut tri = TriangleChannel::default();
-    tri.enabled = true;
-    tri.timer_reload = 1;
-    tri.seq_step = 11;
-    tri.length_counter = 10;
-    tri.linear_counter = 10;
+    let mut tri = TriangleChannel {
+        enabled: true,
+        timer_reload: 1,
+        seq_step: 5,
+        length_counter: 10,
+        linear_counter: 10,
+        ..Default::default()
+    };
 
     assert_eq!(tri.output(), 0);
     tri.tick_timer();

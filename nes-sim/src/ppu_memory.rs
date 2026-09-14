@@ -2,14 +2,14 @@ use crate::cartridge::{Cartridge, Mirroring};
 use crate::ppu::PPUBus;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
-pub(super) struct PPUMemory {
+pub(super) struct PpuMemory {
     chr_ram: [u8; 0x2000],
     vram: [u8; 0x1000],
     palette: [u8; 0x20],
     cartridge: Cartridge,
 }
 
-impl PPUMemory {
+impl PpuMemory {
     pub(super) fn new() -> Self {
         Self {
             chr_ram: [0; 0x2000],
@@ -129,13 +129,13 @@ impl PPUMemory {
     }
 }
 
-impl Default for PPUMemory {
+impl Default for PpuMemory {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PPUBus for PPUMemory {
+impl PPUBus for PpuMemory {
     fn ppu_read(&mut self, addr: u16) -> u8 {
         let addr = Self::normalize_addr(addr);
         match addr {

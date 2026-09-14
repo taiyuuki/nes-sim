@@ -15,6 +15,7 @@ default = []
 debug = []
 
 [package.metadata.scripts]
+clippy = "cargo clippy --fix"
 test-all = "cargo test -p nes-sim"
 build = "cargo build -p nes-sim --release"
 build-debug = "cargo build -p nes-sim --features debug"

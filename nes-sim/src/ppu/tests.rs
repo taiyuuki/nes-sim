@@ -165,7 +165,7 @@ fn rendered_palette_reads_do_not_clock_mapper_a12() {
     run_ppu_cycles(&mut ppu, &mut bus, 341 + 1);
 
     assert!(
-        bus.read_log.iter().any(|&addr| addr == 0x3F01),
+        bus.read_log.contains(&0x3F01),
         "rendering should still read palette RAM for final colors"
     );
     assert!(
@@ -181,8 +181,8 @@ fn sprite_garbage_nametable_fetches_do_not_clock_mapper_a12() {
 
     ppu.cpu_write_register(&mut bus, 0x2000, CTRL_SPRITE_TABLE);
     ppu.cpu_write_register(&mut bus, 0x2001, MASK_SHOW_SPRITES);
-    set_sprite(&mut ppu.oam, 0, 0xFF, 0x01, 0x00, 8);
-    ppu.scanline = 261;
+    set_sprite(&mut ppu.oam, 0, 0x00, 0x01, 0x00, 8);
+    ppu.scanline = 0;
     ppu.cycles = 256;
 
     for _ in 0..8 {
@@ -887,20 +887,45 @@ fn writing_oamdata_during_rendering_only_advances_oamaddr_by_four() {
 }
 
 #[test]
-fn sprites_can_render_on_the_first_visible_scanline() {
+fn sprites_render_on_the_scanline_after_their_y_coordinate() {
     let mut ppu = PPU::new();
     let mut bus = TestPPUBus::new();
 
     ppu.cpu_write_register(&mut bus, 0x2001, MASK_SHOW_SPRITES);
-    set_sprite(&mut ppu.oam, 0, 0xFF, 0x01, 0x00, 8);
+    set_sprite(&mut ppu.oam, 0, 0x00, 0x01, 0x00, 8);
 
     bus.mem[0x0010] = 0b1000_0000;
     bus.mem[0x0018] = 0x00;
     bus.mem[0x3F11] = 0x22;
 
-    run_ppu_cycles(&mut ppu, &mut bus, 341 + 9);
+    // Sprite data is delayed by one scanline: Y=0 first appears on scanline 1.
+    run_ppu_cycles(&mut ppu, &mut bus, 341 * 2 + 9);
 
-    assert_eq!(ppu.bit_map[8], 0x22);
+    assert_ne!(ppu.bit_map[8], 0x22);
+    assert_eq!(ppu.bit_map[256 + 8], 0x22);
+}
+
+#[test]
+fn sprites_with_y_ff_stay_hidden() {
+    let mut ppu = PPU::new();
+    let mut bus = TestPPUBus::new();
+
+    ppu.cpu_write_register(&mut bus, 0x2001, MASK_SHOW_SPRITES);
+    // Games hide unused sprites with Y=$FF; they must not wrap to the top of
+    // the screen (regression test for the Gimmick! map-screen glitch).
+    set_sprite(&mut ppu.oam, 0, 0xFF, 0x01, 0x00, 8);
+    set_sprite(&mut ppu.oam, 1, 0xFF, 0x02, 0x01, 100);
+
+    bus.mem[0x0010] = 0b1111_1111;
+    bus.mem[0x0018] = 0b1111_1111;
+    bus.mem[0x3F11] = 0x22;
+
+    run_ppu_cycles(&mut ppu, &mut bus, 341 * 3);
+
+    assert!(
+        ppu.bit_map.iter().all(|&color| color != 0x22),
+        "sprites with Y=$FF must never be displayed"
+    );
 }
 
 #[test]
@@ -910,8 +935,8 @@ fn sprite_pattern_fetches_happen_during_sprite_fetch_phase_not_during_evaluation
 
     ppu.cpu_write_register(&mut bus, 0x2000, CTRL_SPRITE_TABLE);
     ppu.cpu_write_register(&mut bus, 0x2001, MASK_SHOW_SPRITES);
-    set_sprite(&mut ppu.oam, 0, 0xFF, 0x01, 0x00, 8);
-    ppu.scanline = 261;
+    set_sprite(&mut ppu.oam, 0, 0x00, 0x01, 0x00, 8);
+    ppu.scanline = 0;
     ppu.cycles = 256;
 
     ppu.clock(&mut bus);
@@ -937,8 +962,8 @@ fn sprite_fetch_phase_reads_each_pattern_plane_once_per_slot() {
 
     ppu.cpu_write_register(&mut bus, 0x2000, CTRL_SPRITE_TABLE);
     ppu.cpu_write_register(&mut bus, 0x2001, MASK_SHOW_SPRITES);
-    set_sprite(&mut ppu.oam, 0, 0xFF, 0x01, 0x00, 8);
-    ppu.scanline = 261;
+    set_sprite(&mut ppu.oam, 0, 0x00, 0x01, 0x00, 8);
+    ppu.scanline = 0;
     ppu.cycles = 256;
 
     for _ in 0..8 {

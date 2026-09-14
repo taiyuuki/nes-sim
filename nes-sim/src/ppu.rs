@@ -937,7 +937,7 @@ impl PPU {
         self.ppu_write_bus_exposed(bus, addr, data);
 
         // 更新 palette 缓存
-        if addr >= 0x3F00 && addr <= 0x3F1F {
+        if (0x3F00..=0x3F1F).contains(&addr) {
             let cache_idx = (addr & 0x1F) as usize;
             // Palette 0x3F10 和 0x3F00 是镜像的
             let actual_idx = if cache_idx >= 0x10 && cache_idx % 4 == 0 {
@@ -1042,7 +1042,7 @@ impl PPU {
                     | ((self.loopy_v >> 2) & 0x07);
                 let attr = self.ppu_read_bus(bus, addr);
                 let shift = ((self.loopy_v >> 4) & 0x04) | (self.loopy_v & 0x02);
-                self.next_tile_attr = (attr >> shift) as u8 & 0x03;
+                self.next_tile_attr = (attr >> shift) & 0x03;
             }
             4 => {
                 let addr = self.bg_pattern_addr(self.next_tile_id);
@@ -1107,10 +1107,10 @@ impl PPU {
             }
         }
 
-        if let Some(start_index) = overflow_start {
-            if self.sprite_overflow_bugged(start_index, target_scanline, sprite_height) {
-                self.status |= STATUS_SPRITE_OVERFLOW;
-            }
+        if let Some(start_index) = overflow_start
+            && self.sprite_overflow_bugged(start_index, target_scanline, sprite_height)
+        {
+            self.status |= STATUS_SPRITE_OVERFLOW;
         }
     }
 
@@ -1120,12 +1120,11 @@ impl PPU {
         target_scanline: u8,
         sprite_height: u8,
     ) -> Option<u8> {
+        // Sprite data is delayed by one scanline (top = Y + 1) and the
+        // in-range comparison does not wrap: Y values of $EF-$FF place the
+        // sprite entirely below the visible area, which hides it.
         let sprite_y = self.oam[sprite_index * 4];
-        let sprite_top = if sprite_y == 0xFF {
-            0
-        } else {
-            u16::from(sprite_y) + 1
-        };
+        let sprite_top = u16::from(sprite_y) + 1;
         let target = u16::from(target_scanline);
         if target < sprite_top {
             None
@@ -1149,11 +1148,7 @@ impl PPU {
         let mut m = 0usize;
         while n < 64 {
             let value = self.oam[n * 4 + m];
-            let sprite_top = if value == 0xFF {
-                0
-            } else {
-                u16::from(value) + 1
-            };
+            let sprite_top = u16::from(value) + 1;
             let target = u16::from(target_scanline);
             if target >= sprite_top && (target - sprite_top) < u16::from(sprite_height) {
                 return true;

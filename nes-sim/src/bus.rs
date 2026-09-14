@@ -5,7 +5,7 @@ use crate::input::{ControllerState, Joypad};
 use crate::ppu::PPU;
 #[cfg(feature = "debug")]
 use crate::ppu::PPUBus;
-use crate::ppu_memory::PPUMemory;
+use crate::ppu_memory::PpuMemory;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 #[cfg(feature = "debug")]
@@ -36,7 +36,7 @@ pub trait CPUBus {
 pub struct NESBus {
     pub ram: [u8; 0x800],
     ppu: PPU,
-    ppu_memory: PPUMemory,
+    ppu_memory: PpuMemory,
     apu: APU,
     dma: DmaController,
     controllers: [Joypad; 2],
@@ -53,7 +53,7 @@ impl NESBus {
         NESBus {
             ram: [0; 0x800],
             ppu: PPU::new(),
-            ppu_memory: PPUMemory::new(),
+            ppu_memory: PpuMemory::new(),
             apu: APU::new(),
             dma: DmaController::new(),
             controllers: [Joypad::new(), Joypad::new()],

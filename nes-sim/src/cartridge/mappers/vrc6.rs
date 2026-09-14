@@ -154,7 +154,7 @@ impl Mapper for Vrc6 {
                 }
                 true
             }
-            0x9000..=0x9FFF | 0xA000..=0xAFFF => {
+            0x9000..=0xAFFF => {
                 let (bit0, bit1) = self.register_bits(addr);
                 let pulse_idx = if addr & 0xF000 == 0x9000 { 0 } else { 1 };
                 let mut audio = self.audio.borrow_mut();

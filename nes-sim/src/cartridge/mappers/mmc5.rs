@@ -593,7 +593,7 @@ impl Mapper for Mmc5 {
         if scanline != self.current_scanline {
             self.current_scanline = scanline;
             // 新扫描线开始：重置为背景模式
-            if scanline >= 0 && scanline < 240 && rendering_on {
+            if (0..240).contains(&scanline) && rendering_on {
                 self.sprite_mode = false;
                 self.ppu_fetch_count = 0;
             }

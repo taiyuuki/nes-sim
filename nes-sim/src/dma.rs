@@ -113,10 +113,8 @@ impl DmaController {
     }
 
     pub fn tick_cpu_cycle(&mut self, dmc_request: Option<DmcDmaRequest>) -> (bool, DmaBusRequest) {
-        if self.active_dmc.is_none() {
-            if let Some(request) = dmc_request {
-                self.active_dmc = Some(DmcDma::new(request));
-            }
+        if self.active_dmc.is_none() && let Some(request) = dmc_request {
+            self.active_dmc = Some(DmcDma::new(request));
         }
 
         if let Some(dma) = self.active_dmc.as_mut() {
@@ -143,10 +141,8 @@ impl DmaController {
             return (true, DmaBusRequest::None);
         }
 
-        if self.active_oam.is_none() {
-            if let Some(page) = self.pending_oam.take() {
-                self.active_oam = Some(OamDma::new(page));
-            }
+        if self.active_oam.is_none() && let Some(page) = self.pending_oam.take() {
+            self.active_oam = Some(OamDma::new(page));
         }
 
         let mut consumed = false;

@@ -1986,11 +1986,7 @@ pub fn disassemble_range(
 
     // Find the first instruction that is <= center_pc
     // Trim instructions before 'before' count relative to PC
-    let start = if pc_index > before {
-        pc_index - before
-    } else {
-        0
-    };
+    let start = pc_index.saturating_sub(before);
     let end = std::cmp::min(all.len(), pc_index + after + 1);
     let instructions = all[start..end].to_vec();
     let pc_index = pc_index - start;
