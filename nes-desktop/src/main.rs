@@ -486,7 +486,7 @@ impl AudioPlayer {
             .default_output_config()
             .map_err(|error| format!("failed to query default output config: {error}"))?;
         let channels = usize::from(default_config.channels());
-        let device_sample_rate = default_config.sample_rate().0;
+        let device_sample_rate = default_config.sample_rate();
         let target_queue_samples = device_sample_rate as usize * AUDIO_TARGET_BUFFER_MS / 1000;
         let max_queue_samples = device_sample_rate as usize * AUDIO_MAX_BUFFER_MS / 1000;
         let resampler = Mutex::new(StreamingLinearResampler::new(device_sample_rate));
@@ -503,7 +503,7 @@ impl AudioPlayer {
         let stream = match default_config.sample_format() {
             cpal::SampleFormat::F32 => device
                 .build_output_stream(
-                    &default_config.config(),
+                    default_config.config(),
                     move |data: &mut [f32], _| {
                         write_audio_data(data, channels, &output_state_for_stream)
                     },
@@ -513,7 +513,7 @@ impl AudioPlayer {
                 .map_err(|error| format!("failed to build f32 audio stream: {error}"))?,
             cpal::SampleFormat::I16 => device
                 .build_output_stream(
-                    &default_config.config(),
+                    default_config.config(),
                     move |data: &mut [i16], _| {
                         write_audio_data_i16(data, channels, &output_state_for_stream)
                     },
@@ -523,7 +523,7 @@ impl AudioPlayer {
                 .map_err(|error| format!("failed to build i16 audio stream: {error}"))?,
             cpal::SampleFormat::U16 => device
                 .build_output_stream(
-                    &default_config.config(),
+                    default_config.config(),
                     move |data: &mut [u16], _| {
                         write_audio_data_u16(data, channels, &output_state_for_stream)
                     },
