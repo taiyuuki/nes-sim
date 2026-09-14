@@ -11,7 +11,7 @@ homepage.workspace = true
 nes-sim.workspace = true
 cpal.workspace = true
 minifb.workspace = true
-rfd = "0.15"
+rfd = "0.17.2"
 
 [package.metadata.scripts]
 run-desktop = 'cargo run --release -p nes-desktop'
