@@ -95,6 +95,7 @@ pub trait PPUBus {
     fn check_a12(&mut self, _addr: u16, _ppu_cycle: u64) {}
     fn notify_scanline(&mut self, _scanline: i16, _rendering_on: bool) {}
     fn set_ppu_sprite_phase(&mut self, _sprite_phase: bool) {}
+    fn ppu_register_write(&mut self, _addr: u16, _data: u8) {}
 }
 
 #[derive(Clone, Copy)]
@@ -337,10 +338,12 @@ impl PPU {
                 self.set_temp_vram_addr(
                     (self.temp_vram_addr & !0x0C00) | (((data as u16) & 0x03) << 10),
                 );
+                bus.ppu_register_write(addr, data);
             }
             0x2001 => {
                 self.mask = data;
                 self.update_rendering_flags();
+                bus.ppu_register_write(addr, data);
             }
             0x2003 => self.oam_addr = data,
             0x2004 => self.write_oam_data_timed(data, future_scanline),
@@ -392,6 +395,12 @@ impl PPU {
                 self.update_bg_shifters();
                 bus.set_ppu_sprite_phase(false);
                 self.fetch_bg(bus);
+            } else if !self.bg_on() && fetch_cycle && (self.cycles & 0x07) == 0 {
+                // BG被遮罩但渲染开启时，真机PPU仍会按tile节奏产生垃圾nametable读取。
+                // MMC5等mapper依赖这些读取做扫描线检测（in-frame标志/IRQ计数）。
+                bus.set_ppu_sprite_phase(false);
+                let addr = 0x2000 | (self.loopy_v & 0x0FFF);
+                let _ = self.ppu_read_bus(bus, addr);
             }
 
             if visible_scanline && visible_cycle {

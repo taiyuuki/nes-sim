@@ -74,5 +74,27 @@ fn main() -> ExitCode {
         }
         nes.run_frame();
     }
+    {
+        let cpu = nes.debug_snapshot().cpu;
+        println!(
+            "--- final state: pc={:04X} a={:02X} x={:02X} y={:02X} sp={:02X} status={:02X} (I={}) ppu_frame={} irq_line={} ---",
+            cpu.pc,
+            cpu.a,
+            cpu.x,
+            cpu.y,
+            cpu.sp,
+            cpu.status,
+            (cpu.status >> 2) & 1,
+            nes.debug_snapshot().ppu.frame,
+            cpu.irq_pending
+        );
+    }
+    #[cfg(feature = "debug")]
+    if std::env::var_os("DBG_MEM").is_some() {
+        let mem = nes.debug_memory_snapshot();
+        println!("zp 00-3F: {}", dump(&mem.ram[0x00..0x40]));
+        println!("zp 40-7F: {}", dump(&mem.ram[0x40..0x80]));
+        println!("stack: {}", dump(&mem.ram[0x100..0x200]));
+    }
     ExitCode::SUCCESS
 }

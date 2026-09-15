@@ -428,6 +428,10 @@ impl Cartridge {
         self.mapper.set_ppu_sprite_phase(sprite_phase);
     }
 
+    pub fn ppu_register_write(&mut self, addr: u16, data: u8) {
+        self.mapper.ppu_register_write(addr, data);
+    }
+
     pub fn ppu_read_nametable(&mut self, addr: u16) -> Option<u8> {
         self.mapper.ppu_read_nametable(addr)
     }

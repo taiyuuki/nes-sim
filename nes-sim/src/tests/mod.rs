@@ -625,6 +625,105 @@ fn contra_j_vrc4_rom_boot_frame_matches_reference_hash() {
 }
 
 #[test]
+#[ignore = "ROM smoke test for MMC5 vertical split game title screen"]
+fn castlevania3_mmc5_rom_title_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_005/Castlevania III (U) [!].nes",
+        600,
+        0xCF022B0C640CC116,
+        "out/failed-cv3-title.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for MMC5 Koei game title screen (slow init)"]
+fn bandit_kings_mmc5_rom_title_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_005/Bandit Kings of Ancient China (U) [!].nes",
+        3000,
+        0xFC3868F9C492E858,
+        "out/failed-bandit-kings-title.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for MMC5 Koei game title screen (slow init)"]
+fn gemfire_mmc5_rom_title_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_005/Gemfire (U) [!].nes",
+        3000,
+        0x0FBC9B03B0D7F9B8,
+        "out/failed-gemfire-title.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for MMC5 Koei game title screen (slow init)"]
+fn royal_blood_mmc5_rom_title_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_005/Royal Blood (J) [!].nes",
+        3000,
+        0x8A39E930AD9816A8,
+        "out/failed-royal-blood-title.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for MMC5 Koei game title screen (slow init)"]
+fn sangokushi2_mmc5_rom_title_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_005/Sangokushi II (J) (PRG0) [!].nes",
+        3000,
+        0xC32FC089BE8433B8,
+        "out/failed-sangokushi2-title.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for MMC5 Chinese-translated RPG boot screen"]
+fn ff3_chinese_mmc5_rom_boot_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_005/Final Fantasy III (J) [T+ChS_LSP].nes",
+        600,
+        0x47E6C493E20822B2,
+        "out/failed-ff3-chinese-boot.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for MMC5 ExRAM test ROM result screen"]
+fn mmc5_exram_test_rom_result_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_005/MMC5 Executable ExRAM Test (Demo).nes",
+        300,
+        0xA87A6035AAD74852,
+        "out/failed-mmc5-exram-test.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for MMC5 startup bank checker UI"]
+fn mmc5_startup_bank_checker_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_005/Startup Bank Checker (Unl) (140108).nes",
+        300,
+        0x4151791697702ABA,
+        "out/failed-mmc5-bank-checker.ppm",
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for MMC5 extended attribute test ROM"]
+fn mmc5_exattr_test_rom_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_005/Nintendo MMC5 Extended Nametable Attribute Byte (Demo).nes",
+        300,
+        0x3F8CA242A5F8FA86,
+        "out/failed-mmc5-exattr-test.ppm",
+    );
+}
+
+#[test]
 #[ignore = "ROM smoke test for MMC2 game boot output"]
 fn punchout_mmc2_rom_boot_frame_matches_reference_hash() {
     assert_rom_boot_frame_hash(

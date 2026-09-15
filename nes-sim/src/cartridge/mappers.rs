@@ -99,7 +99,7 @@ use self::mmc1::Mmc1;
 use self::mmc2::Mmc2;
 use self::mmc3::Mmc3;
 use self::mmc4::Mmc4;
-use self::mmc5::{Mmc5, new_mmc5};
+use self::mmc5::{Mmc5, mmc5_wram_banks, new_mmc5};
 use self::namco163::{Namco163, new_namco163};
 use self::namco3433::Namco3433;
 use self::nina003::Nina003;
@@ -142,6 +142,7 @@ pub(super) trait Mapper {
     fn tick_cpu_cycle(&mut self) {}
     fn notify_scanline(&mut self, _scanline: i16, _rendering_on: bool) {}
     fn set_ppu_sprite_phase(&mut self, _sprite_phase: bool) {}
+    fn ppu_register_write(&mut self, _addr: u16, _data: u8) {}
     fn ppu_read_nametable(&mut self, _addr: u16) -> Option<u8> {
         None
     }
@@ -395,6 +396,10 @@ impl MapperEnum {
         dispatch_mapper!(self, set_ppu_sprite_phase(sprite_phase))
     }
 
+    pub(super) fn ppu_register_write(&mut self, addr: u16, data: u8) {
+        dispatch_mapper!(self, ppu_register_write(addr, data))
+    }
+
     pub(super) fn ppu_read_nametable(&mut self, addr: u16) -> Option<u8> {
         dispatch_mapper!(self, ppu_read_nametable(addr))
     }
@@ -413,6 +418,22 @@ impl MapperEnum {
     ) -> Result<(), SaveStateError> {
         dispatch_mapper!(self, load_state(reader))
     }
+}
+
+// PRG+CHR拼接数据的CRC32（与fceux卡带识别使用的校验范围一致）
+fn crc32_concat(prg: &[u8], chr: &[u8]) -> u32 {
+    fn crc32_update(crc: u32, bytes: &[u8]) -> u32 {
+        let mut crc = !crc;
+        for &b in bytes {
+            crc ^= u32::from(b);
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xEDB88320 & mask);
+            }
+        }
+        !crc
+    }
+    crc32_update(crc32_update(0, prg), chr)
 }
 
 pub(super) fn from_mapper_id(
@@ -451,7 +472,8 @@ pub(super) fn from_mapper_id(
             vec![],
         )),
         5 => {
-            let (mapper, chips) = new_mmc5(prg_rom, chr_rom, mirroring);
+            let crc32 = crc32_concat(&prg_rom, &chr_rom);
+            let (mapper, chips) = new_mmc5(prg_rom, chr_rom, mirroring, mmc5_wram_banks(crc32));
             Ok((MapperEnum::Mmc5(mapper), chips))
         }
         7 => Ok((

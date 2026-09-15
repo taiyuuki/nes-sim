@@ -20,6 +20,8 @@ enum ChrMemory {
 pub(super) struct Mmc5 {
     prg_rom: Vec<u8>,
     prg_ram: Vec<u8>,
+    // 逻辑WRAM bank(0-7)到物理8K块(0-7)的映射，255=未连接（open bus）
+    wram_index: [u8; 8],
     chr: ChrMemory,
     exram: Vec<u8>,
     fill_nt: Vec<u8>,
@@ -54,12 +56,23 @@ pub(super) struct Mmc5 {
 
     // Sprite/background phase tracking
     sprite_phase: bool, // PPU是否在sprite阶段（由PPU通过set_ppu_sprite_phase设置）
-    ppu_fetch_count: u8,
-    prev_fetch: u16,
-    prev_prev_fetch: u16,
-    sprite_mode: bool,
     rendering_enabled: bool,
     current_scanline: i16,
+
+    // PPU寄存器监控（$2000/$2001，由PPU通过ppu_register_write通知）
+    sprite_8x16: bool, // $2000 bit5
+    bg_show: bool,     // $2001 bit3（BG显示）
+    mask_subst: bool,  // $2001 bit3|bit4（任一E位即启用MMC5替换功能）
+
+    // 扩展属性模式：最近一次BG tile fetch对应的ExRAM字节
+    // 高2位=该tile的palette，低6位=该tile的4K CHR bank
+    exattr_byte: u8,
+
+    // Vertical split状态（$5200-$5202）
+    split_x: u8,             // 当前扫描线内的BG tile fetch计数（0-31环绕）
+    split_y: u8,             // split自己的垂直位置（像素，239环绕）
+    split_inside: bool,      // 最近一次BG tile fetch是否位于split区
+    split_line_active: bool, // 上一条扫描线是否渲染（用于split_y复位判定）
 
     // 扫描线检测：在ppu_read_nametable中通过nametable读取触发IRQ
     new_scanline: bool,
@@ -69,7 +82,12 @@ pub(super) struct Mmc5 {
 }
 
 impl Mmc5 {
-    pub(super) fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, _mirroring: Mirroring) -> Self {
+    pub(super) fn new(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        _mirroring: Mirroring,
+        wram_banks: usize,
+    ) -> Self {
         let chr = if chr_rom.is_empty() {
             ChrMemory::Ram(vec![0; CHR_BANK_LEN])
         } else {
@@ -81,6 +99,7 @@ impl Mmc5 {
         Self {
             prg_rom,
             prg_ram: vec![0; WRAM_SIZE],
+            wram_index: Self::build_wram_index(wram_banks),
             chr,
             exram: vec![0; EXRAM_SIZE],
             fill_nt: vec![0; EXRAM_SIZE],
@@ -107,12 +126,16 @@ impl Mmc5 {
             split_scroll: 0,
             split_bank: 0,
             sprite_phase: false,
-            ppu_fetch_count: 0,
-            prev_fetch: 0,
-            prev_prev_fetch: 0,
-            sprite_mode: false,
             rendering_enabled: false,
             current_scanline: -1,
+            sprite_8x16: false,
+            bg_show: false,
+            mask_subst: false,
+            exattr_byte: 0,
+            split_x: 0,
+            split_y: 0,
+            split_inside: false,
+            split_line_active: false,
             new_scanline: false,
             audio,
         }
@@ -120,6 +143,27 @@ impl Mmc5 {
 
     fn prg_bank_count(&self) -> usize {
         self.prg_rom.len() / PRG_BANK_LEN
+    }
+
+    // 逻辑bank寄存器到物理WRAM块的映射，模拟不同卡带的实际WRAM容量：
+    // 0块=无WRAM，1块(8K)=bank0-3镜像，2块(16K)=bank4-7映射第二块，
+    // 4块(32K)=bank4-7未连接，8块(64K)=完全独立（fceux BuildWRAMSizeTable语义）
+    fn build_wram_index(banks: usize) -> [u8; 8] {
+        match banks {
+            0 => [255; 8],
+            1 => [0, 0, 0, 0, 255, 255, 255, 255],
+            2 => [0, 0, 0, 0, 1, 1, 1, 1],
+            4 => [0, 1, 2, 3, 255, 255, 255, 255],
+            _ => [0, 1, 2, 3, 4, 5, 6, 7],
+        }
+    }
+
+    // 当前$6000-$7FFF窗口对应的物理8K块，None=open bus
+    fn current_wram_block(&self) -> Option<usize> {
+        match self.wram_index[(self.wram_bank & 7) as usize] {
+            255 => None,
+            block => Some(block as usize),
+        }
     }
 
     fn chr_size(&self) -> usize {
@@ -168,7 +212,7 @@ impl Mmc5 {
                     (true, self.prg_banks[3] as usize & 0x7F)
                 }
             }
-            3 | _ => {
+            _ => {
                 if slot < 3 {
                     let is_rom = self.prg_banks[slot] & 0x80 != 0;
                     (is_rom, self.prg_banks[slot] as usize & 0x7F)
@@ -189,8 +233,10 @@ impl Mmc5 {
             let bank = bank_idx % bank_count;
             self.prg_rom[bank * PRG_BANK_LEN + offset]
         } else {
-            let ram_bank = bank_idx & 7; // 8 possible 8KB banks in 64KB
-            self.prg_ram[ram_bank * PRG_BANK_LEN + offset]
+            match self.wram_index[bank_idx & 7] {
+                255 => (addr >> 8) as u8, // 未连接的WRAM bank：open bus
+                block => self.prg_ram[block as usize * PRG_BANK_LEN + offset],
+            }
         }
     }
 
@@ -203,13 +249,16 @@ impl Mmc5 {
         let (is_rom, bank_idx) = self.prg_slot_bank(slot);
 
         if !is_rom {
-            let ram_bank = bank_idx & 7;
-            self.prg_ram[ram_bank * PRG_BANK_LEN + offset] = data;
+            let block = self.wram_index[bank_idx & 7];
+            if block != 255 {
+                self.prg_ram[block as usize * PRG_BANK_LEN + offset] = data;
+            }
         }
         true
     }
 
-    // CHR read using Mode A banks (sprite banks)
+    // CHR read using Mode A banks ($5120-$5127)
+    // 注意：寄存器值的单位跟随$5101当前模式的bank大小
     fn chr_index_a(&self, addr: u16) -> usize {
         let slot = (addr as usize) / CHR_BANK_1K;
         let offset = (addr as usize) & 0x03FF;
@@ -217,10 +266,12 @@ impl Mmc5 {
 
         match self.chr_mode {
             0 => {
+                // 8KB mode: $5127选择8K bank
                 let bank = self.chr_banks_a[7] as usize;
-                (bank * CHR_BANK_1K + (addr as usize)) % chr_size
+                (bank * 0x2000 + addr as usize) % chr_size
             }
             1 => {
+                // 4KB mode: $5123→$0000-$0FFF, $5127→$1000-$1FFF
                 let bank = if slot < 4 {
                     self.chr_banks_a[3] as usize
                 } else {
@@ -229,10 +280,11 @@ impl Mmc5 {
                 (bank * CHR_BANK_1K * 4 + (slot & 3) * CHR_BANK_1K + offset) % chr_size
             }
             2 => {
+                // 2KB mode: $5121/$5123/$5125/$5127
                 let bank = self.chr_banks_a[slot | 1] as usize;
                 (bank * CHR_BANK_1K * 2 + (slot & 1) * CHR_BANK_1K + offset) % chr_size
             }
-            3 | _ => {
+            _ => {
                 let bank = self.chr_banks_a[slot] as usize;
                 (bank * CHR_BANK_1K + offset) % chr_size
             }
@@ -246,14 +298,17 @@ impl Mmc5 {
 
         match self.chr_mode {
             0 => {
+                // 8KB mode: $512B选择8K bank
                 let bank = self.chr_banks_b[3] as usize;
-                (bank * CHR_BANK_1K + (addr as usize)) % chr_size
+                (bank * 0x2000 + addr as usize) % chr_size
             }
             1 => {
+                // 4KB mode: $512B同时映射到两个半区
                 let bank = self.chr_banks_b[3] as usize;
                 (bank * CHR_BANK_1K * 4 + (slot & 3) * CHR_BANK_1K + offset) % chr_size
             }
             2 => {
+                // 2KB mode: $5129→$0000/$1000, $512B→$0800/$1800
                 let bank = if slot < 4 {
                     self.chr_banks_b[1] as usize
                 } else {
@@ -261,26 +316,55 @@ impl Mmc5 {
                 };
                 (bank * CHR_BANK_1K * 2 + (slot & 1) * CHR_BANK_1K + offset) % chr_size
             }
-            3 | _ => {
+            _ => {
                 let bank = self.chr_banks_b[slot & 3] as usize;
                 (bank * CHR_BANK_1K + offset) % chr_size
             }
         }
     }
 
-    fn should_use_background_banks(&self) -> bool {
-        // 背景阶段用B banks，sprite阶段用A banks
-        !self.sprite_phase
+    // 渲染期BG/sprite pattern fetch的CHR索引选择
+    // 优先级：split区 > 扩展属性模式 > 8x16(B banks) / 8x8(A banks)
+    fn chr_fetch_index(&self, addr: u16) -> usize {
+        if self.sprite_phase {
+            // sprite pattern fetch：始终使用A banks
+            return self.chr_index_a(addr);
+        }
+        if self.rendering_enabled {
+            if self.split_inside {
+                // split区：固定4K bank（$5202，不受$5101/$5130影响）
+                let bank = self.split_bank as usize;
+                return (bank * 0x1000 + (addr as usize & 0x0FFF)) % self.chr_size();
+            }
+            if self.exram_mode == 1 {
+                // 扩展属性模式：每tile独立4K bank（ExRAM低6位 + $5130高2位）
+                let bank =
+                    (self.exattr_byte & 0x3F) as usize | ((self.chr_high_bits as usize & 3) << 6);
+                return (bank * 0x1000 + (addr as usize & 0x0FFF)) % self.chr_size();
+            }
+            if self.sprite_8x16 {
+                return self.chr_index_b(addr);
+            }
+        }
+        // 8x8模式BG也用A banks；非渲染期由ab_mode在上层决定
+        self.chr_index_a(addr)
+    }
+
+    fn split_enabled_now(&self) -> bool {
+        // split仅在ExRAM模式%00/%01、BG渲染中生效
+        (self.split_control & 0x80) != 0
+            && self.exram_mode <= 1
+            && self.bg_show
+            && self.rendering_enabled
     }
 
     fn write_chr(&mut self, addr: u16, data: u8) {
-        let use_bg_banks = self.should_use_background_banks();
-        let index = if self.sprite_mode {
+        let index = if self.rendering_enabled {
+            self.chr_fetch_index(addr)
+        } else if self.ab_mode == 0 {
             self.chr_index_a(addr)
-        } else if use_bg_banks {
-            self.chr_index_b(addr)
         } else {
-            self.chr_index_a(addr)
+            self.chr_index_b(addr)
         };
         match &mut self.chr {
             ChrMemory::Ram(c) => c[index] = data,
@@ -322,10 +406,51 @@ pub(super) fn new_mmc5(
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,
     mirroring: Mirroring,
+    wram_banks: usize,
 ) -> (Mmc5, Vec<Box<dyn ExpansionAudioChip>>) {
-    let mmc5 = Mmc5::new(prg_rom, chr_rom, mirroring);
+    let mmc5 = Mmc5::new(prg_rom, chr_rom, mirroring, wram_banks);
     let audio_chip = Mmc5AudioChip::new(mmc5.audio.clone());
     (mmc5, vec![Box::new(audio_chip)])
+}
+
+// 已知官方MMC5卡带的实际WRAM容量（8K块数），按PRG+CHR数据的CRC32匹配
+// （fceux DetectMMC5WRAMSize同表）；未知CRC默认64K
+const MMC5_WRAM_TABLE: [(u32, usize); 26] = [
+    (0x6F4E4312, 4), // Aoki Ookami to Shiroki Mejika - Genchou Hishi
+    (0x15FE6D0F, 2), // Bandit Kings of Ancient China
+    (0x671F23A8, 0), // Castlevania III (E)
+    (0xCD4E7430, 0), // Castlevania III (KC)
+    (0xED2465BE, 0), // Castlevania III (U)
+    (0xFE3488D1, 2), // Daikoukai Jidai
+    (0x0EC6C023, 1), // Gemfire
+    (0x0AFB395E, 0), // Gun Sight
+    (0x1CED086F, 2), // Ishin no Arashi
+    (0x9CBADC25, 1), // Just Breed
+    (0x6396B988, 2), // L'Empereur (J)
+    (0x9C18762B, 2), // L'Empereur (U)
+    (0xB0480AE9, 0), // Laser Invasion
+    (0xB4735FAC, 0), // Metal Slader Glory
+    (0xF540677B, 4), // Nobunaga no Yabou - Bushou Fuuun Roku
+    (0xEEE9A682, 2), // Nobunaga no Yabou - Sengoku Gunyuu Den (PRG0)
+    (0xF9B4240F, 2), // Nobunaga no Yabou - Sengoku Gunyuu Den (PRG1)
+    (0x8CE478DB, 2), // Nobunaga's Ambition 2
+    (0xF011E490, 4), // Romance of the Three Kingdoms II
+    (0xBC80FB52, 1), // Royal Blood
+    (0x184C2124, 4), // Sangokushi II (PRG0)
+    (0xEE8E6553, 4), // Sangokushi II (PRG1)
+    (0xD532E98F, 1), // Shin 4 Nin Uchi Mahjong - Yakuman Tengoku
+    (0x39F2CE4B, 2), // Suikoden - Tenmei no Chikai
+    (0xBB7F829A, 0), // Uchuu Keibitai SDF
+    (0xACA15643, 2), // Uncharted Waters
+];
+
+pub(super) fn mmc5_wram_banks(prg_chr_crc32: u32) -> usize {
+    for (crc, banks) in MMC5_WRAM_TABLE {
+        if crc == prg_chr_crc32 {
+            return banks;
+        }
+    }
+    8
 }
 
 impl Mapper for Mmc5 {
@@ -347,15 +472,22 @@ impl Mapper for Mmc5 {
                 0x5C00..=0x5FFF => Some(self.exram[(addr - 0x5C00) as usize]),
                 _ => Some(0),
             },
-            0x6000..=0x7FFF => {
-                let ram_addr =
-                    (self.wram_bank as usize & 7) * PRG_BANK_LEN + (addr - 0x6000) as usize;
-                Some(self.prg_ram[ram_addr])
-            }
+            0x6000..=0x7FFF => match self.current_wram_block() {
+                Some(block) => Some(self.prg_ram[block * PRG_BANK_LEN + (addr - 0x6000) as usize]),
+                None => Some((addr >> 8) as u8), // open bus
+            },
             0x8000..=0xFFFF => {
-                let val = self.read_prg(addr);
+                // NMI向量($FFFA/$FFFB)读取：清除in-frame标志、复位扫描线计数器、自动ack IRQ
+                // （仅NMI向量；IRQ向量$FFFE读取不能触发，否则每次中断响应都会清帧状态）
+                if matches!(addr, 0xFFFA | 0xFFFB) {
+                    if self.in_frame {
+                        self.in_frame = false;
+                        self.irq_counter = 0;
+                    }
+                    self.irq_pending = false;
+                }
 
-                Some(val)
+                Some(self.read_prg(addr))
             }
             _ => None,
         }
@@ -454,16 +586,18 @@ impl Mapper for Mmc5 {
                 true
             }
             0x5C00..=0x5FFF => {
+                // 模式%11时写入被忽略（fceux/nestopia语义；其余模式含ExAttr均允许写入）
                 if self.exram_mode != 3 {
                     self.exram[(addr - 0x5C00) as usize] = data;
                 }
                 true
             }
             0x6000..=0x7FFF => {
-                if self.wram_write_allowed() {
-                    let ram_addr =
-                        (self.wram_bank as usize & 7) * PRG_BANK_LEN + (addr - 0x6000) as usize;
-                    self.prg_ram[ram_addr] = data;
+                if let Some(block) = self
+                    .current_wram_block()
+                    .filter(|_| self.wram_write_allowed())
+                {
+                    self.prg_ram[block * PRG_BANK_LEN + (addr - 0x6000) as usize] = data;
                 }
                 true
             }
@@ -474,19 +608,14 @@ impl Mapper for Mmc5 {
 
     fn ppu_read(&mut self, addr: u16) -> Option<u8> {
         if addr < 0x2000 {
-            let index = if self.sprite_phase {
-                // 渲染中sprite阶段：使用A banks ($5120-$5127)
-                self.chr_index_a(addr)
-            } else if self.rendering_enabled {
-                // 渲染中背景阶段：使用B banks ($5128-$512B)
-                self.chr_index_b(addr)
-            } else {
+            let index = if self.rendering_enabled {
+                // 渲染期：sprite相位用A banks；BG相位按split/ExAttr/8x16/8x8选择
+                self.chr_fetch_index(addr)
+            } else if self.ab_mode == 0 {
                 // 非渲染期（$2007访问）：使用最后写入的banks组
-                if self.ab_mode == 0 {
-                    self.chr_index_a(addr)
-                } else {
-                    self.chr_index_b(addr)
-                }
+                self.chr_index_a(addr)
+            } else {
+                self.chr_index_b(addr)
             };
             Some(match &self.chr {
                 ChrMemory::Rom(c) => c[index],
@@ -529,37 +658,83 @@ impl Mapper for Mmc5 {
             return None;
         }
 
-        // MMC5扫描线检测：在每条扫描线的第一条nametable读取时更新IRQ计数器
-        // 硬件通过检测PPU读取模式在PPU cycle 4附近触发，此处近似于扫描线开始
-        if self.new_scanline {
+        let offset = (addr - 0x2000) & 0x0FFF;
+        let slot = (offset >> 10) as usize;
+        let inner = (offset & 0x03FF) as usize;
+        // 仅渲染期的BG fetch参与IRQ计数/split/扩展属性；$2007访问走普通路径
+        let bg_fetch = self.rendering_enabled && !self.sprite_phase;
+
+        // MMC5扫描线检测：每条扫描线的第一次BG nametable读取推进IRQ计数器
+        if bg_fetch && self.new_scanline {
             self.new_scanline = false;
             if !self.in_frame {
                 self.in_frame = true;
                 self.irq_counter = 0;
             } else {
                 self.irq_counter = self.irq_counter.wrapping_add(1);
-                if self.irq_counter == self.irq_scanline_target {
+                if self.irq_counter == self.irq_scanline_target && self.irq_enabled {
                     self.irq_pending = true;
                 }
             }
         }
 
-        // 每次nametable读取时重置CHR读取计数
-        // 这样每个tile的CHR读取从0开始计数
-        self.ppu_fetch_count = 0;
+        if inner < 0x3C0 {
+            // tile fetch
+            if bg_fetch {
+                // 记录该tile的ExRAM字节（扩展属性模式下提供palette+CHR bank）
+                self.exattr_byte = self.exram[inner];
 
-        self.prev_prev_fetch = self.prev_fetch;
-        self.prev_fetch = addr;
+                // vertical split：按BG tile fetch计数推进列计数器
+                if self.split_enabled_now() {
+                    self.split_x = (self.split_x + 1) & 0x1F;
+                    let threshold = self.split_control & 0x1F;
+                    // bit6=0右侧split，bit6=1左侧split
+                    let inside = if self.split_control & 0x40 == 0 {
+                        self.split_x >= threshold
+                    } else {
+                        self.split_x < threshold
+                    };
+                    self.split_inside = inside;
+                    if inside {
+                        // split区NT数据来自ExRAM，行由split自己的y决定
+                        let tile =
+                            ((u16::from(self.split_y) & 0xF8) << 2) | u16::from(self.split_x);
+                        return Some(self.exram[tile as usize]);
+                    }
+                } else {
+                    self.split_inside = false;
+                }
+            }
 
-        let offset = (addr - 0x2000) & 0x0FFF;
-        let slot = (offset >> 10) as usize;
-        let inner = (offset & 0x03FF) as usize;
+            match self.nt_source(slot) {
+                NtSource::Vram(_) => None,
+                NtSource::ExRam => Some(self.exram[inner]),
+                NtSource::Fill => Some(self.fill_nt[inner]),
+            }
+        } else {
+            // attribute fetch
+            if bg_fetch {
+                if self.split_inside {
+                    // split区属性：ExRAM属性表($3C0-$3FF)按split tile坐标取象限，
+                    // 复制到4个象限以抵消PPU按自己scroll做的象限选择
+                    let tile = ((u16::from(self.split_y) & 0xF8) << 2) | u16::from(self.split_x);
+                    let attr_addr = (0x3C0 | ((tile >> 4) & 0x38) | ((tile >> 2) & 0x07)) as usize;
+                    let shift = ((tile >> 4) & 0x4) | (tile & 0x2);
+                    let palette = (self.exram[attr_addr] >> shift) & 0x3;
+                    return Some(palette | (palette << 2) | (palette << 4) | (palette << 6));
+                }
+                if self.exram_mode == 1 {
+                    // 扩展属性模式：每tile独立palette（ExRAM高2位），复制到4个象限
+                    let palette = self.exattr_byte >> 6;
+                    return Some(palette | (palette << 2) | (palette << 4) | (palette << 6));
+                }
+            }
 
-        // 简化：只处理基本的nametable映射，不处理ExCHR
-        match self.nt_source(slot) {
-            NtSource::Vram(_) => None,
-            NtSource::ExRam => Some(self.exram[inner]),
-            NtSource::Fill => Some(self.fill_nt[inner]),
+            match self.nt_source(slot) {
+                NtSource::Vram(_) => None,
+                NtSource::ExRam => Some(self.exram[inner]),
+                NtSource::Fill => Some(self.fill_nt[inner]),
+            }
         }
     }
 
@@ -582,24 +757,16 @@ impl Mapper for Mmc5 {
     }
 
     fn irq_line(&self) -> bool {
-        self.irq_pending
+        self.irq_pending && self.irq_enabled
     }
 
     fn notify_scanline(&mut self, scanline: i16, rendering_on: bool) {
-        // 更新渲染状态
         self.rendering_enabled = rendering_on;
-
-        // 检测新扫描线
         if scanline != self.current_scanline {
             self.current_scanline = scanline;
-            // 新扫描线开始：重置为背景模式
-            if (0..240).contains(&scanline) && rendering_on {
-                self.sprite_mode = false;
-                self.ppu_fetch_count = 0;
-            }
         }
 
-        // 当渲染停止或进入VBlank时，清除帧内状态
+        // 渲染停止或进入VBlank：清除帧内状态并复位扫描线计数器
         if !rendering_on || scanline >= 241 {
             if self.in_frame {
                 self.in_frame = false;
@@ -607,20 +774,46 @@ impl Mapper for Mmc5 {
                 self.irq_pending = false;
                 self.new_scanline = false;
             }
+            self.split_line_active = false;
             return;
         }
 
-        // 标记新扫描线，IRQ计数将在ppu_read_nametable中通过nametable读取触发
+        // 可见渲染扫描线开始
         self.new_scanline = true;
+
+        // split列计数器每线复位（首个tile fetch后变为0）
+        self.split_x = 0x1F;
+        self.split_inside = false;
+        // split垂直计数器独立于$5200使能状态持续维护（游戏可能帧中启用split）
+        if self.split_line_active {
+            // 持续渲染：split垂直位置每线+1，239环绕回0
+            self.split_y = if self.split_y < 239 {
+                self.split_y + 1
+            } else {
+                0
+            };
+        } else {
+            // 渲染恢复：split垂直位置复位为$5201
+            self.split_y = self.split_scroll.min(239);
+        }
+        self.split_line_active = true;
     }
 
     fn set_ppu_sprite_phase(&mut self, sprite_phase: bool) {
-        if sprite_phase && !self.sprite_phase {
-            // 进入sprite阶段：重置fc
-            self.ppu_fetch_count = 0;
-            self.sprite_mode = false;
-        }
         self.sprite_phase = sprite_phase;
+    }
+
+    fn ppu_register_write(&mut self, addr: u16, data: u8) {
+        match addr {
+            // $2000 bit5：sprite尺寸（决定BG fetch用A还是B banks）
+            0x2000 => self.sprite_8x16 = (data & 0x20) != 0,
+            // $2001 bit3/bit4：BG/sprite显示（E位全清时禁用MMC5全部替换功能）
+            0x2001 => {
+                self.bg_show = (data & 0x08) != 0;
+                self.mask_subst = (data & 0x18) != 0;
+            }
+            _ => {}
+        }
     }
 
     fn save_state(&self, writer: &mut StateWriter) {
@@ -653,13 +846,17 @@ impl Mapper for Mmc5 {
         writer.write_u8(self.split_control);
         writer.write_u8(self.split_scroll);
         writer.write_u8(self.split_bank);
-        writer.write_u16(self.prev_fetch);
-        writer.write_u8(0u8); // exchr_latch removed
-        writer.write_u16(0u16); // exchr_cached_bank removed
-        writer.write_u8(self.ppu_fetch_count);
-        writer.write_u16(self.prev_fetch);
-        writer.write_u16(self.prev_prev_fetch);
-        writer.write_bool(self.sprite_mode);
+        writer.write_bool(self.sprite_phase);
+        writer.write_bool(self.rendering_enabled);
+        writer.write_i16(self.current_scanline);
+        writer.write_bool(self.sprite_8x16);
+        writer.write_bool(self.bg_show);
+        writer.write_bool(self.mask_subst);
+        writer.write_u8(self.exattr_byte);
+        writer.write_u8(self.split_x);
+        writer.write_u8(self.split_y);
+        writer.write_bool(self.split_inside);
+        writer.write_bool(self.split_line_active);
         writer.write_bool(self.new_scanline);
         match &self.chr {
             ChrMemory::Rom(_) => writer.write_bool(false),
@@ -700,13 +897,17 @@ impl Mapper for Mmc5 {
         self.split_control = reader.read_u8()?;
         self.split_scroll = reader.read_u8()?;
         self.split_bank = reader.read_u8()?;
-        self.prev_fetch = reader.read_u16()?;
-        let _ = reader.read_u8()?; // exchr_latch removed
-        let _ = reader.read_u16()?; // exchr_cached_bank removed
-        self.ppu_fetch_count = reader.read_u8()?;
-        self.prev_fetch = reader.read_u16()?;
-        self.prev_prev_fetch = reader.read_u16()?;
-        self.sprite_mode = reader.read_bool()?;
+        self.sprite_phase = reader.read_bool()?;
+        self.rendering_enabled = reader.read_bool()?;
+        self.current_scanline = reader.read_i16()?;
+        self.sprite_8x16 = reader.read_bool()?;
+        self.bg_show = reader.read_bool()?;
+        self.mask_subst = reader.read_bool()?;
+        self.exattr_byte = reader.read_u8()?;
+        self.split_x = reader.read_u8()?;
+        self.split_y = reader.read_u8()?;
+        self.split_inside = reader.read_bool()?;
+        self.split_line_active = reader.read_bool()?;
         self.new_scanline = reader.read_bool()?;
         let has_chr_ram = reader.read_bool()?;
         match (&mut self.chr, has_chr_ram) {

@@ -184,4 +184,8 @@ impl PPUBus for PpuMemory {
     fn set_ppu_sprite_phase(&mut self, sprite_phase: bool) {
         self.cartridge.set_ppu_sprite_phase(sprite_phase);
     }
+
+    fn ppu_register_write(&mut self, addr: u16, data: u8) {
+        self.cartridge.ppu_register_write(addr, data);
+    }
 }
