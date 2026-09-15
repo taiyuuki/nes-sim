@@ -77,6 +77,26 @@ impl Mmc3Core {
         usize::from(self.effective_chr_bank_value(slot)) % bank_count
     }
 
+    // Raw slot bank value before the board-size modulo, with the fixed slots
+    // reported as the MMC3 power-on convention $3E/$3F. Multicart derivatives
+    // transform this value before mapping it onto their (larger) PRG.
+    pub(super) fn raw_prg_bank_value(&self, slot: usize) -> usize {
+        let bank6 = usize::from(self.bank_registers[6]);
+        let bank7 = usize::from(self.bank_registers[7]);
+
+        match (self.prg_mode(), slot) {
+            (false, 0) => bank6,
+            (false, 1) => bank7,
+            (false, 2) => 0x3E,
+            (false, 3) => 0x3F,
+            (true, 0) => 0x3E,
+            (true, 1) => bank7,
+            (true, 2) => bank6,
+            (true, 3) => 0x3F,
+            _ => unreachable!(),
+        }
+    }
+
     pub(super) fn prg_ram_enabled(&self) -> bool {
         self.prg_ram_enabled
     }

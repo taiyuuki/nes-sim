@@ -480,3 +480,348 @@ fn mmc3_filters_eight_cycle_low_periods_between_sparse_sprite_fetches() {
     cartridge.check_a12(0x1000, 26);
     assert!(cartridge.irq_line());
 }
+
+fn make_ines_mapper(prg_rom: &[u8], chr_rom: &[u8], mapper_id: u8) -> Vec<u8> {
+    assert_eq!(prg_rom.len() % PRG_BANK_LEN, 0);
+    assert_eq!(chr_rom.len() % CHR_BANK_LEN, 0);
+
+    let mut rom = vec![0; INES_HEADER_LEN];
+    rom[0..4].copy_from_slice(b"NES\x1A");
+    rom[4] = (prg_rom.len() / PRG_BANK_LEN) as u8;
+    rom[5] = (chr_rom.len() / CHR_BANK_LEN) as u8;
+    rom[6] = ((mapper_id & 0x0F) << 4) | 0x01;
+    rom[7] = mapper_id & 0xF0;
+    rom.extend_from_slice(prg_rom);
+    rom.extend_from_slice(chr_rom);
+    rom
+}
+
+fn tagged_prg_rom(bank_count: usize, bank_len: usize) -> Vec<u8> {
+    let mut rom = Vec::with_capacity(bank_count * bank_len);
+    for bank in 0..bank_count {
+        rom.extend(std::iter::repeat_n((bank % 0x100) as u8, bank_len));
+    }
+    rom
+}
+
+fn tagged_chr_rom(bank_count: usize, bank_len: usize) -> Vec<u8> {
+    tagged_prg_rom(bank_count, bank_len)
+}
+
+#[test]
+fn mapper37_offsets_mmc3_banks_with_multicart_register() {
+    let prg_rom = tagged_prg_rom(32, 0x2000);
+    let chr_rom = tagged_chr_rom(256, 0x0400);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 37);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 37 should parse");
+
+    assert!(cartridge.cpu_write(0x8000, 0x06));
+    assert!(cartridge.cpu_write(0x8001, 0x05));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x05));
+
+    assert!(cartridge.cpu_write(0x6000, 0x03));
+    // exReg 3: 0x08 (exReg & 3 == 3) | (5 & 7) = 13; exReg<<2 & 0x10 is 0 here.
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x0D));
+    // Fixed slot raw $3E: 0x08 | (0x3E & 7)
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x0E));
+
+    assert!(cartridge.cpu_write(0x8000, 0x00));
+    assert!(cartridge.cpu_write(0x8001, 0x03));
+    // CHR slot 0 uses effective value 2; (exReg<<5 & 0x80) is always 0 for
+    // the 3-bit register, so the offset only comes from the MMC3 value.
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x02));
+    assert_eq!(cartridge.ppu_read(0x0400), Some(0x03));
+}
+
+#[test]
+fn mapper47_selects_128k_half_via_multicart_register() {
+    let prg_rom = tagged_prg_rom(32, 0x2000);
+    let chr_rom = tagged_chr_rom(256, 0x0400);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 47);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 47 should parse");
+
+    assert!(cartridge.cpu_write(0x8000, 0x06));
+    assert!(cartridge.cpu_write(0x8001, 0x05));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x05));
+
+    assert!(cartridge.cpu_write(0x6000, 0x01));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x15));
+
+    assert!(cartridge.cpu_write(0x6000, 0x00));
+    assert!(cartridge.cpu_write(0x8000, 0x00));
+    assert!(cartridge.cpu_write(0x8001, 0x03));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x02));
+    assert!(cartridge.cpu_write(0x6000, 0x01));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x82));
+}
+
+#[test]
+fn mapper49_switches_between_32k_and_mmc3_modes() {
+    let prg_rom = tagged_prg_rom(64, 0x2000);
+    let chr_rom = tagged_chr_rom(128, 0x0400);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 49);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 49 should parse");
+
+    // Without $A001 bit 7 the multicart register stays inert.
+    assert!(cartridge.cpu_write(0xA001, 0x00));
+    assert!(cartridge.cpu_write(0x6000, 0x14));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x02));
+
+    assert!(cartridge.cpu_write(0xA001, 0x80));
+    assert!(cartridge.cpu_write(0x6000, 0x01));
+    // MMC3 8K mode with game base 0: bank register 6 default 0, fixed $3F masked to 0x0F.
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    assert_eq!(cartridge.cpu_read(0xE000), Some(0x0F));
+
+    assert!(cartridge.cpu_write(0x8000, 0x06));
+    assert!(cartridge.cpu_write(0x8001, 0x0B));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x0B));
+
+    // 32K direct mode through bit 4 of the multicart register (bank 2 of 16).
+    assert!(cartridge.cpu_write(0x6000, 0x20));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x08));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x0A));
+
+    // CHR: reg0 = 3 makes slot 0 use effective value 2; exReg 1 adds bit 8.
+    assert!(cartridge.cpu_write(0x8000, 0x00));
+    assert!(cartridge.cpu_write(0x8001, 0x03));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x02));
+}
+
+#[test]
+fn mapper206_banks_prg_and_fixed_chr_layout() {
+    let prg_rom = tagged_prg_rom(16, 0x2000);
+    let chr_rom = tagged_chr_rom(64, 0x0400);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 206);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 206 should parse");
+
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x0E));
+    assert_eq!(cartridge.cpu_read(0xE000), Some(0x0F));
+
+    assert!(cartridge.cpu_write(0x8000, 0x06));
+    assert!(cartridge.cpu_write(0x8001, 0x22));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x02));
+
+    // CHR register 0 is a 4K value shifted into 2K banks.
+    assert!(cartridge.cpu_write(0x8000, 0x00));
+    assert!(cartridge.cpu_write(0x8001, 0x3F));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x3E));
+    assert_eq!(cartridge.ppu_read(0x0800), Some(0x00));
+    assert!(cartridge.cpu_write(0x8000, 0x02));
+    assert!(cartridge.cpu_write(0x8001, 0x05));
+    assert_eq!(cartridge.ppu_read(0x1000), Some(0x05));
+}
+
+#[test]
+fn mapper105_selects_prg_chip_and_runs_countdown_irq() {
+    let prg_rom = tagged_prg_rom(16, 0x4000);
+    let rom = make_ines_mapper(&prg_rom, &[], 105);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 105 should parse");
+
+    // Default: 32K mode over the lower chip, $8000-$FFFF = banks 0-1.
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x01));
+
+    // CHR bank 0 bit 3 switches to the upper chip (MMC1 mode 0xC).
+    write_mmc1_register(&mut cartridge, 0xA000, 0x08);
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x08));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x0F));
+
+    write_mmc1_register(&mut cartridge, 0xE000, 0x05);
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x0D));
+
+    // Clearing bit 3 returns to 32K banking from CHR bank 0 (bank 1).
+    write_mmc1_register(&mut cartridge, 0xA000, 0x02);
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x02));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x03));
+
+    // Arming (bit 4 clear) starts the countdown; one cycle short is quiet.
+    write_mmc1_register(&mut cartridge, 0xA000, 0x08);
+    for _ in 0..(16 * 20 - 2) {
+        cartridge.tick_cpu_cycle();
+    }
+    assert!(!cartridge.irq_line());
+    cartridge.tick_cpu_cycle();
+    assert!(cartridge.irq_line());
+
+    // Committing bit 4 stops the timer and releases the IRQ.
+    write_mmc1_register(&mut cartridge, 0xA000, 0x18);
+    assert!(!cartridge.irq_line());
+
+    // WRAM is live at $6000 and CHR RAM accepts writes.
+    assert!(cartridge.cpu_write(0x6000, 0x42));
+    assert_eq!(cartridge.cpu_read(0x6000), Some(0x42));
+    assert!(cartridge.ppu_write(0x0010, 0x99));
+    assert_eq!(cartridge.ppu_read(0x0010), Some(0x99));
+}
+
+#[test]
+fn mapper200_banks_prg_chr_and_mirroring_from_address() {
+    let prg_rom = tagged_prg_rom(8, 0x4000);
+    let chr_rom = tagged_chr_rom(8, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 200);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 200 should parse");
+
+    assert!(cartridge.cpu_write(0x8013, 0x00));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x03));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x03));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x03));
+    assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
+
+    assert!(cartridge.cpu_write(0x800B, 0x00));
+    assert_eq!(cartridge.mirroring(), Mirroring::Horizontal);
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x03));
+}
+
+#[test]
+fn mapper201_shares_bank_number_between_prg_and_chr() {
+    let prg_rom = tagged_prg_rom(4, 0x8000);
+    let chr_rom = tagged_chr_rom(4, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 201);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 201 should parse");
+
+    assert!(cartridge.cpu_write(0x8002, 0x00));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x02));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x02));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x02));
+    assert_eq!(cartridge.ppu_read(0x1FFF), Some(0x02));
+}
+
+#[test]
+fn mapper225_switches_prg_width_banks_chr_and_mirroring() {
+    let prg_rom = tagged_prg_rom(64, 0x4000);
+    let chr_rom = tagged_chr_rom(64, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 225);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 225 should parse");
+
+    // 16K mode: bit 12 set, bank (addr>>7 & 0x1F) = 2 doubled with bit 6 -> 5.
+    assert!(cartridge.cpu_write(0x9140, 0x00));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x05));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x05));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x00));
+    assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
+
+    // 32K mode with bit 13 requesting horizontal mirroring; bank (addr>>7 & 0x1F) = 1.
+    assert!(cartridge.cpu_write(0xA080, 0x00));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x02));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x03));
+    assert_eq!(cartridge.mirroring(), Mirroring::Horizontal);
+}
+
+#[test]
+fn mapper226_combines_two_data_latches() {
+    let prg_rom = tagged_prg_rom(64, 0x4000);
+    let chr_rom = tagged_chr_rom(4, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 226);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 226 should parse");
+
+    assert!(cartridge.cpu_write(0x8000, 0x21));
+    assert!(cartridge.cpu_write(0x8001, 0x01));
+    // 16K mode (reg0 bit 5): only (0x01<<5 & 0x20) contributes 0x20, doubled
+    // plus bit 0 -> 0x41, which wraps to bank 1.
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x01));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x01));
+    assert_eq!(cartridge.mirroring(), Mirroring::Horizontal);
+
+    assert!(cartridge.cpu_write(0x8000, 0x40));
+    // 32K mode: bank 0x20 wraps to 0, vertical mirroring.
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x01));
+    assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
+
+    // CHR is a fixed window over the first bank.
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x00));
+    assert_eq!(cartridge.ppu_read(0x1FFF), Some(0x00));
+}
+
+#[test]
+fn mapper229_defaults_banks_zero_one_when_low_bits_clear() {
+    let prg_rom = tagged_prg_rom(32, 0x4000);
+    let chr_rom = tagged_chr_rom(32, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 229);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 229 should parse");
+
+    assert!(cartridge.cpu_write(0x8000, 0x00));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x01));
+
+    assert!(cartridge.cpu_write(0x8005, 0x00));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x05));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x05));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x05));
+    assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
+
+    assert!(cartridge.cpu_write(0x8025, 0x00));
+    assert_eq!(cartridge.mirroring(), Mirroring::Horizontal);
+}
+
+#[test]
+fn mapper240_latches_data_below_6000() {
+    let prg_rom = tagged_prg_rom(16, 0x8000);
+    let chr_rom = tagged_chr_rom(16, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 240);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 240 should parse");
+
+    assert!(cartridge.cpu_write(0x4020, 0x21));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x02));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x02));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x01));
+
+    assert!(cartridge.cpu_write(0x6000, 0x77));
+    assert_eq!(cartridge.cpu_read(0x6000), Some(0x77));
+}
+
+#[test]
+fn mapper241_banks_32k_prg_from_written_data() {
+    let prg_rom = tagged_prg_rom(32, 0x4000);
+    let chr_rom = tagged_chr_rom(4, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 241);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 241 should parse");
+
+    assert!(cartridge.cpu_write(0x8000, 0x03));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x06));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x07));
+
+    assert!(cartridge.cpu_write(0x6000, 0x5A));
+    assert_eq!(cartridge.cpu_read(0x6000), Some(0x5A));
+
+    // Fixed CHR window over the first bank.
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x00));
+}
+
+#[test]
+fn mapper242_banks_prg_from_address_bits() {
+    let prg_rom = tagged_prg_rom(32, 0x4000);
+    let chr_rom = tagged_chr_rom(4, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 242);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 242 should parse");
+
+    assert!(cartridge.cpu_write(0x8018, 0x00));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x06));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x07));
+    assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
+
+    assert!(cartridge.cpu_write(0x801A, 0x00));
+    assert_eq!(cartridge.mirroring(), Mirroring::Horizontal);
+
+    assert!(cartridge.cpu_write(0x6000, 0x33));
+    assert_eq!(cartridge.cpu_read(0x6000), Some(0x33));
+}
+
+#[test]
+fn mapper244_banks_through_specific_address_ranges() {
+    let prg_rom = tagged_prg_rom(8, 0x4000);
+    let chr_rom = tagged_chr_rom(8, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 244);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 244 should parse");
+
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+
+    assert!(cartridge.cpu_write(0x8067, 0x00));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x04));
+
+    assert!(cartridge.cpu_write(0x80A7, 0x00));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x02));
+}

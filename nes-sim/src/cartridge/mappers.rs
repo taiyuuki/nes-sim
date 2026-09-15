@@ -16,6 +16,7 @@ mod irem_tams1;
 mod jaleco140;
 mod jf13;
 mod jf19;
+mod mapper105;
 mod mapper107;
 mod mapper115;
 mod mapper118;
@@ -23,8 +24,21 @@ mod mapper15;
 mod mapper152;
 mod mapper162;
 mod mapper182;
+mod mapper200;
+mod mapper201;
+mod mapper206;
+mod mapper225;
+mod mapper226;
+mod mapper229;
+mod mapper240;
+mod mapper241;
+mod mapper242;
+mod mapper244;
 mod mapper36;
+mod mapper37;
 mod mapper46;
+mod mapper47;
+mod mapper49;
 mod mapper62;
 mod mapper70;
 mod mapper72;
@@ -81,7 +95,10 @@ use self::jf13::Jf13;
 use self::jf19::Jf19;
 use self::mapper15::Mapper15;
 use self::mapper36::Mapper36;
+use self::mapper37::Mapper37;
 use self::mapper46::Mapper46;
+use self::mapper47::Mapper47;
+use self::mapper49::Mapper49;
 use self::mapper62::Mapper62;
 use self::mapper70::Mapper70;
 use self::mapper72::Mapper72;
@@ -89,12 +106,23 @@ use self::mapper74::Mapper74;
 use self::mapper78::Mapper78;
 use self::mapper87::Mapper87;
 use self::mapper94::Mapper94;
+use self::mapper105::Mapper105;
 use self::mapper107::Mapper107;
 use self::mapper115::Mapper115;
 use self::mapper118::Mapper118;
 use self::mapper152::Mapper152;
 use self::mapper162::Mapper162;
 use self::mapper182::Mapper182;
+use self::mapper200::Mapper200;
+use self::mapper201::Mapper201;
+use self::mapper206::Mapper206;
+use self::mapper225::Mapper225;
+use self::mapper226::Mapper226;
+use self::mapper229::Mapper229;
+use self::mapper240::Mapper240;
+use self::mapper241::Mapper241;
+use self::mapper242::Mapper242;
+use self::mapper244::Mapper244;
 use self::mmc1::Mmc1;
 use self::mmc2::Mmc2;
 use self::mmc3::Mmc3;
@@ -275,6 +303,20 @@ macro_rules! dispatch_mapper {
             Self::Mapper115(m) => m.$method($($arg),*),
             Self::Mapper152(m) => m.$method($($arg),*),
             Self::Mapper162(m) => m.$method($($arg),*),
+            Self::Mapper37(m) => m.$method($($arg),*),
+            Self::Mapper47(m) => m.$method($($arg),*),
+            Self::Mapper49(m) => m.$method($($arg),*),
+            Self::Mapper105(m) => m.$method($($arg),*),
+            Self::Mapper206(m) => m.$method($($arg),*),
+            Self::Mapper200(m) => m.$method($($arg),*),
+            Self::Mapper201(m) => m.$method($($arg),*),
+            Self::Mapper225(m) => m.$method($($arg),*),
+            Self::Mapper226(m) => m.$method($($arg),*),
+            Self::Mapper229(m) => m.$method($($arg),*),
+            Self::Mapper240(m) => m.$method($($arg),*),
+            Self::Mapper241(m) => m.$method($($arg),*),
+            Self::Mapper242(m) => m.$method($($arg),*),
+            Self::Mapper244(m) => m.$method($($arg),*),
         }
     };
 }
@@ -345,6 +387,20 @@ pub(super) enum MapperEnum {
     Mapper115(Mapper115),
     Mapper152(Mapper152),
     Mapper162(Mapper162),
+    Mapper37(Mapper37),
+    Mapper47(Mapper47),
+    Mapper49(Mapper49),
+    Mapper105(Mapper105),
+    Mapper206(Mapper206),
+    Mapper200(Mapper200),
+    Mapper201(Mapper201),
+    Mapper225(Mapper225),
+    Mapper226(Mapper226),
+    Mapper229(Mapper229),
+    Mapper240(Mapper240),
+    Mapper241(Mapper241),
+    Mapper242(Mapper242),
+    Mapper244(Mapper244),
 }
 
 impl MapperEnum {
@@ -539,12 +595,24 @@ pub(super) fn from_mapper_id(
             MapperEnum::Mapper36(Mapper36::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
+        37 => Ok((
+            MapperEnum::Mapper37(Mapper37::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         38 => Ok((
             MapperEnum::BitCorp38(BitCorp38::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         46 => Ok((
             MapperEnum::Mapper46(Mapper46::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        47 => Ok((
+            MapperEnum::Mapper47(Mapper47::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        49 => Ok((
+            MapperEnum::Mapper49(Mapper49::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         48 => Ok((
@@ -659,6 +727,10 @@ pub(super) fn from_mapper_id(
             MapperEnum::IremTamS1(IremTamS1::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
+        105 => Ok((
+            MapperEnum::Mapper105(Mapper105::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         107 => Ok((
             MapperEnum::Mapper107(Mapper107::new(prg_rom, chr_rom, mirroring)),
             vec![],
@@ -713,6 +785,46 @@ pub(super) fn from_mapper_id(
         )),
         185 => Ok((
             MapperEnum::Sunsoft185(Sunsoft185::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        200 => Ok((
+            MapperEnum::Mapper200(Mapper200::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        201 => Ok((
+            MapperEnum::Mapper201(Mapper201::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        206 => Ok((
+            MapperEnum::Mapper206(Mapper206::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        225 => Ok((
+            MapperEnum::Mapper225(Mapper225::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        226 => Ok((
+            MapperEnum::Mapper226(Mapper226::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        229 => Ok((
+            MapperEnum::Mapper229(Mapper229::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        240 => Ok((
+            MapperEnum::Mapper240(Mapper240::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        241 => Ok((
+            MapperEnum::Mapper241(Mapper241::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        242 => Ok((
+            MapperEnum::Mapper242(Mapper242::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        244 => Ok((
+            MapperEnum::Mapper244(Mapper244::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
 

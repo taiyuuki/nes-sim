@@ -107,9 +107,12 @@ cargo run --release -p nes-desktop -- "game.nes"
 - 33/48 (Taito TC0190)
 - 34 (BNROM)
 - 36
+- 37 (ZZ multicart)
 - 38
 - 46
+- 47 (QJ multicart)
 - 48
+- 49 (SuperHiK 4-in-1)
 - 62
 - 64
 - 65 (Irem H-3001)
@@ -137,6 +140,7 @@ cargo run --release -p nes-desktop -- "game.nes"
 - 93
 - 94
 - 97 (Irem Tam S1)
+- 105 (Nintendo World Championship)
 - 107
 - 112
 - 113
@@ -151,3 +155,13 @@ cargo run --release -p nes-desktop -- "game.nes"
 - 182
 - 184
 - 185
+- 200 (BMC 36-in-1)
+- 201 (BMC 21-in-1)
+- 206 (DE1ROM)
+- 225 (BMC 72-in-1)
+- 226 (BMC 76-in-1)
+- 229 (BMC 31-in-1)
+- 240 (CNE Shui Hu Zhuan)
+- 241 (TXC MXMDHTWO)
+- 242 (Waixing DQVII)
+- 244 (CNE Decathlon)

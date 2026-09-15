@@ -1262,3 +1262,42 @@ fn accuracy_coin_page_fourteen_delta_modulation_channel_passes() {
         failures.join("\n")
     );
 }
+
+#[test]
+#[ignore = "ROM smoke test for DE1ROM game boot output"]
+fn karnov_de1rom_rom_boot_renders_visible_output() {
+    assert_rom_boots_with_visible_output("roms/mapper_206/Karnov (U).nes", 240);
+}
+
+#[test]
+#[ignore = "ROM smoke test for CNE SHLZ game boot output"]
+fn jingke_xinzhuan_cne_shlz_rom_boot_renders_visible_output() {
+    assert_rom_boots_with_visible_output("roms/mapper_240/Jing Ke Xin Zhuan (ChT) [!].nes", 240);
+}
+
+#[test]
+#[ignore = "ROM smoke test for Waixing DQVII board boot output"]
+fn dq8_waixing_dqvii_rom_boot_renders_visible_output() {
+    assert_rom_boots_with_visible_output(
+        "roms/mapper_242/Dragon Quest VIII (ES1077) (ChS) [!].nes",
+        300,
+    );
+}
+
+#[test]
+#[ignore = "ROM smoke test for CNE Decathlon board boot output"]
+fn decathlon_cne_rom_boot_renders_visible_output() {
+    assert_rom_boots_with_visible_output("roms/mapper_244/Decathlon (As).nes", 240);
+}
+
+fn assert_rom_boots_with_visible_output(path: &str, frames: usize) {
+    let Some(nes) = boot_rom(path, frames) else {
+        return;
+    };
+
+    assert!(
+        visible_frame_has_non_background_content(&nes),
+        "expected {path} boot sequence to render visible non-zero palette indices by frame {}",
+        nes.frame_number()
+    );
+}
