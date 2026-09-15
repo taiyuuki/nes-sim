@@ -134,7 +134,13 @@ impl Mmc5Audio {
             0x5006 => self.pulse2.write_timer_low(data),
             0x5007 => self.pulse2.write_timer_high(data),
             0x5010 => self.pcm_control = data,
-            0x5011 => self.pcm_value = data & 0x7F,
+            0x5011 => {
+                // $5011是完整的8位DAC（全8位有效，区别于APU $4011的7位）。
+                // 硬件语义：写$00不改变DAC当前输出；读模式（$5010 bit0=1）下写入被忽略
+                if self.pcm_control & 0x01 == 0 && data != 0 {
+                    self.pcm_value = data;
+                }
+            }
             0x5015 => {
                 self.enable = data & 0x03;
                 if (data & 0x01) == 0 {
@@ -179,11 +185,6 @@ impl Mmc5Audio {
     pub(crate) fn output(&self) -> f32 {
         let p1 = self.pulse1.output() as f32;
         let p2 = self.pulse2.output() as f32;
-        let pcm = if (self.pcm_control & 0x40) == 0 && self.pcm_value != 0 {
-            self.pcm_value as f32
-        } else {
-            0.0
-        };
         // MMC5 pulse mixing: similar to APU pulse mix formula
         let pulse = p1 + p2;
         let pulse_mix = if pulse > 0.0 {
@@ -191,7 +192,8 @@ impl Mmc5Audio {
         } else {
             0.0
         };
-        pulse_mix + pcm / 127.0 * 0.2
+        // PCM是8-bit无符号（中点0x80）；利用第8位时音量最高可达APU等效输入的两倍
+        pulse_mix + self.pcm_value as f32 * (0.4 / 255.0)
     }
 }
 
