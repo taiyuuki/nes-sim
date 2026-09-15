@@ -10,7 +10,7 @@ homepage = "https://github.com/taiyuuki/nes-sim"
 keywords = ["nes", "game", "emulator", "nintendo"]
 
 [workspace.dependencies]
-nes-sim = { version = "0.1.1", path = "nes-sim" }
+nes-sim = { version = "0.2.0", path = "nes-sim" }
 cpal = "0.18.2"
 minifb = "0.28.0"
 
