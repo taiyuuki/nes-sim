@@ -691,6 +691,17 @@ fn ff3_chinese_mmc5_rom_boot_frame_matches_reference_hash() {
 }
 
 #[test]
+#[ignore = "ROM smoke test for MMC5 Chinese-translated RPG title screen (NES 2.0 32K CHR-RAM)"]
+fn ff2_chinese_mmc5_rom_title_frame_matches_reference_hash() {
+    assert_rom_boot_frame_hash(
+        "roms/mapper_005/Final Fantasy II (J) [T+ChS_LSP][20250316].nes",
+        900,
+        0xFEE6B5453931D3C4,
+        "out/failed-ff2-chinese-title.ppm",
+    );
+}
+
+#[test]
 #[ignore = "ROM smoke test for MMC5 ExRAM test ROM result screen"]
 fn mmc5_exram_test_rom_result_matches_reference_hash() {
     assert_rom_boot_frame_hash(

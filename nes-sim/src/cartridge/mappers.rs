@@ -441,6 +441,7 @@ pub(super) fn from_mapper_id(
     mirroring: Mirroring,
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,
+    chr_ram_len: usize,
 ) -> Result<(MapperEnum, Vec<Box<dyn ExpansionAudioChip>>), CartridgeError> {
     match mapper_id {
         0 => Ok((
@@ -473,7 +474,13 @@ pub(super) fn from_mapper_id(
         )),
         5 => {
             let crc32 = crc32_concat(&prg_rom, &chr_rom);
-            let (mapper, chips) = new_mmc5(prg_rom, chr_rom, mirroring, mmc5_wram_banks(crc32));
+            let (mapper, chips) = new_mmc5(
+                prg_rom,
+                chr_rom,
+                mirroring,
+                mmc5_wram_banks(crc32),
+                chr_ram_len,
+            );
             Ok((MapperEnum::Mmc5(mapper), chips))
         }
         7 => Ok((

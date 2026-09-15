@@ -87,9 +87,12 @@ impl Mmc5 {
         chr_rom: Vec<u8>,
         _mirroring: Mirroring,
         wram_banks: usize,
+        chr_ram_len: usize,
     ) -> Self {
         let chr = if chr_rom.is_empty() {
-            ChrMemory::Ram(vec![0; CHR_BANK_LEN])
+            // NES 2.0头可声明大于8K的CHR-RAM（如FF2/FF3汉化版为32K，
+            // 其分块字库依赖bank 8+所在的物理空间，按8K折返会导致数据互相覆盖）
+            ChrMemory::Ram(vec![0; chr_ram_len.max(CHR_BANK_LEN)])
         } else {
             ChrMemory::Rom(chr_rom)
         };
@@ -407,8 +410,9 @@ pub(super) fn new_mmc5(
     chr_rom: Vec<u8>,
     mirroring: Mirroring,
     wram_banks: usize,
+    chr_ram_len: usize,
 ) -> (Mmc5, Vec<Box<dyn ExpansionAudioChip>>) {
-    let mmc5 = Mmc5::new(prg_rom, chr_rom, mirroring, wram_banks);
+    let mmc5 = Mmc5::new(prg_rom, chr_rom, mirroring, wram_banks, chr_ram_len);
     let audio_chip = Mmc5AudioChip::new(mmc5.audio.clone());
     (mmc5, vec![Box::new(audio_chip)])
 }

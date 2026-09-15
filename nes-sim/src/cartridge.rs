@@ -211,12 +211,16 @@ impl CartridgeHeader {
         let chr_rom_size =
             decode_nes20_rom_size(raw[5] as u16, (raw[9] as u16) >> 4, PRG_BANK_LEN as u16);
 
-        let trainer_size = if (raw[6] & 0x04) != 0 { total_len } else { 0 };
-        let required_bytes =
-            INES_HEADER_LEN + trainer_size + (prg_rom_size + chr_rom_size) as usize;
-
-        if required_bytes <= total_len {
-            format = RomFormat::INES;
+        // 规范NES 2.0头（flags7位2-3=%10）按标准信任；
+        // 只有当按NES 2.0指数解码出的容量与文件实际大小矛盾时（常见于
+        // 老dump在byte7高位塞了垃圾位的情况）才回退按iNES 1.0解析。
+        if matches!(format, RomFormat::NES20) {
+            let trainer_size = if (raw[6] & 0x04) != 0 { total_len } else { 0 };
+            let required_bytes =
+                INES_HEADER_LEN + trainer_size + (prg_rom_size + chr_rom_size) as usize;
+            if required_bytes > total_len {
+                format = RomFormat::INES;
+            }
         }
 
         let mirroring = decode_mirroring(raw[6]);
@@ -366,8 +370,19 @@ impl Cartridge {
 
         let prg_rom = rom[data_start..data_start + prg_len].to_vec();
         let chr_rom = rom[data_start + prg_len..data_end].to_vec();
-        let (mapper, expansion_chips) =
-            from_mapper_id(header.mapper_id, header.mirroring, prg_rom, chr_rom)?;
+        // NES 2.0头可声明CHR-RAM实际容量（64<<shift字节）；未声明时按惯例8K
+        let chr_ram_len = if header.chr_ram_size > CHR_BANK_LEN as u32 {
+            header.chr_ram_size as usize
+        } else {
+            CHR_BANK_LEN
+        };
+        let (mapper, expansion_chips) = from_mapper_id(
+            header.mapper_id,
+            header.mirroring,
+            prg_rom,
+            chr_rom,
+            chr_ram_len,
+        )?;
 
         Ok(Self {
             mapper,

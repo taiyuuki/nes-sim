@@ -24,6 +24,11 @@ publish = "cargo publish -p nes-sim"
 
 [lints.clippy]
 upper_case_acronyms = "allow"
+
 [[example]]
 name = "trace_bp"
+required-features = ["debug"]
+
+[[example]]
+name = "chr_dump"
 required-features = ["debug"]
