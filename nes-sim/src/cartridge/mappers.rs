@@ -464,14 +464,6 @@ pub(super) fn from_mapper_id(
             MapperEnum::Mmc3(Mmc3::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
-        9 => Ok((
-            MapperEnum::Mmc2(Mmc2::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        10 => Ok((
-            MapperEnum::Mmc4(Mmc4::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
         5 => {
             let crc32 = crc32_concat(&prg_rom, &chr_rom);
             let (mapper, chips) = new_mmc5(
@@ -487,12 +479,32 @@ pub(super) fn from_mapper_id(
             MapperEnum::Anrom(Anrom::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
+        9 => Ok((
+            MapperEnum::Mmc2(Mmc2::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        10 => Ok((
+            MapperEnum::Mmc4(Mmc4::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         11 => Ok((
             MapperEnum::ColorDreams(ColorDreams::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         13 => Ok((
             MapperEnum::CpROM(CpROM::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        15 => Ok((
+            MapperEnum::Mapper15(Mapper15::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        16 | 159 => Ok((
+            MapperEnum::Bandai(Bandai::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        18 => Ok((
+            MapperEnum::Ss8805(Ss8805::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         19 => {
@@ -511,16 +523,52 @@ pub(super) fn from_mapper_id(
             let (mapper, chips) = new_vrc6(prg_rom, chr_rom, mirroring, mapper_id);
             Ok((MapperEnum::Vrc6(mapper), chips))
         }
+        32 => Ok((
+            MapperEnum::IremG101(IremG101::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        33 => Ok((
+            MapperEnum::Taito0190(Taito0190::new(prg_rom, chr_rom, mirroring, false)),
+            vec![],
+        )),
         34 => Ok((
             MapperEnum::Bnrom(Bnrom::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        36 => Ok((
+            MapperEnum::Mapper36(Mapper36::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        38 => Ok((
+            MapperEnum::BitCorp38(BitCorp38::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        46 => Ok((
+            MapperEnum::Mapper46(Mapper46::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        48 => Ok((
+            MapperEnum::Taito0190(Taito0190::new(prg_rom, chr_rom, mirroring, true)),
+            vec![],
+        )),
+        62 => Ok((
+            MapperEnum::Mapper62(Mapper62::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         64 => Ok((
             MapperEnum::Rambo1(Rambo1::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
+        65 => Ok((
+            MapperEnum::IremH3001(IremH3001::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         66 => Ok((
             MapperEnum::Gxrom(Gxrom::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        67 => Ok((
+            MapperEnum::Sunsoft3(Sunsoft3::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         68 => Ok((
@@ -531,100 +579,12 @@ pub(super) fn from_mapper_id(
             let (mapper, chips) = new_fme7(prg_rom, chr_rom, mirroring);
             Ok((MapperEnum::Fme7(mapper), chips))
         }
-        71 => Ok((
-            MapperEnum::Camerica(Camerica::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        78 => Ok((
-            MapperEnum::Mapper78(Mapper78::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        79 => Ok((
-            MapperEnum::Nina003(Nina003::new(prg_rom, chr_rom, mirroring, false)),
-            vec![],
-        )),
-        87 => Ok((
-            MapperEnum::Mapper87(Mapper87::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        113 => Ok((
-            MapperEnum::Nina003(Nina003::new(prg_rom, chr_rom, mirroring, true)),
-            vec![],
-        )),
-        118 => Ok((
-            MapperEnum::Mapper118(Mapper118::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        119 => Ok((
-            MapperEnum::Tqrom(Tqrom::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        33 => Ok((
-            MapperEnum::Taito0190(Taito0190::new(prg_rom, chr_rom, mirroring, false)),
-            vec![],
-        )),
-        48 => Ok((
-            MapperEnum::Taito0190(Taito0190::new(prg_rom, chr_rom, mirroring, true)),
-            vec![],
-        )),
-        67 => Ok((
-            MapperEnum::Sunsoft3(Sunsoft3::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        80 => Ok((
-            MapperEnum::TaitoX1005(TaitoX1005::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        88 => Ok((
-            MapperEnum::Namco3433(Namco3433::new(prg_rom, chr_rom, mirroring, false)),
-            vec![],
-        )),
-        154 => Ok((
-            MapperEnum::Namco3433(Namco3433::new(prg_rom, chr_rom, mirroring, true)),
-            vec![],
-        )),
-        32 => Ok((
-            MapperEnum::IremG101(IremG101::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        65 => Ok((
-            MapperEnum::IremH3001(IremH3001::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        76 => Ok((
-            MapperEnum::Irem76(Irem76::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        86 => Ok((
-            MapperEnum::Jf13(Jf13::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
         70 => Ok((
             MapperEnum::Mapper70(Mapper70::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
-        82 => Ok((
-            MapperEnum::TaitoX1017(TaitoX1017::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        92 => Ok((
-            MapperEnum::Jf19(Jf19::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        97 => Ok((
-            MapperEnum::IremTamS1(IremTamS1::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        36 => Ok((
-            MapperEnum::Mapper36(Mapper36::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        46 => Ok((
-            MapperEnum::Mapper46(Mapper46::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        62 => Ok((
-            MapperEnum::Mapper62(Mapper62::new(prg_rom, chr_rom, mirroring)),
+        71 => Ok((
+            MapperEnum::Camerica(Camerica::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         72 => Ok((
@@ -643,12 +603,60 @@ pub(super) fn from_mapper_id(
             MapperEnum::Vrc1(Vrc1::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
+        76 => Ok((
+            MapperEnum::Irem76(Irem76::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        78 => Ok((
+            MapperEnum::Mapper78(Mapper78::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        79 => Ok((
+            MapperEnum::Nina003(Nina003::new(prg_rom, chr_rom, mirroring, false)),
+            vec![],
+        )),
+        80 => Ok((
+            MapperEnum::TaitoX1005(TaitoX1005::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        82 => Ok((
+            MapperEnum::TaitoX1017(TaitoX1017::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        85 => {
+            let (mapper, chips) = new_vrc7(prg_rom, chr_rom, mirroring);
+            Ok((MapperEnum::Vrc7(mapper), chips))
+        }
+        86 => Ok((
+            MapperEnum::Jf13(Jf13::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        87 => Ok((
+            MapperEnum::Mapper87(Mapper87::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        88 => Ok((
+            MapperEnum::Namco3433(Namco3433::new(prg_rom, chr_rom, mirroring, false)),
+            vec![],
+        )),
         89 => Ok((
             MapperEnum::Sunsoft2(Sunsoft2::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
+        92 => Ok((
+            MapperEnum::Jf19(Jf19::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         93 => Ok((
             MapperEnum::Sunsoft1(Sunsoft1::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        94 => Ok((
+            MapperEnum::Mapper94(Mapper94::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        97 => Ok((
+            MapperEnum::IremTamS1(IremTamS1::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         107 => Ok((
@@ -659,30 +667,38 @@ pub(super) fn from_mapper_id(
             MapperEnum::Ntdec112(Ntdec112::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
+        113 => Ok((
+            MapperEnum::Nina003(Nina003::new(prg_rom, chr_rom, mirroring, true)),
+            vec![],
+        )),
+        115 => Ok((
+            MapperEnum::Mapper115(Mapper115::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        118 => Ok((
+            MapperEnum::Mapper118(Mapper118::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        119 => Ok((
+            MapperEnum::Tqrom(Tqrom::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         140 => Ok((
             MapperEnum::Jaleco140(Jaleco140::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
-        15 => Ok((
-            MapperEnum::Mapper15(Mapper15::new(prg_rom, chr_rom, mirroring)),
+        152 => Ok((
+            MapperEnum::Mapper152(Mapper152::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
-        16 | 159 => Ok((
-            MapperEnum::Bandai(Bandai::new(prg_rom, chr_rom, mirroring)),
+        154 => Ok((
+            MapperEnum::Namco3433(Namco3433::new(prg_rom, chr_rom, mirroring, true)),
             vec![],
         )),
-        18 => Ok((
-            MapperEnum::Ss8805(Ss8805::new(prg_rom, chr_rom, mirroring)),
+        162 => Ok((
+            MapperEnum::Mapper162(Mapper162::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
-        38 => Ok((
-            MapperEnum::BitCorp38(BitCorp38::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        85 => {
-            let (mapper, chips) = new_vrc7(prg_rom, chr_rom, mirroring);
-            Ok((MapperEnum::Vrc7(mapper), chips))
-        }
         180 => Ok((
             MapperEnum::CrazyClimber(CrazyClimber::new(prg_rom, chr_rom, mirroring)),
             vec![],
@@ -699,22 +715,7 @@ pub(super) fn from_mapper_id(
             MapperEnum::Sunsoft185(Sunsoft185::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
-        94 => Ok((
-            MapperEnum::Mapper94(Mapper94::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        115 => Ok((
-            MapperEnum::Mapper115(Mapper115::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        152 => Ok((
-            MapperEnum::Mapper152(Mapper152::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
-        162 => Ok((
-            MapperEnum::Mapper162(Mapper162::new(prg_rom, chr_rom, mirroring)),
-            vec![],
-        )),
+
         _ => Err(CartridgeError::UnsupportedMapper(mapper_id)),
     }
 }

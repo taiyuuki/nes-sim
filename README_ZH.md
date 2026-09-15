@@ -92,8 +92,13 @@ cargo run --release -p nes-desktop -- "game.nes"
 - 4 (MMC3)
 - 5 (MMC5)
 - 7 (AxROM)
+- 9 (MMC2)
+- 10 (MMC4)
 - 11 (Color Dreams)
 - 13 (CpROM)
+- 15
+- 16 (Bandai)
+- 18
 - 19 (Namco 163)
 - 21/23/25 (VRC4)
 - 22 (VRC2)
@@ -102,29 +107,47 @@ cargo run --release -p nes-desktop -- "game.nes"
 - 33/48 (Taito TC0190)
 - 34 (BNROM)
 - 36
+- 38
 - 46
+- 48
 - 62
+- 64
 - 65 (Irem H-3001)
 - 66 (GxROM)
 - 67 (Sunsoft 3)
+- 68
 - 69 (FME-7)
 - 70
 - 71 (Camerica)
 - 72
+- 73
+- 74
+- 75
 - 76
 - 78
 - 79/113 (NINA-003)
 - 80 (Taito X1-005)
 - 82 (Taito X1-017)
+- 85
 - 86 (JF-13)
 - 87
 - 88/154 (Namco 3433)
+- 89
 - 92 (JF-19)
+- 93
 - 94
 - 97 (Irem Tam S1)
+- 107
+- 112
+- 113
 - 115
 - 118 (TxSROM)
 - 119 (TQROM)
+- 140
 - 152
+- 154
 - 162
-
+- 180
+- 182
+- 184
+- 185
