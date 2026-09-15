@@ -23,7 +23,7 @@ dry-publish = "cargo publish -p nes-sim --dry-run"
 publish = "cargo publish -p nes-sim"
 
 [lints.clippy]
-upper_case_acronyms = { level = "allow", priority = 0 }
+upper_case_acronyms = "allow"
 
 [[example]]
 name = "trace_bp"
