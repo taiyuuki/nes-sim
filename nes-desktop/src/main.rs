@@ -109,10 +109,11 @@ fn find_fds_bios(rom_path: &str) -> Result<Vec<u8>, String> {
     ];
     for candidate in &candidates {
         if let Ok(bios) = std::fs::read(candidate)
-            && bios.len() == 8192 {
-                eprintln!("FDS BIOS: {}", candidate.display());
-                return Ok(bios);
-            }
+            && bios.len() == 8192
+        {
+            eprintln!("FDS BIOS: {}", candidate.display());
+            return Ok(bios);
+        }
     }
     // 找不到则弹出文件选择对话框
     eprintln!("未找到 FDS BIOS (disksys.rom)，请选择...");

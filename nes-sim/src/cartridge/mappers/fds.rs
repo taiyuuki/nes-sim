@@ -40,9 +40,6 @@ pub(super) struct Fds {
     irq_repeat: bool,
     timer_irq: bool,
     transfer_irq: bool,
-    // 字节传输完成锁存（$4030 bit1）。与IRQ使能($4025 bit7)解耦:
-    // 轮询模式的BIOS载入不开启传输IRQ，但仍需通过$4030查询字节就绪
-    transfer_flag: bool,
     // 驱动器块链状态（fceux mapperFDS_*）
     control: u8,
     block: u8,
@@ -77,7 +74,6 @@ impl Fds {
             irq_repeat: false,
             timer_irq: false,
             transfer_irq: false,
-            transfer_flag: false,
             control: 0,
             block: BLOCK_INIT,
             block_start: 0,
@@ -131,9 +127,10 @@ impl Fds {
             }
             self.disk_addr += 1;
         }
+        // 每次读都重新武装字节传输节奏（BIOS读取链依赖此续命，
+        // 剥离版镜像无gap/CRC字节，块间靠$4025.6推进链）
         self.disk_seek_irq = DISK_BYTE_CYCLES;
         self.transfer_irq = false;
-        self.transfer_flag = false;
         result
     }
 
@@ -141,9 +138,8 @@ impl Fds {
         if self.in_disk.is_none() || self.control & 0x04 != 0 {
             return;
         }
-        // 写入启动一次字节传输: 150周期后完成标志置位
+        // 写入启动一次字节传输节奏
         self.disk_seek_irq = DISK_BYTE_CYCLES;
-        self.transfer_flag = false;
         self.transfer_irq = false;
         // 马达/模式切换后的首个写入对应CRC字节槽，丢弃
         if !self.disk_access {
@@ -165,10 +161,6 @@ impl Fds {
 
     fn write_control(&mut self, data: u8) {
         self.transfer_irq = false;
-        // nestopia语义: 传输完成标志仅在新的bit7置位时保留
-        if data & 0x80 == 0 {
-            self.transfer_flag = false;
-        }
         if self.in_disk.is_some() {
             // 马达开启沿：推进到下一块并预置块长
             if data & 0x40 != 0 && self.control & 0x40 == 0 {
@@ -206,16 +198,18 @@ impl Fds {
 
     fn read_status_4030(&mut self) -> u8 {
         // bit3回显$4025 bit3（镜像方式），硬件实测行为
+        // bit1 = 字节传输IRQ线状态（受$4025 bit7门控, fceux语义）。
+        // 注意不能暴露独立的"字节就绪"标志: 载入结束后残留的标志会把
+        // 游戏的定时器IRQ误判成磁盘传输（SMB2标题死锁即此因）
         let mut result = self.control & 0x08;
         if self.timer_irq {
             result |= 0x01;
         }
-        if self.transfer_flag || self.transfer_irq {
+        if self.transfer_irq {
             result |= 0x02;
         }
         self.timer_irq = false;
         self.transfer_irq = false;
-        self.transfer_flag = false;
         result
     }
 
@@ -325,18 +319,8 @@ impl Mapper for Fds {
         }
         if self.disk_seek_irq > 0 {
             self.disk_seek_irq -= 1;
-            if self.disk_seek_irq <= 0 {
-                // 马达运转期间驱动器持续按固定节奏送出字节(nestopia语义)，
-                // 纯轮询的载入器不依赖$4031读回读重新武装计数器
-                let consumed = !self.transfer_flag;
-                self.transfer_flag = true;
-                // IRQ仅在上一字节已被消费时继续触发，避免无人处理的IRQ风暴
-                if self.regs[5] & 0x80 != 0 && consumed {
-                    self.transfer_irq = true;
-                }
-                if self.in_disk.is_some() && self.control & 0x01 != 0 {
-                    self.disk_seek_irq = DISK_BYTE_CYCLES;
-                }
+            if self.disk_seek_irq <= 0 && self.regs[5] & 0x80 != 0 {
+                self.transfer_irq = true;
             }
         }
     }
@@ -388,7 +372,6 @@ impl Mapper for Fds {
         writer.write_bool(self.irq_repeat);
         writer.write_bool(self.timer_irq);
         writer.write_bool(self.transfer_irq);
-        writer.write_bool(self.transfer_flag);
         writer.write_u8(self.control);
         writer.write_u8(self.block);
         writer.write_u32(self.block_start as u32);
@@ -420,7 +403,6 @@ impl Mapper for Fds {
         self.irq_repeat = reader.read_bool()?;
         self.timer_irq = reader.read_bool()?;
         self.transfer_irq = reader.read_bool()?;
-        self.transfer_flag = reader.read_bool()?;
         self.control = reader.read_u8()?;
         self.block = reader.read_u8()?;
         self.block_start = reader.read_u32()? as usize;
