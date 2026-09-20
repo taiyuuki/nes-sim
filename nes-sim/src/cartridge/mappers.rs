@@ -7,6 +7,7 @@ mod cnrom;
 mod colordreams;
 mod cprom;
 mod crazy_climber;
+mod fds;
 mod fme7;
 mod gxrom;
 mod irem76;
@@ -84,6 +85,7 @@ use self::cnrom::Cnrom;
 use self::colordreams::ColorDreams;
 use self::cprom::CpROM;
 use self::crazy_climber::CrazyClimber;
+pub(super) use self::fds::{new_fds, parse_fds_sides};
 use self::fme7::{Fme7, new_fme7};
 use self::gxrom::Gxrom;
 use self::irem_g101::IremG101;
@@ -150,7 +152,7 @@ use self::vrc3::Vrc3;
 use self::vrc4::Vrc4;
 use self::vrc6::{Vrc6, new_vrc6};
 use self::vrc7::{Vrc7, new_vrc7};
-use super::{CartridgeError, Mirroring};
+use super::{CartridgeError, FdsDiskCommand, FdsDiskInfo, Mirroring};
 use crate::apu::ExpansionAudioChip;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
@@ -180,6 +182,16 @@ pub(super) trait Mapper {
     fn save_state(&self, _writer: &mut StateWriter) {}
     fn load_state(&mut self, _reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
         Ok(())
+    }
+    fn fds_command(&mut self, _cmd: FdsDiskCommand) {}
+    fn fds_info(&self) -> Option<FdsDiskInfo> {
+        None
+    }
+    fn fds_dirty(&self) -> bool {
+        false
+    }
+    fn fds_sides(&self) -> Option<&[Vec<u8>]> {
+        None
     }
 }
 
@@ -240,6 +252,7 @@ macro_rules! dispatch_mapper {
     ($self:expr, $method:ident($($arg:expr),*)) => {
         match $self {
             Self::NoMapper(m) => m.$method($($arg),*),
+            Self::Fds(m) => m.$method($($arg),*),
             Self::Nrom(m) => m.$method($($arg),*),
             Self::Mmc1(m) => m.$method($($arg),*),
             Self::Mmc2(m) => m.$method($($arg),*),
@@ -324,6 +337,7 @@ macro_rules! dispatch_mapper {
 #[allow(private_interfaces)]
 pub(super) enum MapperEnum {
     NoMapper(NoMapper),
+    Fds(fds::Fds),
     Nrom(Nrom),
     Mmc1(Mmc1),
     Mmc2(Mmc2),
@@ -473,6 +487,22 @@ impl MapperEnum {
         reader: &mut StateReader<'_>,
     ) -> Result<(), SaveStateError> {
         dispatch_mapper!(self, load_state(reader))
+    }
+
+    pub(super) fn fds_command(&mut self, cmd: FdsDiskCommand) {
+        dispatch_mapper!(self, fds_command(cmd))
+    }
+
+    pub(super) fn fds_info(&self) -> Option<FdsDiskInfo> {
+        dispatch_mapper!(self, fds_info())
+    }
+
+    pub(super) fn fds_dirty(&self) -> bool {
+        dispatch_mapper!(self, fds_dirty())
+    }
+
+    pub(super) fn fds_sides(&self) -> Option<&[Vec<u8>]> {
+        dispatch_mapper!(self, fds_sides())
     }
 }
 

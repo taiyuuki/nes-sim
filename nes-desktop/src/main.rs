@@ -2,7 +2,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
 use nes_sim::video::{VideoBuffer, frame_to_argb32_into};
 use nes_sim::{
-    ControllerButton, ControllerState, FrontendInput, FrontendRuntime, RunMode, TVSystem,
+    ControllerButton, ControllerState, FdsDiskCommand, FrontendInput, FrontendRuntime, RunMode,
+    TVSystem, is_fds_image,
 };
 use std::collections::VecDeque;
 use std::env;
@@ -64,8 +65,85 @@ fn usage(program: &str) {
     eprintln!("  0       Clear APU mute");
     eprintln!("  F5      Save state");
     eprintln!("  F8      Load state");
+    eprintln!("  F1      FDS: 插入/退出磁盘");
+    eprintln!("  F2      FDS: 切换盘面(需先退盘)");
     eprintln!("  O       Open ROM file");
     eprintln!("  Esc     Quit");
+}
+
+/// 按扩展名/魔数加载ROM；FDS镜像自动查找BIOS并优先加载 <rom>.sav 备份。
+fn load_rom_runtime(rom_path: &str) -> Result<FrontendRuntime, String> {
+    let rom = std::fs::read(rom_path).map_err(|e| format!("读取文件失败: {e}"))?;
+    if !is_fds_image(&rom) {
+        return FrontendRuntime::from_rom_bytes(&rom).map_err(|e| format!("加载 ROM 失败: {e}"));
+    }
+
+    // FDS: 优先使用写盘备份(.sav), 其次原镜像
+    let sav_path = PathBuf::from(rom_path).with_extension("sav");
+    let (image, image_path) = match std::fs::read(&sav_path) {
+        Ok(sav) if is_fds_image(&sav) => (sav, sav_path.to_string_lossy().to_string()),
+        _ => (rom, rom_path.to_string()),
+    };
+
+    let bios = find_fds_bios(rom_path)?;
+    let runtime = FrontendRuntime::from_rom_bytes_with_bios(&image, Some(&bios))
+        .map_err(|e| format!("加载 FDS 失败: {e}"))?;
+    eprintln!("FDS: 使用镜像 {image_path} + BIOS ({} 字节)", bios.len());
+    Ok(runtime)
+}
+
+/// 查找FDS BIOS ROM (disksys.rom): ROM同目录、BIOS Files子目录、上级目录。
+fn find_fds_bios(rom_path: &str) -> Result<Vec<u8>, String> {
+    let rom_dir = PathBuf::from(rom_path)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    let candidates = [
+        rom_dir.join("BIOS Files").join("DISKSYS.ROM"),
+        rom_dir.join("disksys.rom"),
+        rom_dir.join("disksys.rom.bin"),
+        rom_dir
+            .parent()
+            .map(|p| p.join("disksys.rom"))
+            .unwrap_or_default(),
+    ];
+    for candidate in &candidates {
+        if let Ok(bios) = std::fs::read(candidate)
+            && bios.len() == 8192 {
+                eprintln!("FDS BIOS: {}", candidate.display());
+                return Ok(bios);
+            }
+    }
+    // 找不到则弹出文件选择对话框
+    eprintln!("未找到 FDS BIOS (disksys.rom)，请选择...");
+    match rfd::FileDialog::new()
+        .add_filter("FDS BIOS", &["rom", "bin"])
+        .set_title("选择 FDS BIOS (disksys.rom, 8192 字节)")
+        .pick_file()
+    {
+        Some(path) => std::fs::read(&path).map_err(|e| format!("读取 BIOS 失败: {e}")),
+        None => Err("未选择 FDS BIOS".to_string()),
+    }
+}
+
+/// 退出前把游戏写入过的FDS磁盘数据保存到 <rom>.sav。
+fn save_fds_disk(runtime: &FrontendRuntime, rom_path: &str) {
+    let nes = runtime.nes();
+    if !nes.fds_dirty() {
+        return;
+    }
+    let Some(sides) = nes.fds_sides() else {
+        return;
+    };
+    let sav_path = PathBuf::from(rom_path).with_extension("sav");
+    let mut data = Vec::with_capacity(sides.len() * 65500);
+    for side in sides {
+        data.extend_from_slice(side);
+    }
+    match std::fs::write(&sav_path, &data) {
+        Ok(()) => eprintln!("FDS 磁盘已保存: {}", sav_path.display()),
+        Err(error) => eprintln!("FDS 磁盘保存失败: {error}"),
+    }
 }
 
 fn main() -> ExitCode {
@@ -113,6 +191,7 @@ fn main() -> ExitCode {
             eprintln!("未指定 ROM 文件，打开文件选择对话框...");
             match rfd::FileDialog::new()
                 .add_filter("NES ROM", &["nes"])
+                .add_filter("FDS Disk", &["fds"])
                 .add_filter("All Files", &["*"])
                 .pick_file()
             {
@@ -129,21 +208,14 @@ fn main() -> ExitCode {
         }
     };
 
-    let rom = match std::fs::read(&rom_path) {
-        Ok(rom) => rom,
-        Err(error) => {
-            eprintln!("无法读取 ROM {rom_path:?}: {error}");
-            return ExitCode::from(1);
-        }
-    };
-
-    let mut runtime = match FrontendRuntime::from_rom_bytes(&rom) {
+    let mut runtime = match load_rom_runtime(&rom_path) {
         Ok(runtime) => runtime,
         Err(error) => {
-            eprintln!("failed to load ROM {rom_path:?}: {error}");
+            eprintln!("{error} ({rom_path:?})");
             return ExitCode::from(1);
         }
     };
+    let mut current_rom_path = rom_path.clone();
     let save_path = default_save_path(&rom_path);
     let mut audio_player = match AudioPlayer::new(runtime.snapshot().audio.sample_rate) {
         Ok(player) => Some(player),
@@ -252,17 +324,17 @@ fn main() -> ExitCode {
         if window.is_key_pressed(Key::O, KeyRepeat::No) {
             status_message = match prompt_and_load_rom() {
                 Ok(new_rom_path) => {
-                    match std::fs::read(&new_rom_path) {
-                        Ok(rom_bytes) => match FrontendRuntime::from_rom_bytes(&rom_bytes) {
-                            Ok(mut new_runtime) => {
-                                // 停止旧音频播放
-                                if let Some(player) = &mut audio_player {
-                                    player.stop_playback();
-                                }
-                                // 创建新音频播放器
-                                audio_player = match AudioPlayer::new(
-                                    new_runtime.snapshot().audio.sample_rate,
-                                ) {
+                    // 先保存旧FDS磁盘
+                    save_fds_disk(&runtime, &current_rom_path);
+                    match load_rom_runtime(&new_rom_path) {
+                        Ok(mut new_runtime) => {
+                            // 停止旧音频播放
+                            if let Some(player) = &mut audio_player {
+                                player.stop_playback();
+                            }
+                            // 创建新音频播放器
+                            audio_player =
+                                match AudioPlayer::new(new_runtime.snapshot().audio.sample_rate) {
                                     Ok(player) => {
                                         new_runtime
                                             .nes_mut()
@@ -274,41 +346,49 @@ fn main() -> ExitCode {
                                         None
                                     }
                                 };
-                                // 预填充音频缓冲区
-                                if let Some(player) = &mut audio_player {
-                                    let input = FrontendInput {
-                                        controller1: ControllerState::new(),
-                                        ..Default::default()
-                                    };
-                                    while player.queue_len() < player.target_queue_len() {
-                                        let snap = new_runtime.step(input);
-                                        player.push_samples(
-                                            snap.audio.samples,
-                                            snap.audio.sample_rate,
-                                        );
-                                    }
-                                    player.start_playback();
+                            // 预填充音频缓冲区
+                            if let Some(player) = &mut audio_player {
+                                let input = FrontendInput {
+                                    controller1: ControllerState::new(),
+                                    ..Default::default()
+                                };
+                                while player.queue_len() < player.target_queue_len() {
+                                    let snap = new_runtime.step(input);
+                                    player.push_samples(snap.audio.samples, snap.audio.sample_rate);
                                 }
-                                // 更新状态
-                                runtime = new_runtime;
-                                let new_apu_mute_mask = runtime.nes().apu_debug_mute_mask();
-                                apu_mute_mask = new_apu_mute_mask;
-                                // 返回新状态信息
-                                format!(
-                                    "已加载: {}",
-                                    PathBuf::from(&new_rom_path)
-                                        .file_name()
-                                        .unwrap_or_default()
-                                        .to_string_lossy()
-                                )
+                                player.start_playback();
                             }
-                            Err(error) => format!("加载 ROM 失败: {error}"),
-                        },
-                        Err(error) => format!("读取文件失败: {error}"),
+                            // 更新状态
+                            runtime = new_runtime;
+                            current_rom_path = new_rom_path.clone();
+                            let new_apu_mute_mask = runtime.nes().apu_debug_mute_mask();
+                            apu_mute_mask = new_apu_mute_mask;
+                            // 返回新状态信息
+                            format!(
+                                "已加载: {}",
+                                PathBuf::from(&new_rom_path)
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                            )
+                        }
+                        Err(error) => format!("加载 ROM 失败: {error}"),
                     }
                 }
                 Err(msg) => msg,
             };
+        }
+
+        // FDS磁盘热键
+        if window.is_key_pressed(Key::F1, KeyRepeat::No) {
+            runtime.nes_mut().fds_command(FdsDiskCommand::ToggleInsert);
+            status_message = fds_status_message(&runtime);
+        }
+        if window.is_key_pressed(Key::F2, KeyRepeat::No) {
+            runtime
+                .nes_mut()
+                .fds_command(FdsDiskCommand::SelectNextSide);
+            status_message = fds_status_message(&runtime);
         }
 
         let input = collect_input(&window);
@@ -444,6 +524,9 @@ fn main() -> ExitCode {
             avg_frame_time,
         );
     }
+
+    // 退出前保存FDS磁盘写入
+    save_fds_disk(&runtime, &current_rom_path);
 
     ExitCode::SUCCESS
 }
@@ -909,6 +992,29 @@ fn set_button(state: &mut ControllerState, pressed: bool, button: ControllerButt
     state.set_pressed(button, pressed);
 }
 
+/// FDS驱动器状态描述（非FDS卡带给出提示）。
+fn fds_status_message(runtime: &FrontendRuntime) -> String {
+    match runtime.nes().fds_info() {
+        Some(info) => format!(
+            "FDS: {}面 | {} | 选中面 {} (盘{} {})",
+            info.side_count,
+            if info.inserted {
+                "已插入"
+            } else {
+                "已退盘"
+            },
+            info.selected_side,
+            info.selected_side / 2,
+            if info.selected_side % 2 == 0 {
+                "A"
+            } else {
+                "B"
+            }
+        ),
+        None => "非FDS卡带".to_string(),
+    }
+}
+
 fn default_save_path(rom_path: &str) -> PathBuf {
     PathBuf::from(rom_path).with_extension("state")
 }
@@ -918,6 +1024,7 @@ fn default_save_path(rom_path: &str) -> PathBuf {
 fn prompt_and_load_rom() -> Result<String, String> {
     match rfd::FileDialog::new()
         .add_filter("NES ROM", &["nes"])
+        .add_filter("FDS Disk", &["fds"])
         .add_filter("All Files", &["*"])
         .pick_file()
     {

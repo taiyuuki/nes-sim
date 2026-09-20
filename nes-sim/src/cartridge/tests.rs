@@ -825,3 +825,183 @@ fn mapper244_banks_through_specific_address_ranges() {
     assert!(cartridge.cpu_write(0x80A7, 0x00));
     assert_eq!(cartridge.ppu_read(0x0000), Some(0x02));
 }
+
+// ---- FDS ----
+
+fn make_fds_image(side_count: usize) -> Vec<u8> {
+    let mut image = vec![0u8; 16 + side_count * 65500];
+    image[0..4].copy_from_slice(b"FDS\x1a");
+    image[4] = side_count as u8;
+    // 每面填入volume块头, 其余为零
+    for side in 0..side_count {
+        let base = 16 + side * 65500;
+        image[base] = 0x01;
+        image[base + 1..base + 15].copy_from_slice(b"*NINTENDO-HVC*");
+    }
+    image
+}
+
+fn make_fds_bios() -> Vec<u8> {
+    let mut bios = vec![0u8; 8192];
+    // reset向量指向$E000, $E000放死循环, 让测试可控
+    bios[0x1FFC..0x1FFE].copy_from_slice(&[0x00, 0xE0]);
+    bios[0] = 0x4C; // JMP $E000
+    bios[1] = 0x00;
+    bios[2] = 0xE0;
+    bios
+}
+
+#[test]
+fn fds_image_parsing_headered_and_raw() {
+    let image = make_fds_image(2);
+    let sides = parse_fds_sides(&image).expect("headered FDS should parse");
+    assert_eq!(sides.len(), 2);
+    assert_eq!(sides[0].len(), 65500);
+    assert_eq!(&sides[0][1..15], b"*NINTENDO-HVC*");
+
+    // raw格式: 无头, 以volume块开头
+    let raw = image[16..].to_vec();
+    let sides = parse_fds_sides(&raw).expect("raw FDS should parse");
+    assert_eq!(sides.len(), 2);
+}
+
+#[test]
+fn fds_cartridge_maps_bios_wram_and_registers() {
+    let bios = make_fds_bios();
+    let mut cartridge =
+        Cartridge::from_fds(&make_fds_image(1), &bios).expect("FDS cartridge should build");
+
+    // BIOS映射在$E000, WRAM在$6000
+    assert_eq!(cartridge.cpu_read(0xE000), Some(0x4C));
+    assert!(cartridge.cpu_write(0x6000, 0x5A));
+    assert_eq!(cartridge.cpu_read(0x6000), Some(0x5A));
+    assert_eq!(cartridge.cpu_read(0xDFFF), Some(0x00));
+
+    // 默认垂直镜像, $4025 bit3切换为水平
+    assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
+    cartridge.cpu_write(0x4025, 0x08);
+    assert_eq!(cartridge.mirroring(), Mirroring::Horizontal);
+}
+
+#[test]
+fn fds_timer_irq_fires_and_clears_on_status_read() {
+    let bios = make_fds_bios();
+    let mut cartridge = Cartridge::from_fds(&make_fds_image(1), &bios).unwrap();
+
+    // 开启磁盘/定时器使能 + 定时器(latch=7, 单次)
+    cartridge.cpu_write(0x4023, 0x01);
+    cartridge.cpu_write(0x4020, 0x07);
+    cartridge.cpu_write(0x4021, 0x00);
+    cartridge.cpu_write(0x4022, 0x02);
+    assert!(!cartridge.irq_line());
+
+    for _ in 0..10 {
+        cartridge.tick_cpu_cycle();
+    }
+    assert!(cartridge.irq_line(), "timer IRQ should assert");
+
+    // $4030读回bit0并清IRQ
+    let status = cartridge.cpu_read(0x4030).unwrap();
+    assert_eq!(status & 0x01, 0x01);
+    assert!(!cartridge.irq_line());
+}
+
+#[test]
+fn fds_audio_registers_reachable_through_cartridge() {
+    let bios = make_fds_bios();
+    let mut cartridge = Cartridge::from_fds(&make_fds_image(1), &bios).unwrap();
+
+    // $4080-$408A与$4040-$407F应写入扩展芯片并产生输出
+    cartridge.cpu_write(0x4089, 0x80);
+    for i in 0u16..0x40 {
+        cartridge.cpu_write(0x4040 + i, 0x3F);
+    }
+    cartridge.cpu_write(0x4089, 0x00);
+    cartridge.cpu_write(0x4080, 0x80 | 0x20);
+    cartridge.cpu_write(0x4082, 0x00);
+    cartridge.cpu_write(0x4083, 0x01);
+
+    // 波表读回 ($4040-$407F)与增益读回 ($4090: 直写幅度0x20|开放总线0x40)
+    assert_eq!(cartridge.cpu_read(0x4040), Some(0x40 | 0x3F));
+    assert_eq!(cartridge.cpu_read(0x4090), Some(0x40 | 0x20));
+
+    // tick音频芯片并确认输出非零
+    let mut chips = cartridge.take_expansion_audio_chips();
+    let mut chip = chips
+        .pop()
+        .expect("FDS cartridge should provide one audio chip");
+    let mut peak = 0.0f32;
+    for _ in 0..18000 {
+        chip.tick_cpu_cycle();
+        peak = peak.max(chip.output_sample().abs());
+    }
+    assert!(
+        peak > 0.05,
+        "FDS chip silent through cartridge path: {peak}"
+    );
+}
+
+#[test]
+fn fds_status_registers_report_disk_state() {
+    let bios = make_fds_bios();
+    let mut cartridge = Cartridge::from_fds(&make_fds_image(1), &bios).unwrap();
+
+    // 已插盘: $4032 bit0=0, bit1取决于马达
+    let status = cartridge.cpu_read(0x4032).unwrap();
+    assert_eq!(status & 0x01, 0x00);
+    assert!(status & 0x02 != 0, "motor off should report not ready");
+
+    // 马达开 + 非传输重置 → ready
+    cartridge.cpu_write(0x4025, 0x01);
+    let status = cartridge.cpu_read(0x4032).unwrap();
+    assert_eq!(status & 0x02, 0x00, "motor on should report ready");
+
+    // 退盘后未插盘位有效
+    cartridge.fds_command(FdsDiskCommand::ToggleInsert);
+    let status = cartridge.cpu_read(0x4032).unwrap();
+    assert_eq!(status & 0x05, 0x05);
+
+    // 电池位
+    assert_eq!(cartridge.cpu_read(0x4033), Some(0x80));
+}
+
+#[test]
+fn fds_savestate_roundtrip_preserves_disk_and_wram() {
+    let bios = make_fds_bios();
+    let mut cartridge = Cartridge::from_fds(&make_fds_image(2), &bios).unwrap();
+
+    // 制造一些状态: 写WRAM、写磁盘数据、退盘换面
+    cartridge.cpu_write(0x6000, 0x5A);
+    cartridge.cpu_write(0x6001, 0xC3);
+    cartridge.cpu_write(0x4023, 0x01);
+    cartridge.cpu_write(0x4020, 0x03);
+    cartridge.cpu_write(0x4021, 0x00);
+    cartridge.cpu_write(0x4022, 0x03);
+    for _ in 0..10 {
+        cartridge.tick_cpu_cycle();
+    }
+    cartridge.fds_command(FdsDiskCommand::ToggleInsert);
+    cartridge.fds_command(FdsDiskCommand::SelectNextSide);
+    cartridge.fds_command(FdsDiskCommand::ToggleInsert);
+
+    let mut writer = StateWriter::new();
+    writer.write_u16(20);
+    cartridge.save_state(&mut writer);
+    let bytes = writer.finish();
+
+    // 全新卡带装载同一镜像, 恢复状态
+    let mut restored = Cartridge::from_fds(&make_fds_image(2), &bios).unwrap();
+    let mut reader = StateReader::new(&bytes).unwrap();
+    assert_eq!(reader.read_u16().unwrap(), 20);
+    restored.load_state(&mut reader).unwrap();
+    reader.finish().unwrap();
+
+    assert_eq!(restored.cpu_read(0x6000), Some(0x5A));
+    assert_eq!(restored.cpu_read(0x6001), Some(0xC3));
+    let info = restored.fds_info().unwrap();
+    assert_eq!(info.side_count, 2);
+    assert_eq!(info.selected_side, 1, "selected side should round-trip");
+    assert!(info.inserted, "inserted state should round-trip");
+    // 定时器IRQ在途状态恢复后继续触发
+    assert!(restored.irq_line(), "pending timer IRQ should survive");
+}

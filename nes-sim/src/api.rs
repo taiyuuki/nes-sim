@@ -1,3 +1,4 @@
+use crate::cartridge::FdsDiskCommand;
 use crate::{ControllerState, FRAME_WIDTH};
 
 pub const VIDEO_FRAME_PITCH: usize = FRAME_WIDTH;
@@ -49,6 +50,7 @@ pub enum CoreCommand {
     RemoveBreakpoint(Breakpoint),
     #[cfg(feature = "debug")]
     SetPaused(bool),
+    FdsDisk(FdsDiskCommand),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +60,7 @@ pub enum CoreEvent {
     ControllerStateUpdated { port: usize },
     FrameReady { frame_number: u64 },
     CpuInstructionComplete { instruction_counter: u64 },
+    FdsDiskUpdated,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

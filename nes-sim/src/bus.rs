@@ -1,5 +1,7 @@
 use crate::apu::APU;
-use crate::cartridge::{Cartridge, CartridgeError, Mirroring};
+use crate::cartridge::{
+    Cartridge, CartridgeError, FdsDiskCommand, FdsDiskInfo, Mirroring, is_fds_image,
+};
 use crate::dma::{DmaBusRequest, DmaController};
 use crate::input::{ControllerState, Joypad};
 use crate::ppu::PPU;
@@ -94,6 +96,34 @@ impl NESBus {
         let cartridge: Cartridge = Cartridge::from_ines(rom)?;
         self.insert_cartridge(cartridge);
         Ok(())
+    }
+
+    /// 按格式嗅探加载ROM；FDS镜像需要额外的BIOS ROM数据。
+    pub fn load_rom(&mut self, rom: &[u8], bios: Option<&[u8]>) -> Result<(), CartridgeError> {
+        if is_fds_image(rom) {
+            let bios = bios.ok_or(CartridgeError::FdsBiosMissing)?;
+            let cartridge = Cartridge::from_fds(rom, bios)?;
+            self.insert_cartridge(cartridge);
+            Ok(())
+        } else {
+            self.load_cartridge_ines(rom)
+        }
+    }
+
+    pub fn fds_command(&mut self, cmd: FdsDiskCommand) {
+        self.ppu_memory.fds_command(cmd)
+    }
+
+    pub fn fds_info(&self) -> Option<FdsDiskInfo> {
+        self.ppu_memory.fds_info()
+    }
+
+    pub fn fds_dirty(&self) -> bool {
+        self.ppu_memory.fds_dirty()
+    }
+
+    pub fn fds_sides(&self) -> Option<&[Vec<u8>]> {
+        self.ppu_memory.fds_sides()
     }
 
     pub fn reset(&mut self) {

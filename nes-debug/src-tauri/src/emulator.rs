@@ -75,8 +75,26 @@ pub struct RunFrameResult {
 #[tauri::command]
 pub fn load_rom(path: String) -> Result<(), String> {
     let rom = std::fs::read(&path).map_err(|e| format!("读取 ROM 失败: {e}"))?;
+    // FDS镜像: 同目录/BIOS Files下找disksys.rom
+    let bios = if nes_sim::is_fds_image(&rom) {
+        let dir = std::path::Path::new(&path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        let candidates = [
+            dir.join("BIOS Files").join("DISKSYS.ROM"),
+            dir.join("disksys.rom"),
+        ];
+        let bios = candidates
+            .iter()
+            .find_map(|c| std::fs::read(c).ok().filter(|b| b.len() == 8192));
+        Some(bios.ok_or("未找到 FDS BIOS (disksys.rom, 需8192字节) 放在ROM目录或BIOS Files子目录")?)
+    } else {
+        None
+    };
     let runtime =
-        FrontendRuntime::from_rom_bytes(&rom).map_err(|e| format!("加载 ROM 失败: {e}"))?;
+        FrontendRuntime::from_rom_bytes_with_bios(&rom, bios.as_deref())
+            .map_err(|e| format!("加载 ROM 失败: {e}"))?;
     RUNTIME.with(|cell| {
         *cell.borrow_mut() = Some(runtime);
     });

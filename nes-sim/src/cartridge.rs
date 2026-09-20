@@ -4,8 +4,8 @@ use std::fmt::{Display, Formatter};
 pub(crate) mod expansion_audio;
 mod mappers;
 
-use self::mappers::{MapperEnum, NoMapper, from_mapper_id};
-use crate::apu::ExpansionAudioChip;
+use self::mappers::{MapperEnum, NoMapper, from_mapper_id, new_fds, parse_fds_sides};
+pub(crate) use crate::apu::ExpansionAudioChip;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
 const INES_HEADER_LEN: usize = 16;
@@ -74,6 +74,29 @@ pub enum RomFormat {
     NES20,
 }
 
+/// FDS磁盘操作命令（仅FDS卡带响应）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FdsDiskCommand {
+    /// 插入/退出当前选中的盘面
+    ToggleInsert,
+    /// 轮换选中的盘面（退盘状态下才有效，fceux语义）
+    SelectNextSide,
+}
+
+/// FDS驱动器状态快照。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FdsDiskInfo {
+    pub side_count: usize,
+    pub selected_side: usize,
+    pub inserted: bool,
+}
+
+/// 判断ROM数据是否为FDS磁盘镜像（fwNES头或raw dump）。
+pub fn is_fds_image(rom: &[u8]) -> bool {
+    (rom.len() >= 4 && &rom[0..4] == b"FDS\x1a")
+        || (rom.len() >= 15 && &rom[1..15] == b"*NINTENDO-HVC*")
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum CartridgeError {
     FileTooSmall,
@@ -81,6 +104,9 @@ pub enum CartridgeError {
     Nes2Unsupported,
     UnsupportedMapper(u16),
     TruncatedData,
+    InvalidFds,
+    FdsBiosMissing,
+    FdsBiosInvalid,
 }
 
 impl Display for CartridgeError {
@@ -91,6 +117,9 @@ impl Display for CartridgeError {
             Self::Nes2Unsupported => f.write_str("NES 2.0 ROMs are not supported yet"),
             Self::UnsupportedMapper(id) => write!(f, "mapper {} is not supported yet", id),
             Self::TruncatedData => f.write_str("ROM ended before PRG/CHR data was fully present"),
+            Self::InvalidFds => f.write_str("disk image is not in FDS format"),
+            Self::FdsBiosMissing => f.write_str("FDS BIOS ROM (disksys.rom) is required"),
+            Self::FdsBiosInvalid => f.write_str("FDS BIOS ROM must be exactly 8192 bytes"),
         }
     }
 }
@@ -391,6 +420,21 @@ impl Cartridge {
         })
     }
 
+    pub fn from_fds(image: &[u8], bios: &[u8]) -> Result<Self, CartridgeError> {
+        let sides = parse_fds_sides(image)?;
+        let (mapper, expansion_chips) = new_fds(bios.to_vec(), sides)?;
+
+        // FDS无iNES头；mapper_id取惯例编号20（savestate一致性校验用）
+        let mut header = CartridgeHeader::from_no_header();
+        header.mapper_id = 20;
+
+        Ok(Self {
+            mapper,
+            expansion_chips,
+            header,
+        })
+    }
+
     pub fn mirroring(&self) -> Mirroring {
         self.mapper.mirroring()
     }
@@ -453,6 +497,23 @@ impl Cartridge {
 
     pub fn ppu_write_nametable(&mut self, addr: u16, data: u8) -> bool {
         self.mapper.ppu_write_nametable(addr, data)
+    }
+
+    pub fn fds_command(&mut self, cmd: FdsDiskCommand) {
+        self.mapper.fds_command(cmd)
+    }
+
+    pub fn fds_info(&self) -> Option<FdsDiskInfo> {
+        self.mapper.fds_info()
+    }
+
+    /// 磁盘是否被游戏写入过（用于退出时写回.sav）。
+    pub fn fds_dirty(&self) -> bool {
+        self.mapper.fds_dirty()
+    }
+
+    pub fn fds_sides(&self) -> Option<&[Vec<u8>]> {
+        self.mapper.fds_sides()
     }
 
     pub(crate) fn save_state(&self, writer: &mut StateWriter) {

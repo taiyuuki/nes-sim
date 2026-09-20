@@ -19,7 +19,9 @@ pub use api::{
 #[cfg(feature = "debug")]
 pub use api::{Breakpoint, Debugger, DisassembledInstruction, DisassemblyResult, MemorySnapshot};
 pub use apu::ExpansionAudioChip;
-pub use cartridge::{Cartridge, CartridgeError, Mirroring, TVSystem};
+pub use cartridge::{
+    Cartridge, CartridgeError, FdsDiskCommand, FdsDiskInfo, Mirroring, TVSystem, is_fds_image,
+};
 pub use input::{ControllerButton, ControllerState};
 pub use ppu::{FRAME_HEIGHT, FRAME_WIDTH};
 pub use runtime::{
@@ -84,6 +86,37 @@ impl NES {
         self.bus.load_cartridge_ines(rom)?;
         self.reset_cpu_schedule();
         Ok(())
+    }
+
+    pub fn load_cartridge_fds(&mut self, image: &[u8], bios: &[u8]) -> Result<(), CartridgeError> {
+        self.bus.load_rom(image, Some(bios))?;
+        self.reset_cpu_schedule();
+        Ok(())
+    }
+
+    /// 按格式嗅探加载ROM（iNES或FDS镜像；FDS需要BIOS ROM数据）。
+    pub fn load_rom(&mut self, rom: &[u8], bios: Option<&[u8]>) -> Result<(), CartridgeError> {
+        self.bus.load_rom(rom, bios)?;
+        self.reset_cpu_schedule();
+        Ok(())
+    }
+
+    pub fn fds_command(&mut self, cmd: FdsDiskCommand) {
+        self.bus.fds_command(cmd);
+    }
+
+    pub fn fds_info(&self) -> Option<FdsDiskInfo> {
+        self.bus.fds_info()
+    }
+
+    /// FDS磁盘是否被写入过；非FDS卡带返回false。
+    pub fn fds_dirty(&self) -> bool {
+        self.bus.fds_dirty()
+    }
+
+    /// FDS每面磁盘数据（写回.sav用）；非FDS卡带返回None。
+    pub fn fds_sides(&self) -> Option<&[Vec<u8>]> {
+        self.bus.fds_sides()
     }
 
     pub fn set_controller_state(&mut self, port: usize, state: ControllerState) {
@@ -197,6 +230,10 @@ impl NES {
                 self.set_paused(paused);
                 CoreEvent::None
             }
+            CoreCommand::FdsDisk(cmd) => {
+                self.fds_command(cmd);
+                CoreEvent::FdsDiskUpdated
+            }
         };
 
         CoreResponse {
@@ -306,6 +343,12 @@ impl NES {
     pub fn debug_disassemble(&mut self, rows: usize) -> DisassemblyResult {
         let pc = self.cpu.pc();
         cpu::disassemble_range(&mut self.bus, pc, rows, rows)
+    }
+
+    /// 任意CPU总线地址读取（调试器用）。
+    #[cfg(feature = "debug")]
+    pub fn debug_cpu_read(&mut self, addr: u16) -> u8 {
+        crate::bus::CPUBus::cpu_read(&mut self.bus, addr)
     }
 
     pub fn save_state(&self) -> Result<Vec<u8>, SaveStateError> {

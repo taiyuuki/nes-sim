@@ -1,4 +1,4 @@
-use crate::cartridge::{Cartridge, Mirroring};
+use crate::cartridge::{Cartridge, FdsDiskCommand, FdsDiskInfo, Mirroring};
 use crate::ppu::PPUBus;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
@@ -92,6 +92,22 @@ impl PpuMemory {
 
     pub(super) fn ppu_write_nametable(&mut self, addr: u16, data: u8) -> bool {
         self.cartridge.ppu_write_nametable(addr, data)
+    }
+
+    pub(super) fn fds_command(&mut self, cmd: FdsDiskCommand) {
+        self.cartridge.fds_command(cmd)
+    }
+
+    pub(super) fn fds_info(&self) -> Option<FdsDiskInfo> {
+        self.cartridge.fds_info()
+    }
+
+    pub(super) fn fds_dirty(&self) -> bool {
+        self.cartridge.fds_dirty()
+    }
+
+    pub(super) fn fds_sides(&self) -> Option<&[Vec<u8>]> {
+        self.cartridge.fds_sides()
     }
 
     #[cfg(feature = "debug")]

@@ -56,8 +56,16 @@ impl FrontendRuntime {
     }
 
     pub fn from_rom_bytes(rom: &[u8]) -> Result<Self, CartridgeError> {
+        Self::from_rom_bytes_with_bios(rom, None)
+    }
+
+    /// 加载ROM；FDS镜像会使用传入的BIOS ROM（disksys.rom）。
+    pub fn from_rom_bytes_with_bios(
+        rom: &[u8],
+        bios: Option<&[u8]>,
+    ) -> Result<Self, CartridgeError> {
         let mut nes = NES::new();
-        nes.load_cartridge_ines(rom)?;
+        nes.load_rom(rom, bios)?;
         nes.reset();
         Ok(Self::new(nes))
     }
