@@ -599,7 +599,7 @@ impl CPU {
         operand: ResolvedOperand,
         bus: &mut impl CPUBus,
     ) {
-        if matches!(mode, AddrMode::ABX) {
+        if matches!(mode, AddrMode::ABX | AddrMode::ABY | AddrMode::IZY) {
             let _ = bus.cpu_read_timed(operand.dummy_addr, 4);
         }
     }
@@ -920,6 +920,7 @@ impl CPU {
             }
             OpCode::AHX => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_store_dummy_read(inst.1, operand, bus);
                 self.ahx(operand.addr, bus);
             }
             OpCode::ALR => {
@@ -980,14 +981,17 @@ impl CPU {
             }
             OpCode::TAS => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_store_dummy_read(inst.1, operand, bus);
                 self.tas(operand.addr, bus);
             }
             OpCode::SHX => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_store_dummy_read(inst.1, operand, bus);
                 self.shx(operand, bus);
             }
             OpCode::SHY => {
                 let operand = self.require_operand(inst.1, bus);
+                self.issue_store_dummy_read(inst.1, operand, bus);
                 self.shy(operand, bus);
             }
             OpCode::SAX => {

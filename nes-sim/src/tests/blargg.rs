@@ -241,13 +241,6 @@ fn blargg_known_accuracy_gaps() {
         &["07-abs_xy.nes"],
         3600,
     );
-    // CPU: APU空间dummy read（与非官方指令dummy read同源）
-    collect_blargg_suite(
-        &mut failures,
-        "instr_misc/rom_singles",
-        &["04-dummy_reads_apu.nes"],
-        3600,
-    );
     // CPU: PPU IO空间执行
     collect_blargg_suite(
         &mut failures,
