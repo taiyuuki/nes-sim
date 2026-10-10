@@ -1425,12 +1425,16 @@ impl CPU {
 
     // 从栈中弹出之前的地址并返回该地址
     fn rts(&mut self, bus: &mut impl CPUBus) {
+        // 对下一操作码字节的dummy读取（在PPU IO空间执行时有副作用）
+        let _ = bus.cpu_read(self.pc);
         let lo = self.stack_pop(bus) as u16;
         let hi = self.stack_pop(bus) as u16;
         self.pc = ((hi << 8) | lo).wrapping_add(1);
     }
 
     fn brk(&mut self, bus: &mut impl CPUBus) {
+        // signature字节前的padding dummy读取（在PPU IO空间执行时有副作用）
+        let _ = bus.cpu_read(self.pc);
         self.pc = self.pc.wrapping_add(1);
         self.stack_push((self.pc >> 8) as u8, bus);
         self.stack_push(self.pc as u8, bus);
@@ -1440,6 +1444,8 @@ impl CPU {
     }
 
     fn rti(&mut self, bus: &mut impl CPUBus) {
+        // 对下一操作码字节的dummy读取（在PPU IO空间执行时有副作用）
+        let _ = bus.cpu_read(self.pc);
         let val = self.stack_pop(bus);
         self.set_byte_to_p(val);
         let lo = self.stack_pop(bus) as u16;

@@ -241,13 +241,6 @@ fn blargg_known_accuracy_gaps() {
         &["07-abs_xy.nes"],
         3600,
     );
-    // CPU: PPU IO空间执行
-    collect_blargg_suite(
-        &mut failures,
-        "cpu_exec_space",
-        &["test_cpu_exec_space_ppuio.nes"],
-        3600,
-    );
     // CPU: NMI/BRK/IRQ交互与时序
     collect_blargg_suite(
         &mut failures,
