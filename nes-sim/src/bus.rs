@@ -210,8 +210,8 @@ impl NESBus {
     #[cfg(feature = "debug")]
     pub fn debug_read_chr(&mut self) -> [u8; 0x2000] {
         let mut chr = [0u8; 0x2000];
-        for i in 0..0x2000 {
-            chr[i] = self.ppu_memory.ppu_read(i as u16);
+        for (i, byte) in chr.iter_mut().enumerate() {
+            *byte = self.ppu_memory.ppu_read(i as u16);
         }
         chr
     }

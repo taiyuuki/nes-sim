@@ -53,11 +53,10 @@ fn main() -> ExitCode {
 
     if let Some(parent) = Path::new(&output_path).parent()
         && !parent.as_os_str().is_empty()
+        && let Err(error) = std::fs::create_dir_all(parent)
     {
-        if let Err(error) = std::fs::create_dir_all(parent) {
-            eprintln!("failed to create output directory {:?}: {}", parent, error);
-            return ExitCode::from(1);
-        }
+        eprintln!("failed to create output directory {:?}: {}", parent, error);
+        return ExitCode::from(1);
     }
 
     if let Err(error) = write_frame_ppm(&output_path, nes.video_frame()) {

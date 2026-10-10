@@ -124,13 +124,13 @@ fn main() -> ExitCode {
         prev_hash
     );
 
-    if let Some(ref out_dir) = out_dir {
-        if !out_dir.is_empty() {
-            let path = Path::new(out_dir);
-            if let Err(error) = std::fs::create_dir_all(path) {
-                eprintln!("failed to create output directory {:?}: {}", path, error);
-                return ExitCode::from(1);
-            }
+    if let Some(ref out_dir) = out_dir
+        && !out_dir.is_empty()
+    {
+        let path = Path::new(out_dir);
+        if let Err(error) = std::fs::create_dir_all(path) {
+            eprintln!("failed to create output directory {:?}: {}", path, error);
+            return ExitCode::from(1);
         }
     }
 
