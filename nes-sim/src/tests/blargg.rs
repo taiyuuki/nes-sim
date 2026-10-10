@@ -241,13 +241,6 @@ fn blargg_known_accuracy_gaps() {
         &["07-abs_xy.nes"],
         3600,
     );
-    // CPU: 指令时序 (code 4)
-    collect_blargg_suite(
-        &mut failures,
-        "instr_timing/rom_singles",
-        &["1-instr_timing.nes"],
-        3600,
-    );
     // CPU: APU空间dummy read（与非官方指令dummy read同源）
     collect_blargg_suite(
         &mut failures,

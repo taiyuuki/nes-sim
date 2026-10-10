@@ -951,6 +951,7 @@ impl CPU {
                 let operand = self.require_operand(inst.1, bus);
                 self.issue_dummy_read_on_page_cross(operand, bus);
                 self.las(operand.addr, bus);
+                extra_cycles += inst.1.read_page_cross_penalty(operand);
             }
             OpCode::ISC => {
                 let operand = self.require_operand(inst.1, bus);
