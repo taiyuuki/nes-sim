@@ -260,6 +260,29 @@ fn run_frame_advances_exactly_one_ppu_frame() {
 }
 
 #[test]
+fn battery_ram_load_and_read_through_nes() {
+    let mut rom = make_ines_with_tv(0x00);
+    rom[6] = 0x12; // MMC1 + 电池标志
+
+    let mut nes = NES::new();
+    nes.load_cartridge_ines(&rom)
+        .expect("MMC1 battery ROM should load");
+    assert_eq!(nes.battery_ram().map(|ram| ram.len()), Some(0x2000));
+
+    nes.load_battery_ram(&[0xAB; 0x2000]);
+    assert_eq!(nes.battery_ram().unwrap()[..2], [0xAB, 0xAB]);
+
+    // 无电池标志时不暴露SRAM
+    let mut plain_rom = make_ines_with_tv(0x00);
+    plain_rom[6] = 0x10;
+    let mut plain = NES::new();
+    plain
+        .load_cartridge_ines(&plain_rom)
+        .expect("ROM should load");
+    assert!(plain.battery_ram().is_none());
+}
+
+#[test]
 fn pal_cpu_schedule_uses_33334_pattern() {
     let mut nes = NES::new();
     let rom = make_ines_with_tv(0x01);

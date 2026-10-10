@@ -193,7 +193,28 @@ pub(super) trait Mapper {
     fn fds_sides(&self) -> Option<&[Vec<u8>]> {
         None
     }
+    /// 电池后备PRG RAM；无PRG RAM的mapper保持默认None。
+    /// 是否持久化由Cartridge按头部电池标志把关，mapper只负责暴露RAM。
+    fn battery_ram(&self) -> Option<&[u8]> {
+        None
+    }
+    /// 载入电池后备PRG RAM（数据与RAM长度不一致时按短者截断）。
+    fn load_battery_ram(&mut self, _data: &[u8]) {}
 }
+
+/// 为以 `$field`（prg_ram/wram）保存PRG RAM的mapper生成电池存档存取实现。
+macro_rules! prg_ram_battery {
+    ($field:ident) => {
+        fn battery_ram(&self) -> Option<&[u8]> {
+            Some(&self.$field)
+        }
+        fn load_battery_ram(&mut self, data: &[u8]) {
+            let len = self.$field.len().min(data.len());
+            self.$field[..len].copy_from_slice(&data[..len]);
+        }
+    };
+}
+pub(crate) use prg_ram_battery;
 
 pub struct NoMapper {}
 
@@ -503,6 +524,14 @@ impl MapperEnum {
 
     pub(super) fn fds_sides(&self) -> Option<&[Vec<u8>]> {
         dispatch_mapper!(self, fds_sides())
+    }
+
+    pub(super) fn battery_ram(&self) -> Option<&[u8]> {
+        dispatch_mapper!(self, battery_ram())
+    }
+
+    pub(super) fn load_battery_ram(&mut self, data: &[u8]) {
+        dispatch_mapper!(self, load_battery_ram(data))
     }
 }
 

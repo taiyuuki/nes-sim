@@ -253,7 +253,8 @@ impl CartridgeHeader {
         }
 
         let mirroring = decode_mirroring(raw[6]);
-        let has_sram = flags6 & 0x02 == 0;
+        // iNES/NES 2.0 flags6 bit1: 1 = battery-backed PRG RAM ($6000-$7FFF)
+        let has_battery = flags6 & 0x02 != 0;
         let console_type = raw[7] & 0x03;
         let console_type_data = raw[13];
 
@@ -278,7 +279,7 @@ impl CartridgeHeader {
                     mapper_id,
                     submapper,
                     mirroring,
-                    has_battery_backed_ram: has_sram,
+                    has_battery_backed_ram: has_battery,
                     has_trainer,
                     has_bus_conflicts: false,
                     console_type,
@@ -329,7 +330,7 @@ impl CartridgeHeader {
                     mapper_id,
                     submapper: 0,
                     mirroring,
-                    has_battery_backed_ram: has_sram,
+                    has_battery_backed_ram: has_battery,
                     has_trainer,
                     has_bus_conflicts,
                     console_type,
@@ -337,12 +338,12 @@ impl CartridgeHeader {
                     timing_mode,
                     tv_system,
                     prg_rom_size,
-                    prg_ram_size: if has_prg_ram && !has_sram {
+                    prg_ram_size: if has_prg_ram && !has_battery {
                         inferred_prg_ram_size
                     } else {
                         0
                     },
-                    prg_nvram_size: if has_prg_ram && has_sram {
+                    prg_nvram_size: if has_prg_ram && has_battery {
                         inferred_prg_ram_size
                     } else {
                         0
@@ -514,6 +515,22 @@ impl Cartridge {
 
     pub fn fds_sides(&self) -> Option<&[Vec<u8>]> {
         self.mapper.fds_sides()
+    }
+
+    /// 电池后备PRG RAM；仅头部声明电池标志的卡带返回Some。
+    pub fn battery_ram(&self) -> Option<&[u8]> {
+        if self.header.has_battery_backed_ram {
+            self.mapper.battery_ram()
+        } else {
+            None
+        }
+    }
+
+    /// 载入电池后备PRG RAM（无电池或数据长度不符时按mapper实际RAM截断）。
+    pub fn load_battery_ram(&mut self, data: &[u8]) {
+        if self.header.has_battery_backed_ram {
+            self.mapper.load_battery_ram(data);
+        }
     }
 
     pub(crate) fn save_state(&self, writer: &mut StateWriter) {

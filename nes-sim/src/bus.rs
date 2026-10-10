@@ -126,6 +126,16 @@ impl NESBus {
         self.ppu_memory.fds_sides()
     }
 
+    /// 电池后备PRG RAM；仅头部声明电池标志的卡带返回Some。
+    pub fn battery_ram(&self) -> Option<&[u8]> {
+        self.ppu_memory.battery_ram()
+    }
+
+    /// 载入电池后备PRG RAM。
+    pub fn load_battery_ram(&mut self, data: &[u8]) {
+        self.ppu_memory.load_battery_ram(data)
+    }
+
     pub fn reset(&mut self) {
         self.ppu.reset();
         self.apu.reset();

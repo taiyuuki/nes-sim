@@ -1,4 +1,4 @@
-use super::Mapper;
+use super::{Mapper, prg_ram_battery};
 use crate::cartridge::Mirroring;
 use crate::cartridge::mappers::{decode_mirroring, encode_mirroring};
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
@@ -58,6 +58,8 @@ impl Mmc4 {
 }
 
 impl Mapper for Mmc4 {
+    prg_ram_battery!(prg_ram);
+
     fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
             0x6000..=0x7FFF => Some(self.prg_ram[(addr - 0x6000) as usize]),

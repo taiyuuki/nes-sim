@@ -110,6 +110,14 @@ impl PpuMemory {
         self.cartridge.fds_sides()
     }
 
+    pub(super) fn battery_ram(&self) -> Option<&[u8]> {
+        self.cartridge.battery_ram()
+    }
+
+    pub(super) fn load_battery_ram(&mut self, data: &[u8]) {
+        self.cartridge.load_battery_ram(data)
+    }
+
     #[cfg(feature = "debug")]
     pub(super) fn debug_vram_snapshot(&self) -> &[u8; 0x1000] {
         &self.vram

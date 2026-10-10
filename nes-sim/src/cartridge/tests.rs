@@ -1005,3 +1005,66 @@ fn fds_savestate_roundtrip_preserves_disk_and_wram() {
     // 定时器IRQ在途状态恢复后继续触发
     assert!(restored.irq_line(), "pending timer IRQ should survive");
 }
+
+#[test]
+fn battery_ram_roundtrip_requires_battery_flag() {
+    let prg = vec![0xEA; PRG_BANK_LEN * 2];
+    let chr = vec![0x00; CHR_BANK_LEN];
+
+    // MMC1(mapper 1) + 电池标志(flags6 bit1)
+    let rom_battery = make_ines_with_prg_chr(&prg, &chr, 0x12);
+    let mut cart = Cartridge::from_ines(&rom_battery).unwrap();
+    assert_eq!(cart.battery_ram().map(|ram| ram.len()), Some(0x2000));
+
+    // 游戏写入PRG RAM后battery_ram()应能观察到
+    assert!(cart.cpu_write(0x6000, 0x42));
+    assert!(cart.cpu_write(0x6001, 0x99));
+    assert_eq!(&cart.battery_ram().unwrap()[..2], &[0x42, 0x99]);
+
+    // 模拟保存后重新装载: load_battery_ram恢复, cpu_read可读回
+    let saved = cart.battery_ram().unwrap().to_vec();
+    let mut restored = Cartridge::from_ines(&rom_battery).unwrap();
+    restored.load_battery_ram(&saved);
+    assert_eq!(restored.cpu_read(0x6000), Some(0x42));
+    assert_eq!(restored.cpu_read(0x6001), Some(0x99));
+
+    // 短数据按长度截断, 其余RAM不受影响
+    restored.load_battery_ram(&[0x77, 0x88]);
+    assert_eq!(restored.cpu_read(0x6000), Some(0x77));
+    assert_eq!(restored.cpu_read(0x6001), Some(0x88));
+    assert_eq!(restored.cpu_read(0x6002), Some(0x00));
+
+    // 无电池标志的同一ROM: 不暴露RAM, load为空操作
+    let rom_plain = make_ines_with_prg_chr(&prg, &chr, 0x10);
+    let mut plain = Cartridge::from_ines(&rom_plain).unwrap();
+    assert!(plain.battery_ram().is_none());
+    plain.load_battery_ram(&[0x55; 0x2000]);
+    assert_eq!(plain.cpu_read(0x6000), Some(0x00));
+}
+
+#[test]
+fn battery_ram_supported_across_common_mappers() {
+    let prg = vec![0xEA; PRG_BANK_LEN * 2];
+    let chr = vec![0x00; CHR_BANK_LEN];
+
+    // VRC7 (mapper 85: flags6高nibble=5, flags7高nibble=5, 电池bit=0x02)
+    let mut vrc7_rom = make_ines_with_prg_chr(&prg, &chr, 0x52);
+    vrc7_rom[7] = 0x50;
+    let mut cart = Cartridge::from_ines(&vrc7_rom).unwrap();
+    assert_eq!(cart.battery_ram().map(|ram| ram.len()), Some(0x2000));
+
+    // MMC3 (mapper 4: flags6高nibble=4, 电池bit=0x02)
+    let mut cart = Cartridge::from_ines(&make_ines_with_prg_chr(&prg, &chr, 0x42)).unwrap();
+    assert_eq!(cart.battery_ram().map(|ram| ram.len()), Some(0x2000));
+
+    // MMC5 (mapper 5: flags6高nibble=5, 电池bit=0x02), WRAM容量随ROM而定
+    let mut cart = Cartridge::from_ines(&make_ines_with_prg_chr(&prg, &chr, 0x52)).unwrap();
+    assert!(cart.battery_ram().is_some());
+
+    // 未实现PRG RAM的mapper即使电池标志置位也没有可持久化数据
+    // (VRC4, mapper 21: flags6高nibble=5, flags7高nibble=1)
+    let mut vrc4_rom = make_ines_with_prg_chr(&prg, &chr, 0x52);
+    vrc4_rom[7] = 0x10;
+    let mut cart = Cartridge::from_ines(&vrc4_rom).unwrap();
+    assert!(cart.battery_ram().is_none());
+}

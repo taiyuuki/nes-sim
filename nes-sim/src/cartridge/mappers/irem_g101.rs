@@ -1,4 +1,4 @@
-use super::Mapper;
+use super::{Mapper, prg_ram_battery};
 use crate::cartridge::Mirroring;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
@@ -62,6 +62,8 @@ impl IremG101 {
 }
 
 impl Mapper for IremG101 {
+    prg_ram_battery!(wram);
+
     fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
             0x6000..=0x7FFF => Some(self.wram[(addr & 0x1FFF) as usize]),

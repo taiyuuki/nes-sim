@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::Mapper;
+use super::{Mapper, prg_ram_battery};
 use crate::apu::ExpansionAudioChip;
 use crate::cartridge::expansion_audio::mmc5::{Mmc5Audio, Mmc5AudioChip};
 use crate::cartridge::{CHR_BANK_LEN, Mirroring};
@@ -458,6 +458,8 @@ pub(super) fn mmc5_wram_banks(prg_chr_crc32: u32) -> usize {
 }
 
 impl Mapper for Mmc5 {
+    prg_ram_battery!(prg_ram);
+
     fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
             0x5000..=0x5014 => Some(0),

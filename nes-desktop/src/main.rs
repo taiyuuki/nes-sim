@@ -71,11 +71,15 @@ fn usage(program: &str) {
     eprintln!("  Esc     Quit");
 }
 
-/// 按扩展名/魔数加载ROM；FDS镜像自动查找BIOS并优先加载 <rom>.sav 备份。
+/// 按扩展名/魔数加载ROM；FDS镜像自动查找BIOS并优先加载 <rom>.sav 备份，
+/// 普通卡带带电池时自动载入 <rom>.sav 存档。
 fn load_rom_runtime(rom_path: &str) -> Result<FrontendRuntime, String> {
     let rom = std::fs::read(rom_path).map_err(|e| format!("读取文件失败: {e}"))?;
     if !is_fds_image(&rom) {
-        return FrontendRuntime::from_rom_bytes(&rom).map_err(|e| format!("加载 ROM 失败: {e}"));
+        let mut runtime =
+            FrontendRuntime::from_rom_bytes(&rom).map_err(|e| format!("加载 ROM 失败: {e}"))?;
+        load_battery_save(&mut runtime, rom_path);
+        return Ok(runtime);
     }
 
     // FDS: 优先使用写盘备份(.sav), 其次原镜像
@@ -90,6 +94,18 @@ fn load_rom_runtime(rom_path: &str) -> Result<FrontendRuntime, String> {
         .map_err(|e| format!("加载 FDS 失败: {e}"))?;
     eprintln!("FDS: 使用镜像 {image_path} + BIOS ({} 字节)", bios.len());
     Ok(runtime)
+}
+
+/// 卡带带电池时载入 <rom>.sav 存档（文件存在才生效）。
+fn load_battery_save(runtime: &mut FrontendRuntime, rom_path: &str) {
+    if runtime.nes().battery_ram().is_none() {
+        return;
+    }
+    let sav_path = PathBuf::from(rom_path).with_extension("sav");
+    if let Ok(data) = std::fs::read(&sav_path) {
+        runtime.nes_mut().load_battery_ram(&data);
+        eprintln!("电池存档已载入: {}", sav_path.display());
+    }
 }
 
 /// 查找FDS BIOS ROM (disksys.rom): ROM同目录、BIOS Files子目录、上级目录。
@@ -127,23 +143,33 @@ fn find_fds_bios(rom_path: &str) -> Result<Vec<u8>, String> {
     }
 }
 
-/// 退出前把游戏写入过的FDS磁盘数据保存到 <rom>.sav。
-fn save_fds_disk(runtime: &FrontendRuntime, rom_path: &str) {
+/// 退出前/换卡前把游戏写入过的数据保存到 <rom>.sav：
+/// FDS 磁盘（被写入过才保存）和电池 SRAM。
+fn save_persist_data(runtime: &FrontendRuntime, rom_path: &str) {
     let nes = runtime.nes();
-    if !nes.fds_dirty() {
-        return;
+    if nes.fds_dirty()
+        && let Some(sides) = nes.fds_sides()
+    {
+        let sav_path = PathBuf::from(rom_path).with_extension("sav");
+        let mut data = Vec::with_capacity(sides.len() * 65500);
+        for side in sides {
+            data.extend_from_slice(side);
+        }
+        match std::fs::write(&sav_path, &data) {
+            Ok(()) => eprintln!("FDS 磁盘已保存: {}", sav_path.display()),
+            Err(error) => eprintln!("FDS 磁盘保存失败: {error}"),
+        }
     }
-    let Some(sides) = nes.fds_sides() else {
-        return;
-    };
-    let sav_path = PathBuf::from(rom_path).with_extension("sav");
-    let mut data = Vec::with_capacity(sides.len() * 65500);
-    for side in sides {
-        data.extend_from_slice(side);
-    }
-    match std::fs::write(&sav_path, &data) {
-        Ok(()) => eprintln!("FDS 磁盘已保存: {}", sav_path.display()),
-        Err(error) => eprintln!("FDS 磁盘保存失败: {error}"),
+    if let Some(ram) = nes.battery_ram() {
+        let sav_path = PathBuf::from(rom_path).with_extension("sav");
+        match std::fs::write(&sav_path, ram) {
+            Ok(()) => eprintln!(
+                "电池存档已保存: {} ({} 字节)",
+                sav_path.display(),
+                ram.len()
+            ),
+            Err(error) => eprintln!("电池存档保存失败: {error}"),
+        }
     }
 }
 
@@ -326,7 +352,7 @@ fn main() -> ExitCode {
             status_message = match prompt_and_load_rom() {
                 Ok(new_rom_path) => {
                     // 先保存旧FDS磁盘
-                    save_fds_disk(&runtime, &current_rom_path);
+                    save_persist_data(&runtime, &current_rom_path);
                     match load_rom_runtime(&new_rom_path) {
                         Ok(mut new_runtime) => {
                             // 停止旧音频播放
@@ -527,7 +553,7 @@ fn main() -> ExitCode {
     }
 
     // 退出前保存FDS磁盘写入
-    save_fds_disk(&runtime, &current_rom_path);
+    save_persist_data(&runtime, &current_rom_path);
 
     ExitCode::SUCCESS
 }

@@ -119,6 +119,16 @@ impl NES {
         self.bus.fds_sides()
     }
 
+    /// 电池后备PRG RAM（读写.sav用）；无电池卡带返回None。
+    pub fn battery_ram(&self) -> Option<&[u8]> {
+        self.bus.battery_ram()
+    }
+
+    /// 载入电池后备PRG RAM（无电池卡带为空操作）。
+    pub fn load_battery_ram(&mut self, data: &[u8]) {
+        self.bus.load_battery_ram(data)
+    }
+
     pub fn set_controller_state(&mut self, port: usize, state: ControllerState) {
         self.bus.set_controller_state(port, state);
     }
