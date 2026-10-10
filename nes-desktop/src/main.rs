@@ -62,8 +62,9 @@ fn usage(program: &str) {
     eprintln!("  Space   Fast-forward (hold)");
     eprintln!("  1..5    Toggle APU mute (P1/P2/TRI/NOI/DMC)");
     eprintln!("  0       Clear APU mute");
-    eprintln!("  F5      Save state");
-    eprintln!("  F8      Load state");
+    eprintln!("  [ / ]   Select save slot 1-9");
+    eprintln!("  F5      Save state (current slot)");
+    eprintln!("  F8      Load state (current slot)");
     eprintln!("  F1      FDS: 插入/退出磁盘");
     eprintln!("  F2      FDS: 切换盘面(需先退盘)");
     eprintln!("  O       Open ROM file");
@@ -242,7 +243,7 @@ fn main() -> ExitCode {
         }
     };
     let mut current_rom_path = rom_path.clone();
-    let save_path = default_save_path(&rom_path);
+    let mut save_slot: u8 = 1;
     let mut audio_player = match AudioPlayer::new(runtime.snapshot().audio.sample_rate) {
         Ok(player) => Some(player),
         Err(error) => {
@@ -301,7 +302,7 @@ fn main() -> ExitCode {
     let mut frames_in_window = 0u32;
     let mut fps = 0.0f32;
     let mut fps_window_start = Instant::now();
-    let mut status_message = format!("save slot {}", save_path.display());
+    let mut status_message = format!("slot {save_slot}");
     let mut apu_mute_mask = runtime.nes().apu_debug_mute_mask();
 
     let mut snapshot;
@@ -323,9 +324,10 @@ fn main() -> ExitCode {
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let frame_start = Instant::now();
         if window.is_key_pressed(Key::F5, KeyRepeat::No) {
+            let save_path = slot_save_path(&current_rom_path, save_slot);
             status_message = match runtime.save_state() {
                 Ok(bytes) => match std::fs::write(&save_path, bytes) {
-                    Ok(()) => format!("saved {}", save_path.display()),
+                    Ok(()) => format!("saved {} (slot {save_slot})", save_path.display()),
                     Err(error) => format!("save failed: {error}"),
                 },
                 Err(error) => format!("save failed: {error}"),
@@ -333,13 +335,24 @@ fn main() -> ExitCode {
         }
 
         if window.is_key_pressed(Key::F8, KeyRepeat::No) {
+            let save_path = slot_save_path(&current_rom_path, save_slot);
             status_message = match std::fs::read(&save_path) {
                 Ok(bytes) => match runtime.load_state(&bytes) {
-                    Ok(()) => format!("loaded {}", save_path.display()),
+                    Ok(()) => format!("loaded {} (slot {save_slot})", save_path.display()),
                     Err(error) => format!("load failed: {error}"),
                 },
                 Err(error) => format!("load failed: {error}"),
             };
+        }
+
+        // [ / ] 循环切换存档槽 1-9
+        if window.is_key_pressed(Key::LeftBracket, KeyRepeat::No) {
+            save_slot = if save_slot == 1 { 9 } else { save_slot - 1 };
+            status_message = format!("slot {save_slot}");
+        }
+        if window.is_key_pressed(Key::RightBracket, KeyRepeat::No) {
+            save_slot = if save_slot == 9 { 1 } else { save_slot + 1 };
+            status_message = format!("slot {save_slot}");
         }
 
         if handle_apu_debug_hotkeys(&window, &mut runtime, &mut apu_mute_mask) {
@@ -1080,8 +1093,9 @@ fn fds_status_message(runtime: &FrontendRuntime) -> String {
     }
 }
 
-fn default_save_path(rom_path: &str) -> PathBuf {
-    PathBuf::from(rom_path).with_extension("state")
+/// 存档槽对应的即时存档文件： <rom>.state<slot>（槽位1-9）。
+fn slot_save_path(rom_path: &str, slot: u8) -> PathBuf {
+    PathBuf::from(rom_path).with_extension(format!("state{slot}"))
 }
 
 /// 弹出文件选择对话框并尝试加载 ROM
