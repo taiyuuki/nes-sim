@@ -53,10 +53,8 @@ fn usage(program: &str) {
     eprintln!(r#"Example: {program} --tv-system ntsc "roms/mmc1/Rockman2(J).nes""#);
     eprintln!("说明: 如果不指定 ROM 路径，运行后会弹出文件选择对话框");
     eprintln!("Controls:");
-    eprintln!("  Arrows  D-pad");
-    eprintln!("  X/Z     A/B");
-    eprintln!("  Enter   Start");
-    eprintln!("  Tab     Select");
+    eprintln!("  P1: Arrows D-pad | Z/X B/A | Tab Select | Enter Start");
+    eprintln!("  P2: IJKL D-pad | Comma/Period B/A | RShift Select | RCtrl Start");
     eprintln!("  P       Pause/Resume");
     eprintln!("  N       Step frame");
     eprintln!("  M       Step CPU instruction");
@@ -904,57 +902,87 @@ fn write_audio_data_u16(
     }
 }
 
-fn collect_input(window: &Window) -> FrontendInput {
-    let mut controller1 = ControllerState::new();
+/// 单个手柄的键位映射。
+struct KeyMapping {
+    a: Key,
+    b: Key,
+    select: Key,
+    start: Key,
+    up: Key,
+    down: Key,
+    left: Key,
+    right: Key,
+}
+
+/// P1: 方向键 + Z/X + Tab/Enter；P2: IJKL + ,/. + RightShift/RightCtrl
+const P1_KEYS: KeyMapping = KeyMapping {
+    a: Key::X,
+    b: Key::Z,
+    select: Key::Tab,
+    start: Key::Enter,
+    up: Key::Up,
+    down: Key::Down,
+    left: Key::Left,
+    right: Key::Right,
+};
+
+const P2_KEYS: KeyMapping = KeyMapping {
+    a: Key::Period,
+    b: Key::Comma,
+    select: Key::RightShift,
+    start: Key::RightCtrl,
+    up: Key::I,
+    down: Key::K,
+    left: Key::J,
+    right: Key::L,
+};
+
+fn collect_controller(window: &Window, keys: &KeyMapping) -> ControllerState {
+    let mut state = ControllerState::new();
+    set_button(&mut state, window.is_key_down(keys.a), ControllerButton::A);
+    set_button(&mut state, window.is_key_down(keys.b), ControllerButton::B);
     set_button(
-        &mut controller1,
-        window.is_key_down(Key::X),
-        ControllerButton::A,
-    );
-    set_button(
-        &mut controller1,
-        window.is_key_down(Key::Z),
-        ControllerButton::B,
-    );
-    set_button(
-        &mut controller1,
-        window.is_key_down(Key::Enter),
-        ControllerButton::Start,
-    );
-    set_button(
-        &mut controller1,
-        window.is_key_down(Key::Tab),
+        &mut state,
+        window.is_key_down(keys.select),
         ControllerButton::Select,
     );
     set_button(
-        &mut controller1,
-        window.is_key_down(Key::Up),
+        &mut state,
+        window.is_key_down(keys.start),
+        ControllerButton::Start,
+    );
+    set_button(
+        &mut state,
+        window.is_key_down(keys.up),
         ControllerButton::Up,
     );
     set_button(
-        &mut controller1,
-        window.is_key_down(Key::Down),
+        &mut state,
+        window.is_key_down(keys.down),
         ControllerButton::Down,
     );
     set_button(
-        &mut controller1,
-        window.is_key_down(Key::Left),
+        &mut state,
+        window.is_key_down(keys.left),
         ControllerButton::Left,
     );
     set_button(
-        &mut controller1,
-        window.is_key_down(Key::Right),
+        &mut state,
+        window.is_key_down(keys.right),
         ControllerButton::Right,
     );
+    state
+}
 
+fn collect_input(window: &Window) -> FrontendInput {
     FrontendInput {
-        controller1,
+        controller1: collect_controller(window, &P1_KEYS),
+        controller2: collect_controller(window, &P2_KEYS),
         reset: window.is_key_pressed(Key::R, KeyRepeat::No),
         toggle_pause: window.is_key_pressed(Key::P, KeyRepeat::No),
         step_frame: window.is_key_pressed(Key::N, KeyRepeat::No),
         step_cpu_instruction: window.is_key_pressed(Key::M, KeyRepeat::No),
         quit: window.is_key_pressed(Key::Escape, KeyRepeat::No),
-        ..FrontendInput::default()
     }
 }
 
