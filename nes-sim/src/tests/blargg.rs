@@ -87,6 +87,17 @@ fn run_blargg_rom(rel_path: &str, max_frames: u64) -> Option<BlarggOutcome> {
 /// 运行一个套件（多个ROM），任一fixture缺失则整个套件跳过。
 fn run_blargg_suite(suite: &str, roms: &[&str], max_frames: u64) {
     let mut failures = Vec::new();
+    collect_blargg_suite(&mut failures, suite, roms, max_frames);
+    assert!(
+        failures.is_empty(),
+        "blargg {suite} 失败 {} 项:\n{}\n",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// 汇总运行一个套件的失败项（不assert），供已知差距清单一次性收集全部结果。
+fn collect_blargg_suite(failures: &mut Vec<String>, suite: &str, roms: &[&str], max_frames: u64) {
     for rom in roms {
         let rel_path = format!("{suite}/{rom}");
         match run_blargg_rom(&rel_path, max_frames) {
@@ -100,12 +111,6 @@ fn run_blargg_suite(suite: &str, roms: &[&str], max_frames: u64) {
             }
         }
     }
-    assert!(
-        failures.is_empty(),
-        "blargg {suite} 失败 {} 项:\n{}\n",
-        failures.len(),
-        failures.join("\n")
-    );
 }
 
 #[test]
@@ -211,22 +216,44 @@ fn blargg_apu_test() {
 }
 
 /// 已知精度差距清单（修复一项就从这里挪回上面的常跑套件）。
-/// 失败详情见各套件assert输出；`cargo test -- --ignored` 运行。
+/// 汇总收集全部失败项后统一断言；`cargo test -- --ignored` 运行。
 #[test]
 #[ignore = "已知模拟器精度差距，修复后逐项挪回常跑套件"]
 fn blargg_known_accuracy_gaps() {
+    let mut failures = Vec::new();
     // CPU: 非官方指令 SHX/SHY (9E/9C)
-    run_blargg_suite("instr_test-v5/rom_singles", &["07-abs_xy.nes"], 3600);
+    collect_blargg_suite(
+        &mut failures,
+        "instr_test-v5/rom_singles",
+        &["07-abs_xy.nes"],
+        3600,
+    );
     // CPU: 指令时序 (code 4)
-    run_blargg_suite("instr_timing/rom_singles", &["1-instr_timing.nes"], 3600);
+    collect_blargg_suite(
+        &mut failures,
+        "instr_timing/rom_singles",
+        &["1-instr_timing.nes"],
+        3600,
+    );
     // CPU: APU空间dummy read（与非官方指令dummy read同源）
-    run_blargg_suite("instr_misc/rom_singles", &["04-dummy_reads_apu.nes"], 3600);
+    collect_blargg_suite(
+        &mut failures,
+        "instr_misc/rom_singles",
+        &["04-dummy_reads_apu.nes"],
+        3600,
+    );
     // CPU: PPU IO空间执行
-    run_blargg_suite("cpu_exec_space", &["test_cpu_exec_space_ppuio.nes"], 3600);
+    collect_blargg_suite(
+        &mut failures,
+        "cpu_exec_space",
+        &["test_cpu_exec_space_ppuio.nes"],
+        3600,
+    );
     // CPU: 复位后寄存器初值 A X Y P S
-    run_blargg_suite("cpu_reset", &["registers.nes"], 3600);
+    collect_blargg_suite(&mut failures, "cpu_reset", &["registers.nes"], 3600);
     // CPU: NMI/BRK/IRQ交互与时序
-    run_blargg_suite(
+    collect_blargg_suite(
+        &mut failures,
         "cpu_interrupts_v2/rom_singles",
         &[
             "2-nmi_and_brk.nes",
@@ -237,7 +264,8 @@ fn blargg_known_accuracy_gaps() {
         7200,
     );
     // PPU: VBL置位时刻、NMI使能/抑制/开关时序
-    run_blargg_suite(
+    collect_blargg_suite(
+        &mut failures,
         "ppu_vbl_nmi/rom_singles",
         &[
             "02-vbl_set_time.nes",
@@ -251,7 +279,8 @@ fn blargg_known_accuracy_gaps() {
         3600,
     );
     // APU: 时钟抖动、长度计数器/帧IRQ时序、DMC基础与采样率
-    run_blargg_suite(
+    collect_blargg_suite(
+        &mut failures,
         "apu_test/rom_singles",
         &[
             "4-jitter.nes",
@@ -263,9 +292,16 @@ fn blargg_known_accuracy_gaps() {
         10800,
     );
     // DMA: SPR DMA与DMC DMA竞争（表头输出后无进展）
-    run_blargg_suite(
+    collect_blargg_suite(
+        &mut failures,
         "sprdma_and_dmc_dma",
         &["sprdma_and_dmc_dma.nes", "sprdma_and_dmc_dma_512.nes"],
         7200,
+    );
+    assert!(
+        failures.is_empty(),
+        "剩余已知精度差距 {} 项:\n{}\n",
+        failures.len(),
+        failures.join("\n")
     );
 }

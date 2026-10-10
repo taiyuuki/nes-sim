@@ -982,11 +982,11 @@ impl CPU {
             }
             OpCode::SHX => {
                 let operand = self.require_operand(inst.1, bus);
-                self.shx(operand.addr, bus);
+                self.shx(operand, bus);
             }
             OpCode::SHY => {
                 let operand = self.require_operand(inst.1, bus);
-                self.shy(operand.addr, bus);
+                self.shy(operand, bus);
             }
             OpCode::SAX => {
                 let operand = self.require_operand(inst.1, bus);
@@ -1797,14 +1797,27 @@ impl CPU {
         }
     }
 
-    fn shx(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let hi = ((addr >> 8) + 1) as u8;
-        bus.cpu_write(addr, self.x & hi);
+    fn shx(&mut self, operand: ResolvedOperand, bus: &mut impl CPUBus) {
+        // 写入值 = X & (基地址高字节+1)；跨页时写地址的高字节与X相与
+        let base_hi = (operand.dummy_addr >> 8) as u8;
+        let value = self.x & base_hi.wrapping_add(1);
+        let target = if operand.page_crossed {
+            (((base_hi & self.x) as u16) << 8) | (operand.addr & 0x00FF)
+        } else {
+            operand.addr
+        };
+        bus.cpu_write(target, value);
     }
 
-    fn shy(&mut self, addr: u16, bus: &mut impl CPUBus) {
-        let hi = ((addr >> 8) + 1) as u8;
-        bus.cpu_write(addr, self.y & hi);
+    fn shy(&mut self, operand: ResolvedOperand, bus: &mut impl CPUBus) {
+        let base_hi = (operand.dummy_addr >> 8) as u8;
+        let value = self.y & base_hi.wrapping_add(1);
+        let target = if operand.page_crossed {
+            (((base_hi & self.y) as u16) << 8) | (operand.addr & 0x00FF)
+        } else {
+            operand.addr
+        };
+        bus.cpu_write(target, value);
     }
 }
 
