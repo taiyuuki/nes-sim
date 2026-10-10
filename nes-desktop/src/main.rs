@@ -59,6 +59,7 @@ fn usage(program: &str) {
     eprintln!("  N       Step frame");
     eprintln!("  M       Step CPU instruction");
     eprintln!("  R       Reset");
+    eprintln!("  Space   Fast-forward (hold)");
     eprintln!("  1..5    Toggle APU mute (P1/P2/TRI/NOI/DMC)");
     eprintln!("  0       Clear APU mute");
     eprintln!("  F5      Save state");
@@ -417,6 +418,7 @@ fn main() -> ExitCode {
         }
 
         let input = collect_input(&window);
+        let fast_forward = window.is_key_down(Key::Space);
         let t_step = Instant::now();
         snapshot = runtime.step(input);
         let step_elapsed = t_step.elapsed();
@@ -426,7 +428,12 @@ fn main() -> ExitCode {
         }
 
         let t_catchup = Instant::now();
-        if let Some(player) = &mut audio_player {
+        if fast_forward {
+            // 快进期间停用音频（清空队列），松开后由常规路径自动恢复播放
+            if let Some(player) = &mut audio_player {
+                player.stop_playback();
+            }
+        } else if let Some(player) = &mut audio_player {
             player.push_samples(snapshot.audio.samples, snapshot.audio.sample_rate);
 
             // 如果还未开始播放（例如从暂停恢复），启动播放
@@ -480,7 +487,10 @@ fn main() -> ExitCode {
 
         // 帧率控制：当模拟器无法维持 60fps 时不添加额外延迟
         let now = Instant::now();
-        if frame_elapsed < frame_period {
+        if fast_forward {
+            // 快进不等待；保持deadline有效，松开后立即恢复正常节奏
+            next_frame_deadline = now + frame_period;
+        } else if frame_elapsed < frame_period {
             // 模拟器快于实时，等待下一个 deadline
             next_frame_deadline += frame_period;
             if now < next_frame_deadline {
