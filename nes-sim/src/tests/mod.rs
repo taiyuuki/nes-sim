@@ -24,6 +24,8 @@ struct AccuracyCoinResult {
     error_code: u8,
 }
 
+mod blargg;
+
 fn parse_hex_u16(text: &str) -> u16 {
     u16::from_str_radix(text, 16).expect("hex u16 field should parse")
 }

@@ -1050,21 +1050,21 @@ fn battery_ram_supported_across_common_mappers() {
     // VRC7 (mapper 85: flags6高nibble=5, flags7高nibble=5, 电池bit=0x02)
     let mut vrc7_rom = make_ines_with_prg_chr(&prg, &chr, 0x52);
     vrc7_rom[7] = 0x50;
-    let mut cart = Cartridge::from_ines(&vrc7_rom).unwrap();
+    let cart = Cartridge::from_ines(&vrc7_rom).unwrap();
     assert_eq!(cart.battery_ram().map(|ram| ram.len()), Some(0x2000));
 
     // MMC3 (mapper 4: flags6高nibble=4, 电池bit=0x02)
-    let mut cart = Cartridge::from_ines(&make_ines_with_prg_chr(&prg, &chr, 0x42)).unwrap();
+    let cart = Cartridge::from_ines(&make_ines_with_prg_chr(&prg, &chr, 0x42)).unwrap();
     assert_eq!(cart.battery_ram().map(|ram| ram.len()), Some(0x2000));
 
     // MMC5 (mapper 5: flags6高nibble=5, 电池bit=0x02), WRAM容量随ROM而定
-    let mut cart = Cartridge::from_ines(&make_ines_with_prg_chr(&prg, &chr, 0x52)).unwrap();
+    let cart = Cartridge::from_ines(&make_ines_with_prg_chr(&prg, &chr, 0x52)).unwrap();
     assert!(cart.battery_ram().is_some());
 
     // 未实现PRG RAM的mapper即使电池标志置位也没有可持久化数据
     // (VRC4, mapper 21: flags6高nibble=5, flags7高nibble=1)
     let mut vrc4_rom = make_ines_with_prg_chr(&prg, &chr, 0x52);
     vrc4_rom[7] = 0x10;
-    let mut cart = Cartridge::from_ines(&vrc4_rom).unwrap();
+    let cart = Cartridge::from_ines(&vrc4_rom).unwrap();
     assert!(cart.battery_ram().is_none());
 }
