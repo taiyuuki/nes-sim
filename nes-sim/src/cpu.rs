@@ -454,7 +454,8 @@ impl CPU {
             a: 0,
             x: 0,
             y: 0,
-            sp: 0xFD,
+            // 上电时S=$00；RESET序列压3字节使其变为$FD（blargg cpu_reset/registers）
+            sp: 0x00,
             pc: 0xFFFC,
             p: Flag::new(),
             cycles: 0,

@@ -51,6 +51,9 @@ fn run_blargg_rom(rel_path: &str, max_frames: u64) -> Option<BlarggOutcome> {
     nes.reset();
 
     let mut seen_running = false;
+    // $81复位为边沿触发：复位后ROM需数帧才会重写$6000，期间陈旧的$81
+    // 不能再次触发复位（否则ROM永远无法完成初始化）
+    let mut reset_latched = false;
     for frame in 0..max_frames {
         nes.run_frame();
         let sig = [
@@ -61,9 +64,15 @@ fn run_blargg_rom(rel_path: &str, max_frames: u64) -> Option<BlarggOutcome> {
         let signed = sig == [0xDE, 0xB0, 0x61];
         let status = CPUBus::cpu_read(&mut nes.bus, 0x6000);
         if status == 0x81 && signed {
-            // 测试请求主机复位（如cpu_reset系列），复位后继续监测
-            nes.reset();
+            if !reset_latched {
+                reset_latched = true;
+                // 测试请求主机复位（如cpu_reset系列），复位后继续监测
+                nes.reset();
+            }
             continue;
+        }
+        if status != 0x81 {
+            reset_latched = false;
         }
         if status == 0x80 {
             seen_running = true;
@@ -175,6 +184,11 @@ fn blargg_cpu_exec_space() {
 }
 
 #[test]
+fn blargg_cpu_reset() {
+    run_blargg_suite("cpu_reset", &["registers.nes"], 3600);
+}
+
+#[test]
 fn blargg_cpu_interrupts_v2() {
     run_blargg_suite(
         "cpu_interrupts_v2/rom_singles",
@@ -248,8 +262,6 @@ fn blargg_known_accuracy_gaps() {
         &["test_cpu_exec_space_ppuio.nes"],
         3600,
     );
-    // CPU: 复位后寄存器初值 A X Y P S
-    collect_blargg_suite(&mut failures, "cpu_reset", &["registers.nes"], 3600);
     // CPU: NMI/BRK/IRQ交互与时序
     collect_blargg_suite(
         &mut failures,

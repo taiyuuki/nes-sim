@@ -9,7 +9,8 @@ fn sets_pc_stack_pointer_and_interrupt_disable_from_reset_vector() {
     cpu.reset(&mut bus);
 
     assert_eq!(cpu.pc, 0x1234);
-    assert_eq!(cpu.sp, 0xFA);
+    // 上电S=$00, 复位压3字节后为$FD
+    assert_eq!(cpu.sp, 0xFD);
     assert!(cpu.p.i, "interrupt disable flag should be set after reset");
 }
 
