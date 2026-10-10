@@ -20,7 +20,7 @@
 
 ```toml
 [dependencies]
-nes-sim = "0.1"
+nes-sim = "0.2"
 ```
 
 ```rust
