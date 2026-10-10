@@ -2,8 +2,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
 use nes_sim::video::{VideoBuffer, frame_to_argb32_into};
 use nes_sim::{
-    ControllerButton, ControllerState, FdsDiskCommand, FrontendInput, FrontendRuntime, RunMode,
-    TVSystem, is_fds_image,
+    ControllerButton, ControllerState, ExecutionTarget, FdsDiskCommand, FrontendInput,
+    FrontendRuntime, RunMode, TVSystem, is_fds_image,
 };
 use std::collections::VecDeque;
 use std::env;
@@ -15,6 +15,10 @@ use std::time::{Duration, Instant};
 const AUDIO_TARGET_BUFFER_MS: usize = 50;
 const AUDIO_MAX_BUFFER_MS: usize = 200;
 const AUDIO_CATCHUP_MAX_FRAMES: usize = 5;
+/// 回退快照采集间隔（帧）：约0.5秒一份
+const REWIND_INTERVAL_FRAMES: u32 = 30;
+/// 回退缓冲容量（份）：约30秒历史
+const REWIND_HISTORY_LEN: usize = 60;
 
 /// Windows 高精度定时器守卫，离开作用域时自动恢复
 #[cfg(target_os = "windows")]
@@ -60,6 +64,7 @@ fn usage(program: &str) {
     eprintln!("  M       Step CPU instruction");
     eprintln!("  R       Reset");
     eprintln!("  Space   Fast-forward (hold)");
+    eprintln!("  Backspace Rewind (hold)");
     eprintln!("  1..5    Toggle APU mute (P1/P2/TRI/NOI/DMC)");
     eprintln!("  0       Clear APU mute");
     eprintln!("  [ / ]   Select save slot 1-9");
@@ -321,6 +326,10 @@ fn main() -> ExitCode {
     let mut render_time_acc = Duration::ZERO;
     // let mut frame_count_acc = 0u32;
 
+    // 回退缓冲：环形保留REWIND_HISTORY_LEN份savestate，按住Backspace逐份回退
+    let mut rewind_buffer: VecDeque<Vec<u8>> = VecDeque::with_capacity(REWIND_HISTORY_LEN);
+    let mut frames_since_rewind_snapshot: u32 = 0;
+
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let frame_start = Instant::now();
         if window.is_key_pressed(Key::F5, KeyRepeat::No) {
@@ -400,6 +409,8 @@ fn main() -> ExitCode {
                             // 更新状态
                             runtime = new_runtime;
                             current_rom_path = new_rom_path.clone();
+                            rewind_buffer.clear();
+                            frames_since_rewind_snapshot = 0;
                             let new_apu_mute_mask = runtime.nes().apu_debug_mute_mask();
                             apu_mute_mask = new_apu_mute_mask;
                             // 返回新状态信息
@@ -432,17 +443,43 @@ fn main() -> ExitCode {
 
         let input = collect_input(&window);
         let fast_forward = window.is_key_down(Key::Space);
+        // 按住Backspace回退；缓冲耗尽时按正常速度前进，避免空转
+        let rewinding = window.is_key_down(Key::Backspace) && !rewind_buffer.is_empty();
         let t_step = Instant::now();
-        snapshot = runtime.step(input);
-        let step_elapsed = t_step.elapsed();
-        step_time_acc += step_elapsed;
-        if snapshot.status.quit_requested {
-            break;
+        if rewinding {
+            if let Some(state) = rewind_buffer.pop_back()
+                && let Err(error) = runtime.nes_mut().load_state(&state)
+            {
+                status_message = format!("rewind failed: {error}");
+            }
+            snapshot = runtime.snapshot();
+            step_time_acc += t_step.elapsed();
+        } else {
+            let status = runtime.step(input).status;
+            step_time_acc += t_step.elapsed();
+
+            // 实际执行了帧才采集回退快照（暂停/单步时跳过）
+            if matches!(status.executed, ExecutionTarget::Frame) {
+                frames_since_rewind_snapshot += 1;
+                if frames_since_rewind_snapshot >= REWIND_INTERVAL_FRAMES {
+                    frames_since_rewind_snapshot = 0;
+                    if let Ok(state) = runtime.save_state() {
+                        rewind_buffer.push_back(state);
+                        while rewind_buffer.len() > REWIND_HISTORY_LEN {
+                            rewind_buffer.pop_front();
+                        }
+                    }
+                }
+            }
+            snapshot = runtime.snapshot();
+            if status.quit_requested {
+                break;
+            }
         }
 
         let t_catchup = Instant::now();
-        if fast_forward {
-            // 快进期间停用音频（清空队列），松开后由常规路径自动恢复播放
+        if fast_forward || rewinding {
+            // 快进/回退期间停用音频（清空队列），松开后由常规路径自动恢复播放
             if let Some(player) = &mut audio_player {
                 player.stop_playback();
             }
@@ -500,8 +537,8 @@ fn main() -> ExitCode {
 
         // 帧率控制：当模拟器无法维持 60fps 时不添加额外延迟
         let now = Instant::now();
-        if fast_forward {
-            // 快进不等待；保持deadline有效，松开后立即恢复正常节奏
+        if fast_forward || rewinding {
+            // 快进/回退不等待；保持deadline有效，松开后立即恢复正常节奏
             next_frame_deadline = now + frame_period;
         } else if frame_elapsed < frame_period {
             // 模拟器快于实时，等待下一个 deadline
