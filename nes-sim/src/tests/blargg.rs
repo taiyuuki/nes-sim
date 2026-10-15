@@ -214,7 +214,12 @@ fn blargg_ppu_vbl_nmi() {
 fn blargg_oam() {
     run_blargg_suite(
         "",
-        &["oam_read/oam_read.nes", "oam_stress/oam_stress.nes"],
+        &[
+            "oam_read/oam_read.nes",
+            "oam_stress/oam_stress.nes",
+            "ppu_open_bus/ppu_open_bus.nes",
+            "ppu_read_buffer/test_ppu_read_buffer.nes",
+        ],
         3600,
     );
 }
@@ -283,15 +288,6 @@ fn blargg_known_accuracy_gaps() {
         "apu_test/rom_singles",
         &["7-dmc_basics.nes"],
         10800,
-    );
-    // PPU: 寄存器开漏总线衰减未实现
-    collect_blargg_suite(&mut failures, "", &["ppu_open_bus/ppu_open_bus.nes"], 3600);
-    // PPU: $2007缓冲读行为
-    collect_blargg_suite(
-        &mut failures,
-        "",
-        &["ppu_read_buffer/test_ppu_read_buffer.nes"],
-        3600,
     );
     // DMA: SPR DMA与DMC DMA竞争（表头输出后无进展）
     collect_blargg_suite(

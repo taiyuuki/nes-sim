@@ -1068,3 +1068,27 @@ fn sprite_overflow_bug_can_miss_a_real_ninth_sprite() {
 
     assert_eq!(ppu.status & STATUS_SPRITE_OVERFLOW, 0);
 }
+
+#[test]
+fn open_bus_decay_and_status_low_bits() {
+    let mut ppu = PPU::default();
+    let mut bus = crate::ppu_memory::PpuMemory::default();
+
+    // 写$2002=$FF: 开漏总线装载, 立即读回低5位=$1F
+    ppu.cpu_write_register_timed(&mut bus, 0x2002, 0xFF, 0);
+    let status = ppu.cpu_read_register_timed(&mut bus, 0x2002, 0);
+    assert_eq!(status & 0x1F, 0x1F, "写入后的开漏值应立即可见");
+
+    // 写$2000=$00: 开漏清零, 读回低5位=0
+    ppu.cpu_write_register_timed(&mut bus, 0x2000, 0x00, 0);
+    let status = ppu.cpu_read_register_timed(&mut bus, 0x2002, 0);
+    assert_eq!(status & 0x1F, 0x00);
+
+    // 衰减: 推进dot超过阈值后开漏归零
+    ppu.cpu_write_register_timed(&mut bus, 0x2000, 0xFF, 0);
+    for _ in 0..(crate::ppu::OPEN_BUS_DECAY_DOTS + 16) {
+        ppu.clock(&mut bus);
+    }
+    let status = ppu.cpu_read_register_timed(&mut bus, 0x2002, 0);
+    assert_eq!(status & 0x1F, 0x00, "衰减后应为零");
+}

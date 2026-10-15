@@ -8,6 +8,8 @@ const VISIBLE_FRAME_PIXELS: usize = FRAME_WIDTH * FRAME_HEIGHT;
 const STATUS_SPRITE_OVERFLOW: u8 = 0x20;
 const STATUS_SPRITE_ZERO_HIT: u8 = 0x40;
 const STATUS_VBLANK: u8 = 0x80;
+/// PPU开漏总线衰减阈值（dot数）。窗口须在 >10ms 且 <1s 之间（blargg ppu_open_bus）
+const OPEN_BUS_DECAY_DOTS: u64 = 1_073_000;
 const MASK_GRAYSCALE: u8 = 0x01;
 const MASK_SHOW_BG_LEFTMOST: u8 = 0x02;
 const MASK_SHOW_SPRITES_LEFTMOST: u8 = 0x04;
@@ -135,6 +137,7 @@ pub struct PPU {
     mask: u8,
     status: u8,
     open_bus: u8,
+    open_bus_bits_dot: [u64; 8],
     vram_addr: u16,
     temp_vram_addr: u16,
     fine_x: u8,
@@ -193,6 +196,7 @@ impl PPU {
             mask: 0,
             status: 0,
             open_bus: 0,
+            open_bus_bits_dot: [0; 8],
             vram_addr: 0,
             temp_vram_addr: 0,
             fine_x: 0,
@@ -245,6 +249,9 @@ impl PPU {
         self.update_rendering_flags();
         self.status &= !(STATUS_SPRITE_OVERFLOW | STATUS_SPRITE_ZERO_HIT | STATUS_VBLANK);
         self.open_bus = 0;
+        for dot in &mut self.open_bus_bits_dot {
+            *dot = self.dot_clock;
+        }
         self.vram_addr = 0;
         self.temp_vram_addr = 0;
         self.fine_x = 0;
@@ -309,11 +316,11 @@ impl PPU {
             0x2002 => self.read_status_timed(cpu_cycle_offset),
             0x2004 => {
                 let data = self.read_oam_data();
-                self.open_bus = data;
+                self.drive_open_bus(data, 0xFF);
                 data
             }
             0x2007 => self.read_data(bus),
-            _ => self.open_bus,
+            _ => self.decayed_open_bus(),
         }
     }
 
@@ -329,7 +336,7 @@ impl PPU {
         data: u8,
         cpu_cycle_offset: u8,
     ) {
-        self.open_bus = data;
+        self.drive_open_bus(data, 0xFF);
         let (future_scanline, _, _) = self.predict_status_timing(u16::from(cpu_cycle_offset) * 3);
 
         match addr {
@@ -577,6 +584,9 @@ impl PPU {
         writer.write_u8(self.mask);
         writer.write_u8(self.status);
         writer.write_u8(self.open_bus);
+        for dot in &self.open_bus_bits_dot {
+            writer.write_u64(*dot);
+        }
         writer.write_u16(self.vram_addr);
         writer.write_u16(self.temp_vram_addr);
         writer.write_u8(self.fine_x);
@@ -637,6 +647,9 @@ impl PPU {
         self.mask = reader.read_u8()?;
         self.status = reader.read_u8()?;
         self.open_bus = reader.read_u8()?;
+        for dot in &mut self.open_bus_bits_dot {
+            *dot = reader.read_u64()?;
+        }
         self.vram_addr = reader.read_u16()?;
         self.temp_vram_addr = reader.read_u16()?;
         self.fine_x = reader.read_u8()?;
@@ -692,6 +705,27 @@ impl PPU {
         Ok(())
     }
 
+    /// 按位衰减的开漏总线有效值（每位电容独立放电）
+    fn decayed_open_bus(&self) -> u8 {
+        let mut value = 0u8;
+        for (bit, &dot) in self.open_bus_bits_dot.iter().enumerate() {
+            if self.dot_clock.wrapping_sub(dot) <= OPEN_BUS_DECAY_DOTS {
+                value |= 1 << bit;
+            }
+        }
+        value & self.open_bus
+    }
+
+    /// 用value驱动开漏总线的mask位（其余位保持），被驱动的位刷新衰减计时
+    fn drive_open_bus(&mut self, value: u8, mask: u8) {
+        self.open_bus = (self.open_bus & !mask) | (value & mask);
+        for bit in 0..8 {
+            if mask & (1 << bit) != 0 {
+                self.open_bus_bits_dot[bit] = self.dot_clock;
+            }
+        }
+    }
+
     fn read_status_timed(&mut self, cpu_cycle_offset: u8) -> u8 {
         let ppu_cycle_offset = u16::from(cpu_cycle_offset) * 3;
         let (future_scanline, future_cycles, future_status) =
@@ -712,10 +746,11 @@ impl PPU {
             self.suppress_vblank = true;
         }
 
-        let status = (status_bits & 0xE0) | (self.open_bus & 0x1F);
+        let status = (status_bits & 0xE0) | (self.decayed_open_bus() & 0x1F);
         self.status &= !STATUS_VBLANK;
         self.write_latch = false;
-        self.open_bus = status;
+        // 读$2002只驱动高3位, 低5位保持旧衰减值（blargg ppu_open_bus #7）
+        self.drive_open_bus(status_bits & 0xE0, 0xE0);
         status
     }
 
@@ -926,10 +961,16 @@ impl PPU {
                 self.palette_cache[actual_idx] = data;
                 data
             } else {
-                self.palette_cache[cache_idx]
+                // Palette 0x3F10 和 0x3F00 是镜像的（缓存命中路径同样要换算）
+                let actual_idx = if cache_idx >= 0x10 && cache_idx.is_multiple_of(4) {
+                    cache_idx - 0x10
+                } else {
+                    cache_idx
+                };
+                self.palette_cache[actual_idx]
             };
 
-            self.mask_palette_color(palette_data)
+            (self.decayed_open_bus() & 0xC0) | self.mask_palette_color(palette_data)
         } else {
             let buffered = self.read_buffer;
             self.read_buffer = self.ppu_read_bus_exposed(bus, addr);
@@ -937,7 +978,7 @@ impl PPU {
         };
 
         self.increment_data_access_vram_addr();
-        self.open_bus = data;
+        self.drive_open_bus(data, 0xFF);
         data
     }
 
@@ -945,8 +986,8 @@ impl PPU {
         let addr = self.loopy_v & 0x3FFF;
         self.ppu_write_bus_exposed(bus, addr, data);
 
-        // 更新 palette 缓存
-        if (0x3F00..=0x3F1F).contains(&addr) {
+        // 更新 palette 缓存（$3F00-$3FFF整段镜像到$3F00-$3F1F, 共8份）
+        if (0x3F00..=0x3FFF).contains(&addr) {
             let cache_idx = (addr & 0x1F) as usize;
             // Palette 0x3F10 和 0x3F00 是镜像的
             let actual_idx = if cache_idx >= 0x10 && cache_idx.is_multiple_of(4) {
@@ -1340,7 +1381,13 @@ impl PPU {
                 self.palette_cache[actual_idx] = data;
                 data
             } else {
-                self.palette_cache[cache_idx]
+                // Palette 0x3F10 和 0x3F00 是镜像的（缓存命中路径同样要换算）
+                let actual_idx = if cache_idx >= 0x10 && cache_idx.is_multiple_of(4) {
+                    cache_idx - 0x10
+                } else {
+                    cache_idx
+                };
+                self.palette_cache[actual_idx]
             };
 
             let color = self.mask_palette_color(palette_data);
