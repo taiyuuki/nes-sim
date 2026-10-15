@@ -300,8 +300,12 @@ fn blargg_known_accuracy_gaps() {
     // sync精同步循环周期恒为432.0(自然428+DMA停顿2), 真机429+4=433——每迭代
     // 1周期漂移才能扫出bit4清零窗口。实测我们DMC DMA只偷2拍(真机4/3/2/1按落点);
     // 强制恒4拍会破坏rates的sync收敛(它锁定在当前停顿长度上)。
-    // 下一步: 按Nestopia DoDMA的落点规则实现(写周期3拍/$4014重叠2/1拍),
-    // 并核对sync循环自然长度的1周期差。
+    // 下一步: 按Nestopia DoDMA的落点规则实现(写周期3拍/$4014重叠2/1拍)。
+    // 已试: 恒4拍停顿和写周期条件规则(登记每指令写周期绝对时钟)都会破坏rates
+    // ——rates精同步的DMA落在纯读延时循环里需4拍, 而halt对齐与STA写周期的
+    // 交互需按Nestopia的StealCycles/writeClocks表语义完整建模(halt推迟到
+    // 在途指令的写周期完成), 不是简单的落点查表。循环自吸附到字节周期432
+    // (停顿吸收余量), 失谐需自然长429+4=433。
     collect_blargg_suite(
         &mut failures,
         "sprdma_and_dmc_dma",
