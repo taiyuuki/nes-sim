@@ -296,10 +296,12 @@ fn blargg_known_accuracy_gaps() {
         &["7-dmc_basics.nes"],
         10800,
     );
-    // DMA: SPR DMA与DMC DMA竞争。诊断结论(未修复): $4015重复写1的重启语义存在
-    // 三角约束——rates的sync要求重复写1不重启, 本测试的wait-clear循环要求不重启,
-    // wait-set循环要求重启(或bit4窗口覆盖输出阶段)。真机疑似靠~868/900周期的
-    // 精确窗口边界通过, 需亚周期级$4015/$4010写入模型(用上被忽略的cycle_offset)。
+    // DMA: SPR DMA与DMC DMA竞争。亚周期写队列落地后($4015三角已解)剩余:
+    // sync精同步循环周期恒为432.0(自然428+DMA停顿2), 真机429+4=433——每迭代
+    // 1周期漂移才能扫出bit4清零窗口。实测我们DMC DMA只偷2拍(真机4/3/2/1按落点);
+    // 强制恒4拍会破坏rates的sync收敛(它锁定在当前停顿长度上)。
+    // 下一步: 按Nestopia DoDMA的落点规则实现(写周期3拍/$4014重叠2/1拍),
+    // 并核对sync循环自然长度的1周期差。
     collect_blargg_suite(
         &mut failures,
         "sprdma_and_dmc_dma",
