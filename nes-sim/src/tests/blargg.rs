@@ -281,8 +281,11 @@ fn blargg_known_accuracy_gaps() {
         ],
         3600,
     );
-    // APU: $4015重启后bytes_remaining可见时机与sync_dmc相位锁的整数粒度冲突
-    // （#19要求写后+6周期内不可见, rates的同步边界锁定在+7——窗口不相交）
+    // APU: $4015重启语义在指令粒度量化和真机行为间无解（已实验证明）：
+    // - 立即装载+立即取数(Mesen语义) / 立即装载+2~3拍延迟取数 / 边界取数+延迟装载
+    //   三种模型在 7-dmc_basics#19 / 8-dmc_rates / sprdma 的失败位置各差±1拍。
+    // 根因: exe_inst在指令首拍执行全部总线访问, 写比硬件早offset(3)拍, 读同样早。
+    // 解法需CPU按周期切片执行或APU寄存器访问预测层(参考PPU predict_status_timing)。
     collect_blargg_suite(
         &mut failures,
         "apu_test/rom_singles",
