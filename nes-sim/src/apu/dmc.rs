@@ -1,8 +1,5 @@
 use crate::cartridge::TVSystem;
 
-/// $4015使能重启的装载延迟（CPU周期）
-const RESTART_LOAD_DELAY: u8 = 6;
-
 const DMC_PERIODS_NTSC: [u16; 16] = [
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
 ];
@@ -44,8 +41,6 @@ pub struct DmcState {
     pub(super) timer_counter: u16,
     /// 输出单元字节边界触发的一次取数请求（真机不在enable时立即取数）
     pub(super) fetch_pending: bool,
-    /// $4015使能重启的装载延迟倒计时（CPU周期）
-    pub(super) restart_delay: u8,
     pub(crate) dmc_periods: &'static [u16; 16],
 }
 
@@ -69,7 +64,6 @@ impl Default for DmcState {
             timer_reload: 0,
             timer_counter: 0,
             fetch_pending: false,
-            restart_delay: 0,
             dmc_periods: &DMC_PERIODS_NTSC,
         }
     }
@@ -113,15 +107,17 @@ impl DmcState {
             self.sample_buffer = None;
             self.silence = true;
             self.fetch_pending = false;
-            self.restart_delay = 0;
             return;
         }
 
         if self.bytes_remaining == 0 {
-            // 重启采样: 地址/长度经短延迟后装载;
-            // 期间$4015的bit4保持清除（blargg 7-dmc_basics #19）
-            self.restart_delay = RESTART_LOAD_DELAY;
+            // 生效周期到达时装载地址/长度; 缓冲空则立即请求取数DMA（Nestopia语义）
+            self.current_address = self.sample_address;
+            self.bytes_remaining = self.sample_length;
             self.silence = true;
+            if self.sample_buffer.is_none() {
+                self.fetch_pending = true;
+            }
         }
     }
 
@@ -157,13 +153,6 @@ impl DmcState {
     }
 
     pub(super) fn tick_timer(&mut self) {
-        if self.restart_delay > 0 {
-            self.restart_delay -= 1;
-            if self.restart_delay == 0 {
-                self.current_address = self.sample_address;
-                self.bytes_remaining = self.sample_length;
-            }
-        }
         if self.timer_counter == 0 {
             // 载入reload-1: 本拍触发后经reload-1次递减回到0, 触发间隔=表值
             self.timer_counter = self.timer_reload.saturating_sub(1);

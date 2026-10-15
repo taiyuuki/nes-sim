@@ -132,10 +132,7 @@ fn dmc_restart_bytes_visibility_is_delayed() {
     bus.cpu_write(0x4013, 0x00);
     bus.cpu_write(0x4015, 0x10);
 
-    // $4015重启后bytes_remaining经短延迟才装载（blargg 7-dmc_basics #19）
-    clock_cpu_cycles(&mut cpu, &mut bus, 4);
-    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x00, "重启装载有延迟");
-
-    clock_cpu_cycles(&mut cpu, &mut bus, 4);
-    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x10, "延迟后bytes装载");
+    // Nestopia语义: $4015写到达生效周期时bytes立即装载
+    clock_cpu_cycles(&mut cpu, &mut bus, 1);
+    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x10, "bytes立即装载");
 }

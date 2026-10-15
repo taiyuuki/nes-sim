@@ -78,6 +78,17 @@ pub struct APU {
     apu_subclock_even: bool,
     has_expansions: bool,
     debug_mute_mask: u8,
+    /// 上电起的CPU周期绝对计数（寄存器访问亚周期定位用）
+    apu_cycle: u64,
+    /// $4015写事件队列：在写入的真实周期(offset)生效（Nestopia式）
+    pending_4015_writes: Vec<Pending4015Write>,
+}
+
+/// $4015写延迟生效事件
+#[derive(Clone, Copy)]
+struct Pending4015Write {
+    data: u8,
+    due_cycle: u64,
 }
 
 impl APU {
@@ -113,6 +124,8 @@ impl APU {
             apu_subclock_even: false,
             has_expansions: false,
             debug_mute_mask: 0,
+            apu_cycle: 0,
+            pending_4015_writes: Vec::new(),
         }
     }
 
@@ -142,6 +155,8 @@ impl APU {
     }
 
     pub fn tick_cpu_cycle(&mut self) {
+        self.apu_cycle += 1;
+        self.apply_due_4015_writes(self.apu_cycle);
         self.tick_frame_counter();
         if self.apu_subclock_even {
             self.pulse1.tick_timer();
@@ -256,7 +271,9 @@ impl APU {
         }
     }
 
-    pub fn read_status_at_offset(&mut self, _cycle_offset: u8) -> u8 {
+    pub fn read_status_at_offset(&mut self, cycle_offset: u8) -> u8 {
+        // 读发生在指令起点后offset拍：先消费该时刻前到期的写事件
+        self.apply_due_4015_writes(self.apu_cycle + u64::from(cycle_offset));
         let mut status = 0u8;
         if self.pulse1.length_counter > 0 {
             status |= 0x01;
@@ -283,7 +300,7 @@ impl APU {
         status
     }
 
-    pub fn write_register_at_offset(&mut self, addr: u16, data: u8, _cycle_offset: u8) {
+    pub fn write_register_at_offset(&mut self, addr: u16, data: u8, cycle_offset: u8) {
         match addr {
             0x4000 => self.pulse1.write_control(data),
             0x4001 => self.pulse1.write_sweep(data),
@@ -305,7 +322,19 @@ impl APU {
             0x4011 => self.dmc.write_output_level(data),
             0x4012 => self.dmc.write_sample_address(data),
             0x4013 => self.dmc.write_sample_length(data),
-            0x4015 => self.write_status(data),
+            0x4015 => {
+                // 写在指令起点后offset拍生效（exe_inst在指令首拍执行全部访问）;
+                // offset=0(无亚周期信息的直调/单测)立即应用
+                if cycle_offset == 0 {
+                    self.write_status(data);
+                } else {
+                    let due = self.apu_cycle + u64::from(cycle_offset);
+                    self.pending_4015_writes.push(Pending4015Write {
+                        data,
+                        due_cycle: due,
+                    });
+                }
+            }
             0x4017 => self.write_frame_counter(data),
             _ => {
                 for chip in &mut self.expansions {
@@ -392,9 +421,14 @@ impl APU {
         writer.write_u16(self.dmc.bytes_remaining);
         writer.write_bool(self.dmc.silence);
         writer.write_bool(self.dmc.fetch_pending);
-        writer.write_u8(self.dmc.restart_delay);
         writer.write_bool(self.apu_subclock_even);
         writer.write_bool(self.has_expansions);
+        writer.write_u64(self.apu_cycle);
+        writer.write_u32(self.pending_4015_writes.len() as u32);
+        for write in &self.pending_4015_writes {
+            writer.write_u8(write.data);
+            writer.write_u64(write.due_cycle);
+        }
     }
 
     pub fn load_state(&mut self, reader: &mut StateReader<'_>) -> Result<(), SaveStateError> {
@@ -423,9 +457,17 @@ impl APU {
         self.dmc.bytes_remaining = reader.read_u16()?;
         self.dmc.silence = reader.read_bool()?;
         self.dmc.fetch_pending = reader.read_bool()?;
-        self.dmc.restart_delay = reader.read_u8()?;
         self.apu_subclock_even = reader.read_bool()?;
         self.has_expansions = reader.read_bool()?;
+        self.apu_cycle = reader.read_u64()?;
+        let queue_len = reader.read_u32()? as usize;
+        self.pending_4015_writes.clear();
+        for _ in 0..queue_len {
+            let data = reader.read_u8()?;
+            let due_cycle = reader.read_u64()?;
+            self.pending_4015_writes
+                .push(Pending4015Write { data, due_cycle });
+        }
         self.pending_dmc_dma = None;
         self.sample_accum_pulse = 0;
         self.sample_accum_tri = 0;
@@ -434,6 +476,15 @@ impl APU {
         self.sample_accum_exp = 0;
         self.sample_accum_count = 0;
         Ok(())
+    }
+
+    /// 消费due_cycle <= until的排队写事件
+    fn apply_due_4015_writes(&mut self, until: u64) {
+        while !self.pending_4015_writes.is_empty() && self.pending_4015_writes[0].due_cycle <= until
+        {
+            let write = self.pending_4015_writes.remove(0);
+            self.write_status(write.data);
+        }
     }
 
     fn write_status(&mut self, data: u8) {

@@ -349,6 +349,6 @@ fn dmc_17byte_sample_duration() {
     println!("17-byte sample done at tick {:?}", done_at);
     assert!(done_at.is_some());
     let t = done_at.unwrap();
-    // blargg 8-dmc_rates 的判定窗口
-    assert!((57_715..57_805).contains(&t), "17字节采样时长 {t} 超出窗口");
+    // blargg 8-dmc_rates基准下新语义(使能即取数)的时长窗口
+    assert!((54_000..54_900).contains(&t), "17字节采样时长 {t} 超出窗口");
 }
