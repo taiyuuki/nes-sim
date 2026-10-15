@@ -7,12 +7,16 @@ fn read(nes: &mut NES, a: u16) -> u8 {
 
 fn main() {
     let path = env::args().nth(1).expect("rom path");
+    let max_frames: u64 = env::args()
+        .nth(2)
+        .and_then(|arg| arg.parse().ok())
+        .unwrap_or(3600);
     let rom = std::fs::read(&path).unwrap();
     let mut nes = NES::new();
     nes.load_cartridge_ines(&rom).unwrap();
     nes.reset();
 
-    for frame in 0..3600 {
+    for frame in 0..max_frames {
         nes.run_frame();
         if [
             read(&mut nes, 0x6001),

@@ -289,7 +289,10 @@ fn blargg_known_accuracy_gaps() {
         &["7-dmc_basics.nes"],
         10800,
     );
-    // DMA: SPR DMA与DMC DMA竞争（表头输出后无进展）
+    // DMA: SPR DMA与DMC DMA竞争。诊断结论(未修复): $4015重复写1的重启语义存在
+    // 三角约束——rates的sync要求重复写1不重启, 本测试的wait-clear循环要求不重启,
+    // wait-set循环要求重启(或bit4窗口覆盖输出阶段)。真机疑似靠~868/900周期的
+    // 精确窗口边界通过, 需亚周期级$4015/$4010写入模型(用上被忽略的cycle_offset)。
     collect_blargg_suite(
         &mut failures,
         "sprdma_and_dmc_dma",
