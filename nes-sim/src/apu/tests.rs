@@ -279,3 +279,76 @@ fn fixed_point_division_handles_very_low_values() {
     // 应该生成一些样本，但不应该 panic
     assert!(!apu.audio_samples().is_empty());
 }
+
+#[test]
+fn dmc_rate0_timer_interval_is_428_cycles() {
+    let mut apu = APU::new();
+    apu.write_register_at_offset(0x4010, 0x00, 0); // rate 0, NTSC 428
+    // 观察output fire时刻不可直接访问, 以timer_counter==0进入为fire近似:
+    // 通过tick前后dmc字段? 字段pub(super), 测试在同模块树内可访问
+    let mut fires = 0;
+    let mut last_zero = false;
+    for i in 0..3000 {
+        apu.tick_cpu_cycle();
+        let zero = apu.dmc.timer_counter == 0;
+        if zero && !last_zero {
+            fires += 1;
+            if fires >= 2 {
+                // 第二次以后的fire间隔应恒定
+            }
+        }
+        last_zero = zero;
+        let _ = i;
+    }
+    // 统计fire间隔
+    let mut intervals: Vec<u32> = Vec::new();
+    let mut last_fire: Option<u32> = None;
+    let mut lz = false;
+    let mut apu2 = APU::new();
+    apu2.write_register_at_offset(0x4010, 0x00, 0);
+    for i in 0..3000u32 {
+        apu2.tick_cpu_cycle();
+        let zero = apu2.dmc.timer_counter == 0;
+        if zero && !lz {
+            if let Some(l) = last_fire {
+                intervals.push(i - l);
+            }
+            last_fire = Some(i);
+        }
+        lz = zero;
+    }
+    println!("intervals: {:?}", &intervals[..intervals.len().min(6)]);
+    let steady = &intervals[1..];
+    assert!(
+        steady.iter().all(|&v| v == 428),
+        "expected 428, got {steady:?}"
+    );
+}
+
+#[test]
+fn dmc_17byte_sample_duration() {
+    let mut apu = APU::new();
+    apu.write_register_at_offset(0x4012, 0, 0); // sample addr $C000
+    apu.write_register_at_offset(0x4013, 1, 0); // length = 17 bytes
+    apu.write_register_at_offset(0x4010, 0x00, 0); // rate 0 (428)
+    apu.write_register_at_offset(0x4015, 0x10, 0); // enable
+
+    let mut ticks = 0u32;
+    let mut done_at: Option<u32> = None;
+    for _ in 0..70_000 {
+        apu.tick_cpu_cycle();
+        ticks += 1;
+        if let Some(_req) = apu.take_dmc_dma_request() {
+            apu.submit_dmc_dma_sample(0x00);
+        }
+        if apu.dmc.bytes_remaining == 0 && done_at.is_none() && ticks > 10 {
+            done_at = Some(ticks);
+            break;
+        }
+    }
+    println!("17-byte sample done at tick {:?}", done_at);
+    assert!(done_at.is_some());
+    let t = done_at.unwrap();
+    // blargg 8-dmc_rates 的判定窗口
+    assert!((57_715..57_805).contains(&t), "17字节采样时长 {t} 超出窗口");
+}

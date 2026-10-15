@@ -1,5 +1,8 @@
 use crate::cartridge::TVSystem;
 
+/// $4015使能重启的装载延迟（CPU周期）
+const RESTART_LOAD_DELAY: u8 = 6;
+
 const DMC_PERIODS_NTSC: [u16; 16] = [
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
 ];
@@ -39,6 +42,10 @@ pub struct DmcState {
     pub(super) rate_index: u8,
     pub(super) timer_reload: u16,
     pub(super) timer_counter: u16,
+    /// 输出单元字节边界触发的一次取数请求（真机不在enable时立即取数）
+    pub(super) fetch_pending: bool,
+    /// $4015使能重启的装载延迟倒计时（CPU周期）
+    pub(super) restart_delay: u8,
     pub(crate) dmc_periods: &'static [u16; 16],
 }
 
@@ -61,6 +68,8 @@ impl Default for DmcState {
             rate_index: 0,
             timer_reload: 0,
             timer_counter: 0,
+            fetch_pending: false,
+            restart_delay: 0,
             dmc_periods: &DMC_PERIODS_NTSC,
         }
     }
@@ -97,30 +106,28 @@ impl DmcState {
         self.sample_length = ((value as u16) << 4) | 0x0001;
     }
 
-    pub(super) fn set_enabled(&mut self, enabled: bool) -> Option<DmcDmaRequest> {
+    pub(super) fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
         if !enabled {
             self.bytes_remaining = 0;
             self.sample_buffer = None;
             self.silence = true;
-            return None;
+            self.fetch_pending = false;
+            self.restart_delay = 0;
+            return;
         }
 
         if self.bytes_remaining == 0 {
-            self.current_address = self.sample_address;
-            self.bytes_remaining = self.sample_length;
+            // 重启采样: 地址/长度经短延迟后装载;
+            // 期间$4015的bit4保持清除（blargg 7-dmc_basics #19）
+            self.restart_delay = RESTART_LOAD_DELAY;
             self.silence = true;
-            return Some(DmcDmaRequest {
-                addr: self.current_address,
-                kind: DmcDmaKind::Load,
-            });
         }
-
-        None
     }
 
-    pub(super) fn request_dma_if_needed(&self) -> Option<DmcDmaRequest> {
-        if self.sample_buffer.is_none() && self.bytes_remaining > 0 {
+    pub(super) fn take_fetch_request(&mut self) -> Option<DmcDmaRequest> {
+        if self.fetch_pending {
+            self.fetch_pending = false;
             Some(DmcDmaRequest {
                 addr: self.current_address,
                 kind: DmcDmaKind::Load,
@@ -150,8 +157,16 @@ impl DmcState {
     }
 
     pub(super) fn tick_timer(&mut self) {
+        if self.restart_delay > 0 {
+            self.restart_delay -= 1;
+            if self.restart_delay == 0 {
+                self.current_address = self.sample_address;
+                self.bytes_remaining = self.sample_length;
+            }
+        }
         if self.timer_counter == 0 {
-            self.timer_counter = self.timer_reload;
+            // 载入reload-1: 本拍触发后经reload-1次递减回到0, 触发间隔=表值
+            self.timer_counter = self.timer_reload.saturating_sub(1);
             if !self.silence {
                 if (self.shift_register & 1) != 0 {
                     if self.output_level <= 125 {
@@ -174,6 +189,10 @@ impl DmcState {
                     self.silence = false;
                 } else {
                     self.silence = true;
+                }
+                // 缓冲已空: 在字节边界触发下一次取数
+                if self.sample_buffer.is_none() && self.bytes_remaining > 0 {
+                    self.fetch_pending = true;
                 }
             }
         } else {

@@ -3,6 +3,7 @@ use crate::bus::{CPUBus, NESBus};
 
 fn clock_cpu_cycles(cpu: &mut CPU, bus: &mut NESBus, cycles: usize) {
     for _ in 0..cycles {
+        bus.tick_apu_cpu_cycle();
         cpu.clock(bus);
         bus.advance_dma_cpu_phase();
     }
@@ -104,7 +105,7 @@ fn oam_dma_consumes_513_cycles_when_started_on_put_phase() {
 }
 
 #[test]
-fn dmc_dma_fetches_sample_and_updates_open_bus() {
+fn dmc_boundary_fetch_completes_one_byte_sample() {
     let mut cpu = CPU::new();
     let mut bus = NESBus::new();
     let rom = make_ines(1, 1, 0x00);
@@ -114,14 +115,14 @@ fn dmc_dma_fetches_sample_and_updates_open_bus() {
     bus.cpu_write(0x4013, 0x00);
     bus.cpu_write(0x4015, 0x10);
 
-    clock_cpu_cycles(&mut cpu, &mut bus, 3);
+    // 重启装载延迟 + 字节边界触发取数（rate 0: 428×8周期内）+ DMA完成
+    clock_cpu_cycles(&mut cpu, &mut bus, 6 + 428 * 8 + 8);
 
-    assert_eq!(bus.cpu_read(0x4000), 0x40);
-    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x00);
+    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x00, "1字节采样应完成");
 }
 
 #[test]
-fn dmc_load_dma_completes_in_three_cycles_on_get_phase() {
+fn dmc_restart_bytes_visibility_is_delayed() {
     let mut cpu = CPU::new();
     let mut bus = NESBus::new();
     let rom = make_ines(1, 1, 0x00);
@@ -131,28 +132,10 @@ fn dmc_load_dma_completes_in_three_cycles_on_get_phase() {
     bus.cpu_write(0x4013, 0x00);
     bus.cpu_write(0x4015, 0x10);
 
-    clock_cpu_cycles(&mut cpu, &mut bus, 2);
-    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x10);
+    // $4015重启后bytes_remaining经短延迟才装载（blargg 7-dmc_basics #19）
+    clock_cpu_cycles(&mut cpu, &mut bus, 4);
+    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x00, "重启装载有延迟");
 
-    clock_cpu_cycles(&mut cpu, &mut bus, 1);
-    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x00);
-}
-
-#[test]
-fn dmc_load_dma_completes_in_four_cycles_on_put_phase() {
-    let mut cpu = CPU::new();
-    let mut bus = NESBus::new();
-    let rom = make_ines(1, 1, 0x00);
-
-    bus.load_cartridge_ines(&rom).expect("NROM should load");
-    bus.advance_dma_cpu_phase();
-    bus.cpu_write(0x4012, 0x01);
-    bus.cpu_write(0x4013, 0x00);
-    bus.cpu_write(0x4015, 0x10);
-
-    clock_cpu_cycles(&mut cpu, &mut bus, 3);
-    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x10);
-
-    clock_cpu_cycles(&mut cpu, &mut bus, 1);
-    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x00);
+    clock_cpu_cycles(&mut cpu, &mut bus, 4);
+    assert_eq!(bus.cpu_read(0x4015) & 0x10, 0x10, "延迟后bytes装载");
 }

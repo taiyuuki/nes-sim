@@ -71,6 +71,7 @@ cargo test -p nes-sim
 | `export_frame` | Export a single frame as PPM image |
 | `analyze_audio` | Export audio as WAV |
 | `analyze_state` | Analyze emulator state at a specific frame |
+| `blargg_debug` | Run a blargg test ROM and print its result text |
 | `hash_frame` | Hash frame pixels for regression testing |
 
 ```bash

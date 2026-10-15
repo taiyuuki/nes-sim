@@ -32,3 +32,7 @@ required-features = ["debug"]
 [[example]]
 name = "chr_dump"
 required-features = ["debug"]
+
+[[example]]
+name = "blargg_debug"
+required-features = ["debug"]

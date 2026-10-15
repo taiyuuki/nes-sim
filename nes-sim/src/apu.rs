@@ -13,7 +13,15 @@ use triangle::TriangleChannel;
 
 const CPU_CLOCK_NTSC: u64 = 1_789_773;
 const DEFAULT_SAMPLE_RATE: u32 = 44_100;
-const FRAME_SEQUENCER_DIVIDER: u16 = 7_456;
+/// 帧序列器位置计数模型：事件在帧内固定位置触发（CPU周期，相对$4017复位生效点）
+const FRAME_PERIOD_4STEP: u16 = 29_830;
+const FRAME_PERIOD_5STEP: u16 = 37_282;
+const FRAME_QUARTER_STEPS: [u16; 4] = [7_457, 14_913, 22_371, 29_829];
+// 半帧（长度计数器时钟）位置：第二半帧在帧回绕拍(pos=0)
+const FRAME_HALF_4STEP: [u16; 2] = [14_914, 0];
+const FRAME_HALF_5STEP: [u16; 2] = [14_914, 0];
+/// 4步模式末尾IRQ标志持续置位的拍数（自29829起，读清除后仍会重新置位）
+const FRAME_IRQ_SET_TICKS: u8 = 3;
 
 // 使用 Q31.31 定点数格式进行相位跟踪
 // 高 32 位是整数部分，低 32 位是小数部分
@@ -50,8 +58,9 @@ pub struct APU {
     frame_irq_inhibit: bool,
     frame_irq_flag: bool,
     frame_mode_five_step: bool,
-    frame_step: u8,
-    frame_divider: u16,
+    frame_pos: u16,
+    frame_irq_set_ticks: u8,
+    frame_reset_delay: u8,
     pending_dmc_dma: Option<DmcDmaRequest>,
     sample_rate: u32,
     // 使用 Q31.31 定点数：每个 CPU 周期增加 PHASE_SCALE / cycles_per_sample
@@ -86,8 +95,9 @@ impl APU {
             frame_irq_inhibit: false,
             frame_irq_flag: false,
             frame_mode_five_step: false,
-            frame_step: 0,
-            frame_divider: FRAME_SEQUENCER_DIVIDER,
+            frame_pos: 0,
+            frame_irq_set_ticks: 0,
+            frame_reset_delay: 0,
             pending_dmc_dma: None,
             sample_rate,
             cycles_per_sample_fixed,
@@ -117,8 +127,9 @@ impl APU {
 
     pub fn reset(&mut self) {
         self.frame_irq_flag = false;
-        self.frame_step = 0;
-        self.frame_divider = FRAME_SEQUENCER_DIVIDER;
+        self.frame_pos = 0;
+        self.frame_irq_set_ticks = 0;
+        self.frame_reset_delay = 0;
         self.pending_dmc_dma = None;
         self.sample_phase_fixed = 0;
         self.sample_accum_pulse = 0;
@@ -141,7 +152,7 @@ impl APU {
         self.triangle.tick_timer();
         self.dmc.tick_timer();
         if self.pending_dmc_dma.is_none() {
-            self.pending_dmc_dma = self.dmc.request_dma_if_needed();
+            self.pending_dmc_dma = self.dmc.take_fetch_request();
         }
         if self.has_expansions {
             for chip in &mut self.expansions {
@@ -367,8 +378,9 @@ impl APU {
         writer.write_bool(self.frame_irq_inhibit);
         writer.write_bool(self.frame_irq_flag);
         writer.write_bool(self.frame_mode_five_step);
-        writer.write_u8(self.frame_step);
-        writer.write_u16(self.frame_divider);
+        writer.write_u16(self.frame_pos);
+        writer.write_u8(self.frame_irq_set_ticks);
+        writer.write_u8(self.frame_reset_delay);
         writer.write_bool(self.dmc.enabled);
         writer.write_bool(self.dmc.irq_enabled);
         writer.write_bool(self.dmc.loop_flag);
@@ -379,6 +391,8 @@ impl APU {
         writer.write_u16(self.dmc.current_address);
         writer.write_u16(self.dmc.bytes_remaining);
         writer.write_bool(self.dmc.silence);
+        writer.write_bool(self.dmc.fetch_pending);
+        writer.write_u8(self.dmc.restart_delay);
         writer.write_bool(self.apu_subclock_even);
         writer.write_bool(self.has_expansions);
     }
@@ -395,8 +409,9 @@ impl APU {
         self.frame_irq_inhibit = reader.read_bool()?;
         self.frame_irq_flag = reader.read_bool()?;
         self.frame_mode_five_step = reader.read_bool()?;
-        self.frame_step = reader.read_u8()?;
-        self.frame_divider = reader.read_u16()?;
+        self.frame_pos = reader.read_u16()?;
+        self.frame_irq_set_ticks = reader.read_u8()?;
+        self.frame_reset_delay = reader.read_u8()?;
         self.dmc.enabled = reader.read_bool()?;
         self.dmc.irq_enabled = reader.read_bool()?;
         self.dmc.loop_flag = reader.read_bool()?;
@@ -407,6 +422,8 @@ impl APU {
         self.dmc.current_address = reader.read_u16()?;
         self.dmc.bytes_remaining = reader.read_u16()?;
         self.dmc.silence = reader.read_bool()?;
+        self.dmc.fetch_pending = reader.read_bool()?;
+        self.dmc.restart_delay = reader.read_u8()?;
         self.apu_subclock_even = reader.read_bool()?;
         self.has_expansions = reader.read_bool()?;
         self.pending_dmc_dma = None;
@@ -424,7 +441,7 @@ impl APU {
         self.pulse2.set_enabled((data & 0x02) != 0);
         self.triangle.set_enabled((data & 0x04) != 0);
         self.noise.set_enabled((data & 0x08) != 0);
-        self.pending_dmc_dma = self.dmc.set_enabled((data & 0x10) != 0);
+        self.dmc.set_enabled((data & 0x10) != 0);
         self.dmc.irq_flag = false;
     }
 
@@ -434,44 +451,57 @@ impl APU {
         if self.frame_irq_inhibit {
             self.frame_irq_flag = false;
         }
-        self.frame_step = 0;
-        self.frame_divider = FRAME_SEQUENCER_DIVIDER + 8;
-
-        if self.frame_mode_five_step {
-            self.clock_quarter_frame();
-            self.clock_half_frame();
-        }
+        // 帧计数器复位在写入后3~4个CPU周期才生效（按APU半周期奇偶对齐）
+        self.frame_reset_delay = if self.apu_subclock_even { 2 } else { 3 };
     }
 
     fn tick_frame_counter(&mut self) {
-        if self.frame_divider == 0 {
-            self.frame_divider = FRAME_SEQUENCER_DIVIDER;
-            self.clock_frame_step();
-        } else {
-            self.frame_divider -= 1;
-        }
-    }
-
-    fn clock_frame_step(&mut self) {
-        if !self.frame_mode_five_step {
-            self.clock_quarter_frame();
-            if self.frame_step == 1 || self.frame_step == 3 {
-                self.clock_half_frame();
+        if self.frame_reset_delay > 0 {
+            self.frame_reset_delay -= 1;
+            if self.frame_reset_delay == 0 {
+                self.frame_pos = 0;
+                if self.frame_mode_five_step {
+                    self.clock_quarter_frame();
+                    self.clock_half_frame();
+                }
             }
-            if self.frame_step == 3 && !self.frame_irq_inhibit {
-                self.frame_irq_flag = true;
-            }
-            self.frame_step = (self.frame_step + 1) & 0x03;
             return;
         }
 
-        if self.frame_step != 3 {
+        self.frame_pos = self.frame_pos.wrapping_add(1);
+        let period = if self.frame_mode_five_step {
+            FRAME_PERIOD_5STEP
+        } else {
+            FRAME_PERIOD_4STEP
+        };
+        if self.frame_pos >= period {
+            self.frame_pos = 0;
+        }
+
+        // IRQ置位窗口：读清除后仍会重新置位，直到窗口结束
+        if self.frame_irq_set_ticks > 0 {
+            self.frame_irq_set_ticks -= 1;
+            if !self.frame_irq_inhibit {
+                self.frame_irq_flag = true;
+            }
+        }
+
+        if FRAME_QUARTER_STEPS.contains(&self.frame_pos) {
             self.clock_quarter_frame();
         }
-        if self.frame_step == 1 || self.frame_step == 4 {
-            self.clock_half_frame();
+        if self.frame_mode_five_step {
+            if FRAME_HALF_5STEP.contains(&self.frame_pos) {
+                self.clock_half_frame();
+            }
+        } else {
+            if FRAME_HALF_4STEP.contains(&self.frame_pos) {
+                self.clock_half_frame();
+            }
+            if self.frame_pos == FRAME_QUARTER_STEPS[3] && !self.frame_irq_inhibit {
+                self.frame_irq_flag = true;
+                self.frame_irq_set_ticks = FRAME_IRQ_SET_TICKS - 1;
+            }
         }
-        self.frame_step = (self.frame_step + 1) % 5;
     }
 
     fn clock_quarter_frame(&mut self) {

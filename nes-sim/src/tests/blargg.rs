@@ -223,7 +223,15 @@ fn blargg_oam() {
 fn blargg_apu_test() {
     run_blargg_suite(
         "apu_test/rom_singles",
-        &["1-len_ctr.nes", "2-len_table.nes", "3-irq_flag.nes"],
+        &[
+            "1-len_ctr.nes",
+            "2-len_table.nes",
+            "3-irq_flag.nes",
+            "4-jitter.nes",
+            "5-len_timing.nes",
+            "6-irq_flag_timing.nes",
+            "8-dmc_rates.nes",
+        ],
         10800,
     );
 }
@@ -268,17 +276,12 @@ fn blargg_known_accuracy_gaps() {
         ],
         3600,
     );
-    // APU: 时钟抖动、长度计数器/帧IRQ时序、DMC基础与采样率
+    // APU: $4015重启后bytes_remaining可见时机与sync_dmc相位锁的整数粒度冲突
+    // （#19要求写后+6周期内不可见, rates的同步边界锁定在+7——窗口不相交）
     collect_blargg_suite(
         &mut failures,
         "apu_test/rom_singles",
-        &[
-            "4-jitter.nes",
-            "5-len_timing.nes",
-            "6-irq_flag_timing.nes",
-            "7-dmc_basics.nes",
-            "8-dmc_rates.nes",
-        ],
+        &["7-dmc_basics.nes"],
         10800,
     );
     // PPU: 寄存器开漏总线衰减未实现

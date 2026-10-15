@@ -71,6 +71,7 @@ cargo test -p nes-sim
 | `export_frame` | 导出单帧为 PPM 图片 |
 | `analyze_audio` | 导出音频为 WAV |
 | `analyze_state` | 分析指定帧的模拟器状态 |
+| `blargg_debug` | Run a blargg test ROM and print its result text |
 | `hash_frame` | 哈希帧像素用于回归测试 |
 
 ```bash
