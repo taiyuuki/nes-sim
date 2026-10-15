@@ -249,9 +249,7 @@ impl PPU {
         self.update_rendering_flags();
         self.status &= !(STATUS_SPRITE_OVERFLOW | STATUS_SPRITE_ZERO_HIT | STATUS_VBLANK);
         self.open_bus = 0;
-        for dot in &mut self.open_bus_bits_dot {
-            *dot = self.dot_clock;
-        }
+        self.open_bus_bits_dot.fill(self.dot_clock);
         self.vram_addr = 0;
         self.temp_vram_addr = 0;
         self.fine_x = 0;
