@@ -3,8 +3,8 @@
 **/out/
 **/roms
 **/refs
+**/docs
 
 .DS_Store
 .codegraph
 .mcp.json
-.claude/
