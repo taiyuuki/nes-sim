@@ -266,7 +266,11 @@ fn blargg_known_accuracy_gaps() {
         ],
         7200,
     );
-    // PPU: VBL置位时刻、NMI使能/抑制/开关时序
+    // PPU: VBL置位时刻、NMI使能/抑制/开关时序。02-vbl_set_time诊断结论:
+    // 真机基准表(测试源码注释)为V自T+00第二列起, 我们晚2个PPU dot; 且结果对
+    // 采样窗口平移±4 dot完全不变(读取时标志已实时置位), 决定因素是sync_vbl
+    // 锁相相位 + 读清除与dot1置位的竞争(预测清除后PPU实时经过241,1会再次置位)。
+    // 下一步: 读sync_vbl.s, 建模read-clear vs dot1-set竞争。
     collect_blargg_suite(
         &mut failures,
         "ppu_vbl_nmi/rom_singles",
