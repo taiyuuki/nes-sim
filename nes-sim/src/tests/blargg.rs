@@ -254,7 +254,10 @@ fn blargg_known_accuracy_gaps() {
         &["07-abs_xy.nes"],
         3600,
     );
-    // CPU: NMI/BRK/IRQ交互与时序
+    // CPU: NMI/BRK/IRQ交互与时序。诊断: 5-branch_delays_irq的首行PC=00对期望04
+    // ——中断识别晚~1周期。真机在指令的特定周期轮询中断且taken分支末拍抑制轮询;
+    // 我们只在指令边界轮询(interrupt_delay机制是近似)。1-cli_latency通过=基础延迟正确。
+    // 与sprdma同根源: 需周期级中断轮询(周期切片CPU或等价的逐拍轮询层)。
     collect_blargg_suite(
         &mut failures,
         "cpu_interrupts_v2/rom_singles",
