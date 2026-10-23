@@ -1,13 +1,14 @@
 use nes_sim::NES;
 use std::process::ExitCode;
 
-// fn dump(bytes: &[u8]) -> String {
-//     bytes
-//         .iter()
-//         .map(|b| format!("{b:02X}"))
-//         .collect::<Vec<_>>()
-//         .join(" ")
-// }
+#[cfg(feature = "debug")]
+fn dump(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
