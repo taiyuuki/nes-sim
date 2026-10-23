@@ -1,7 +1,7 @@
 use nes_sim::NES;
 use std::process::ExitCode;
 
-fn dump(bytes: &[u8]) -> String {
+fn _dump(bytes: &[u8]) -> String {
     bytes
         .iter()
         .map(|b| format!("{b:02X}"))
