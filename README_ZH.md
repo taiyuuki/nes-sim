@@ -12,6 +12,7 @@
 - **多制式支持** — NTSC、PAL、DENDY
 - **存档功能** — 自定义二进制格式，支持 Mapper 校验
 - **调试支持** — CPU/PPU 状态快照、声道独立静音
+- **金手指** — Game Genie / Pro Action Replay / 原生码，支持导入 FCEUX 与 Nestopia/Mesen 的 .cht 文件
 - **零依赖核心** — 核心库不依赖任何外部 crate
 
 ## 快速开始

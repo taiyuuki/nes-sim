@@ -1,4 +1,5 @@
 use crate::cartridge::FdsDiskCommand;
+use crate::cheat::Cheat;
 use crate::{ControllerState, FRAME_WIDTH};
 
 pub const VIDEO_FRAME_PITCH: usize = FRAME_WIDTH;
@@ -51,6 +52,14 @@ pub enum CoreCommand {
     #[cfg(feature = "debug")]
     SetPaused(bool),
     FdsDisk(FdsDiskCommand),
+    SetCheats(Vec<Cheat>),
+    AddCheat(Cheat),
+    RemoveCheat(usize),
+    SetCheatEnabled {
+        index: usize,
+        enabled: bool,
+    },
+    ClearCheats,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +70,7 @@ pub enum CoreEvent {
     FrameReady { frame_number: u64 },
     CpuInstructionComplete { instruction_counter: u64 },
     FdsDiskUpdated,
+    CheatsUpdated,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

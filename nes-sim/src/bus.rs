@@ -2,6 +2,7 @@ use crate::apu::APU;
 use crate::cartridge::{
     Cartridge, CartridgeError, FdsDiskCommand, FdsDiskInfo, Mirroring, is_fds_image,
 };
+use crate::cheat::{Cheat, CheatTable};
 use crate::dma::{DmaBusRequest, DmaController};
 use crate::input::{ControllerState, Joypad};
 use crate::ppu::PPU;
@@ -43,6 +44,8 @@ pub struct NESBus {
     dma: DmaController,
     controllers: [Joypad; 2],
     cpu_open_bus: u8,
+    cheats: Vec<Cheat>,
+    cheat_table: CheatTable,
     #[cfg(feature = "debug")]
     debug_mem_breakpoints: Vec<Breakpoint>,
     #[cfg(feature = "debug")]
@@ -60,6 +63,8 @@ impl NESBus {
             dma: DmaController::new(),
             controllers: [Joypad::new(), Joypad::new()],
             cpu_open_bus: 0,
+            cheats: Vec::new(),
+            cheat_table: CheatTable::default(),
             #[cfg(feature = "debug")]
             debug_mem_breakpoints: Vec::new(),
             #[cfg(feature = "debug")]
@@ -82,6 +87,8 @@ impl NESBus {
     }
 
     pub fn insert_cartridge(&mut self, mut cartridge: Cartridge) {
+        // 金手指属于当前游戏，换卡时清空。
+        self.clear_cheats();
         let tv_system = cartridge.tv_system();
         self.ppu.set_parameters(tv_system);
         self.apu.set_tv_system(tv_system);
@@ -141,6 +148,50 @@ impl NESBus {
         self.apu.reset();
         self.dma = DmaController::new();
         self.cpu_open_bus = 0;
+        // 金手指是运行时配置，reset 不清除。
+    }
+
+    /// 金手指主列表（含未启用项，按添加顺序）。
+    pub fn cheats(&self) -> &[Cheat] {
+        &self.cheats
+    }
+
+    /// 整体替换金手指列表（加载 .cht 文件用）。
+    pub fn set_cheats(&mut self, cheats: Vec<Cheat>) {
+        self.cheats = cheats;
+        self.cheat_table.rebuild(&self.cheats);
+    }
+
+    pub fn add_cheat(&mut self, cheat: Cheat) {
+        self.cheats.push(cheat);
+        self.cheat_table.rebuild(&self.cheats);
+    }
+
+    /// 按下标移除；返回是否存在并被移除。
+    pub fn remove_cheat(&mut self, index: usize) -> bool {
+        if index < self.cheats.len() {
+            self.cheats.remove(index);
+            self.cheat_table.rebuild(&self.cheats);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 启/禁用某条金手指；返回是否存在并被修改。
+    pub fn set_cheat_enabled(&mut self, index: usize, enabled: bool) -> bool {
+        if let Some(cheat) = self.cheats.get_mut(index) {
+            cheat.enabled = enabled;
+            self.cheat_table.rebuild(&self.cheats);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn clear_cheats(&mut self) {
+        self.cheats.clear();
+        self.cheat_table.rebuild(&self.cheats);
     }
 
     pub fn tick_ppu(&mut self) {
@@ -294,6 +345,18 @@ impl NESBus {
     }
 
     fn cpu_read_internal(&mut self, addr: u16, cycle_offset: u8) -> u8 {
+        if self.cheat_table.is_active() {
+            let raw = self.cpu_read_raw(addr, cycle_offset);
+            match self.cheat_table.substitute(addr, raw) {
+                Some(substituted) => self.latched_cpu_read(substituted),
+                None => raw,
+            }
+        } else {
+            self.cpu_read_raw(addr, cycle_offset)
+        }
+    }
+
+    fn cpu_read_raw(&mut self, addr: u16, cycle_offset: u8) -> u8 {
         #[cfg(feature = "debug")]
         self.check_mem_breakpoint(addr, false);
 

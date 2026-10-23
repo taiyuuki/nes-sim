@@ -2,6 +2,7 @@ pub mod api;
 mod apu;
 mod bus;
 pub mod cartridge;
+pub mod cheat;
 mod cpu;
 mod dma;
 pub mod headless;
@@ -22,6 +23,7 @@ pub use apu::ExpansionAudioChip;
 pub use cartridge::{
     Cartridge, CartridgeError, FdsDiskCommand, FdsDiskInfo, Mirroring, TVSystem, is_fds_image,
 };
+pub use cheat::{Cheat, CheatError};
 pub use input::{ControllerButton, ControllerState};
 pub use ppu::{FRAME_HEIGHT, FRAME_WIDTH};
 pub use runtime::{
@@ -131,6 +133,34 @@ impl NES {
 
     pub fn set_controller_state(&mut self, port: usize, state: ControllerState) {
         self.bus.set_controller_state(port, state);
+    }
+
+    /// 金手指主列表（含未启用项，按添加顺序）。
+    pub fn cheats(&self) -> &[Cheat] {
+        self.bus.cheats()
+    }
+
+    /// 整体替换金手指列表（加载 .cht 文件用）。
+    pub fn set_cheats(&mut self, cheats: Vec<Cheat>) {
+        self.bus.set_cheats(cheats);
+    }
+
+    pub fn add_cheat(&mut self, cheat: Cheat) {
+        self.bus.add_cheat(cheat);
+    }
+
+    /// 按下标移除金手指；返回是否存在并被移除。
+    pub fn remove_cheat(&mut self, index: usize) -> bool {
+        self.bus.remove_cheat(index)
+    }
+
+    /// 启/禁用某条金手指；返回是否存在并被修改。
+    pub fn set_cheat_enabled(&mut self, index: usize, enabled: bool) -> bool {
+        self.bus.set_cheat_enabled(index, enabled)
+    }
+
+    pub fn clear_cheats(&mut self) {
+        self.bus.clear_cheats();
     }
 
     pub fn clock(&mut self) {
@@ -243,6 +273,26 @@ impl NES {
             CoreCommand::FdsDisk(cmd) => {
                 self.fds_command(cmd);
                 CoreEvent::FdsDiskUpdated
+            }
+            CoreCommand::SetCheats(cheats) => {
+                self.set_cheats(cheats);
+                CoreEvent::CheatsUpdated
+            }
+            CoreCommand::AddCheat(cheat) => {
+                self.add_cheat(cheat);
+                CoreEvent::CheatsUpdated
+            }
+            CoreCommand::RemoveCheat(index) => {
+                self.remove_cheat(index);
+                CoreEvent::CheatsUpdated
+            }
+            CoreCommand::SetCheatEnabled { index, enabled } => {
+                self.set_cheat_enabled(index, enabled);
+                CoreEvent::CheatsUpdated
+            }
+            CoreCommand::ClearCheats => {
+                self.clear_cheats();
+                CoreEvent::CheatsUpdated
             }
         };
 
