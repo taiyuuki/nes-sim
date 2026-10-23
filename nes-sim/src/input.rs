@@ -81,6 +81,11 @@ impl Joypad {
         }
     }
 
+    /// 当前输入状态（录像机快照用）。
+    pub(crate) fn state(&self) -> ControllerState {
+        self.state
+    }
+
     pub(crate) fn write(&mut self, data: u8) {
         self.strobe = (data & 0x01) != 0;
         if self.strobe {

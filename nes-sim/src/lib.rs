@@ -7,6 +7,7 @@ mod cpu;
 mod dma;
 pub mod headless;
 mod input;
+pub mod movie;
 mod ppu;
 mod ppu_memory;
 pub mod runtime;
@@ -25,6 +26,7 @@ pub use cartridge::{
 };
 pub use cheat::{Cheat, CheatError};
 pub use input::{ControllerButton, ControllerState};
+pub use movie::{Movie, MovieError, MovieFrame};
 pub use ppu::{FRAME_HEIGHT, FRAME_WIDTH};
 pub use runtime::{
     ExecutionTarget, FrontendInput, FrontendRuntime, RunMode, RuntimeSnapshot, RuntimeStatus,
@@ -34,6 +36,19 @@ use savestate::{StateReader, StateWriter};
 
 const PAL_CPU_SCHEDULE: [u8; 5] = [3, 3, 3, 3, 4];
 
+/// 电影播放器状态（运行时配置，不参与存档）。
+struct MoviePlayer {
+    movie: Movie,
+    frame: usize,
+    finished: bool,
+}
+
+/// 电影录像机状态。
+struct MovieRecorder {
+    movie: Movie,
+    pending_reset: bool,
+}
+
 pub struct NES {
     cpu: cpu::CPU,
     bus: bus::NESBus,
@@ -41,6 +56,9 @@ pub struct NES {
     cpu_ppu_counter: u8,
     cpu_schedule_index: usize,
     cached_tv_system: TVSystem,
+    movie_player: Option<MoviePlayer>,
+    movie_recorder: Option<MovieRecorder>,
+    recorded_movie: Option<Movie>,
     #[cfg(feature = "debug")]
     breakpoints: Vec<Breakpoint>,
     #[cfg(feature = "debug")]
@@ -60,6 +78,9 @@ impl NES {
             cpu_ppu_counter: 0,
             cpu_schedule_index: 0,
             cached_tv_system: TVSystem::NTSC,
+            movie_player: None,
+            movie_recorder: None,
+            recorded_movie: None,
             #[cfg(feature = "debug")]
             breakpoints: Vec::new(),
             #[cfg(feature = "debug")]
@@ -226,6 +247,78 @@ impl NES {
         }
     }
 
+    /// [`CoreCommand::RunFrame`] 的电影感知版本：
+    /// 播放中先套用录像输入（含 Reset 命令），录像中先快照当前手柄状态。
+    /// 播完最后一帧返回 [`CoreEvent::MovieFinished`]。
+    fn run_movie_aware_frame(&mut self) -> CoreEvent {
+        // 录像机：帧前快照（Copy 数据，借用在语句内结束）。
+        if let Some(recorder) = self.movie_recorder.as_mut() {
+            let frame = MovieFrame {
+                commands: u32::from(recorder.pending_reset),
+                controllers: [self.bus.controller_state(0), self.bus.controller_state(1)],
+            };
+            recorder.pending_reset = false;
+            recorder.movie.frames.push(frame);
+        }
+
+        // 播放器：取当前帧（Copy），避免跨方法借用。
+        let current = match &self.movie_player {
+            Some(player) if !player.finished => Some(player.movie.frames[player.frame]),
+            _ => None,
+        };
+        let mut movie_finished = false;
+        if let Some(frame) = current {
+            if frame.reset() {
+                self.movie_reset();
+            }
+            self.bus.set_controller_state(0, frame.controllers[0]);
+            self.bus.set_controller_state(1, frame.controllers[1]);
+            self.run_frame();
+            let player = self.movie_player.as_mut().expect("player just checked");
+            player.frame += 1;
+            if player.frame >= player.movie.frames.len() {
+                player.finished = true;
+                movie_finished = true;
+            }
+        } else {
+            self.run_frame();
+        }
+
+        if movie_finished {
+            CoreEvent::MovieFinished
+        } else {
+            CoreEvent::FrameReady {
+                frame_number: self.frame_number(),
+            }
+        }
+    }
+
+    /// 近似硬件 RESET 键：仅复位 CPU（读取复位向量），PPU/APU 状态保留。
+    fn movie_reset(&mut self) {
+        self.cpu.reset(&mut self.bus);
+        self.cpu.set_nmi(self.bus.ppu_nmi_line());
+    }
+
+    /// 正在播放的电影（含进度信息）；未在播放返回 None。
+    pub fn movie(&self) -> Option<&Movie> {
+        self.movie_player.as_ref().map(|p| &p.movie)
+    }
+
+    /// 播放进度：下一帧下标（等于帧数时已播完）。
+    pub fn movie_frame(&self) -> Option<usize> {
+        self.movie_player.as_ref().map(|p| p.frame)
+    }
+
+    /// 是否正在录像。
+    pub fn is_recording_movie(&self) -> bool {
+        self.movie_recorder.is_some()
+    }
+
+    /// 取走已完成的录像（StopMovieRecording 后可取，仅一次）。
+    pub fn take_recorded_movie(&mut self) -> Option<Movie> {
+        self.recorded_movie.take()
+    }
+
     pub fn step_cpu_instruction(&mut self) {
         let start_instruction = self.cpu.instruction_counter();
         while self.cpu.instruction_counter() == start_instruction {
@@ -236,6 +329,9 @@ impl NES {
     pub fn execute(&mut self, command: CoreCommand) -> CoreResponse {
         let event = match command {
             CoreCommand::Reset => {
+                if let Some(recorder) = &mut self.movie_recorder {
+                    recorder.pending_reset = true;
+                }
                 self.reset();
                 CoreEvent::ResetComplete
             }
@@ -243,12 +339,7 @@ impl NES {
                 self.set_controller_state(port, state);
                 CoreEvent::ControllerStateUpdated { port }
             }
-            CoreCommand::RunFrame => {
-                self.run_frame();
-                CoreEvent::FrameReady {
-                    frame_number: self.frame_number(),
-                }
-            }
+            CoreCommand::RunFrame => self.run_movie_aware_frame(),
             CoreCommand::StepCpuInstruction => {
                 self.step_cpu_instruction();
                 CoreEvent::CpuInstructionComplete {
@@ -293,6 +384,48 @@ impl NES {
             CoreCommand::ClearCheats => {
                 self.clear_cheats();
                 CoreEvent::CheatsUpdated
+            }
+            CoreCommand::PlayMovie(movie) => {
+                self.movie_recorder = None;
+                self.recorded_movie = None;
+                let finished = movie.frames.is_empty();
+                self.movie_player = Some(MoviePlayer {
+                    movie,
+                    frame: 0,
+                    finished,
+                });
+                if finished {
+                    CoreEvent::MovieFinished
+                } else {
+                    CoreEvent::None
+                }
+            }
+            CoreCommand::StopMovie => {
+                self.movie_player = None;
+                CoreEvent::None
+            }
+            CoreCommand::StartMovieRecording => {
+                self.movie_player = None;
+                self.recorded_movie = None;
+                self.movie_recorder = Some(MovieRecorder {
+                    movie: Movie {
+                        version: 3,
+                        ports: [
+                            crate::movie::port_kind::GAMEPAD,
+                            crate::movie::port_kind::GAMEPAD,
+                            crate::movie::port_kind::NONE,
+                        ],
+                        ..Movie::default()
+                    },
+                    pending_reset: false,
+                });
+                CoreEvent::None
+            }
+            CoreCommand::StopMovieRecording => {
+                if let Some(recorder) = self.movie_recorder.take() {
+                    self.recorded_movie = Some(recorder.movie);
+                }
+                CoreEvent::None
             }
         };
 

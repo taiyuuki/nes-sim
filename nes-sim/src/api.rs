@@ -1,5 +1,6 @@
 use crate::cartridge::FdsDiskCommand;
 use crate::cheat::Cheat;
+use crate::movie::Movie;
 use crate::{ControllerState, FRAME_WIDTH};
 
 pub const VIDEO_FRAME_PITCH: usize = FRAME_WIDTH;
@@ -60,17 +61,29 @@ pub enum CoreCommand {
         enabled: bool,
     },
     ClearCheats,
+    PlayMovie(Movie),
+    StopMovie,
+    StartMovieRecording,
+    StopMovieRecording,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoreEvent {
     None,
     ResetComplete,
-    ControllerStateUpdated { port: usize },
-    FrameReady { frame_number: u64 },
-    CpuInstructionComplete { instruction_counter: u64 },
+    ControllerStateUpdated {
+        port: usize,
+    },
+    FrameReady {
+        frame_number: u64,
+    },
+    CpuInstructionComplete {
+        instruction_counter: u64,
+    },
     FdsDiskUpdated,
     CheatsUpdated,
+    /// 电影播放到最后一帧（随 RunFrame 响应返回）。
+    MovieFinished,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

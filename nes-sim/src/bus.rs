@@ -86,6 +86,14 @@ impl NESBus {
         }
     }
 
+    /// 当前端口手柄输入状态（录像机/调试用）；端口不存在时返回全松开。
+    pub fn controller_state(&self, port: usize) -> ControllerState {
+        self.controllers
+            .get(port)
+            .map(|controller| controller.state())
+            .unwrap_or_default()
+    }
+
     pub fn insert_cartridge(&mut self, mut cartridge: Cartridge) {
         // 金手指属于当前游戏，换卡时清空。
         self.clear_cheats();

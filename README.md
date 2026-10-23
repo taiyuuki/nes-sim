@@ -13,6 +13,7 @@ A NES (Famicom) emulator core library written in Rust. Headless design decouples
 - **Save states** — Custom binary format with mapper validation
 - **Debug support** — CPU/PPU state snapshots, per-channel mute
 - **Cheat codes** — Game Genie / Pro Action Replay / raw codes, FCEUX & Nestopia/Mesen `.cht` import
+- **FM2 movies** — record & playback FCEUX FM2 TAS movies (text and binary variants)
 - **Zero-dependency core** — Core library has no external crate dependencies
 
 ## Quick Start
