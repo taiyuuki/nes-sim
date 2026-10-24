@@ -1125,6 +1125,6 @@ fn recorded_movie_carries_rom_metadata() {
     // 序列化后回读仍携带元数据
     let reparsed = crate::movie::parse_fm2(movie.to_fm2_string().as_bytes()).unwrap();
     assert_eq!(reparsed.rom_checksum, movie.rom_checksum);
-    assert_eq!(reparsed.pal_flag, false);
+    assert!(!reparsed.pal_flag);
     assert_eq!(reparsed.emu_version, movie.emu_version);
 }

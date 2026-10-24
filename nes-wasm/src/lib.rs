@@ -7,7 +7,7 @@
 //! A=1, B=2, Select=4, Start=8, Up=16, Down=32, Left=64, Right=128。
 
 use nes_sim::video::palette_index_to_rgb;
-use nes_sim::{ControllerState, NES, FRAME_HEIGHT, FRAME_WIDTH};
+use nes_sim::{ControllerState, FRAME_HEIGHT, FRAME_WIDTH, NES};
 use wasm_bindgen::prelude::*;
 
 fn button_bits(button: &str) -> Option<u8> {
@@ -99,7 +99,9 @@ impl NesWasm {
 
     /// 系统调色板,64 色 × 3 字节 RGB。
     pub fn palette_rgb() -> Vec<u8> {
-        (0..64).flat_map(|i| palette_index_to_rgb(i as u8)).collect()
+        (0..64)
+            .flat_map(|i| palette_index_to_rgb(i as u8))
+            .collect()
     }
 
     /// 自上次读取以来累积的音频采样(单声道 f32)。
