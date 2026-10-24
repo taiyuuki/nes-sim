@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NES·SIM — 网页演示</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DotGothic16&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="brand">
+      <span class="brand-mark">■</span>
+      <h1>NES·SIM</h1>
+      <span class="brand-sub">WEB DEMO</span>
+    </div>
+    <p class="brand-tag">纯 Rust 模拟器核心 · WebAssembly 驱动</p>
+  </header>
+
+  <main class="layout">
+    <!-- 主机:CRT + 状态 + 操作 -->
+    <section class="deck" aria-label="模拟器">
+      <div class="crt" id="crt">
+        <div class="crt-screen">
+          <canvas id="screen" width="512" height="480"></canvas>
+          <div class="scanlines" aria-hidden="true"></div>
+          <div class="screen-off-overlay" id="offOverlay">
+            <span class="off-text">NO&nbsp;CARTRIDGE</span>
+            <span class="off-text-sm">请从右侧卡带架选择游戏</span>
+          </div>
+        </div>
+        <div class="crt-chin">
+          <span class="crt-label">FAMILY&nbsp;COMPUTER</span>
+          <span class="led" id="led" title="电源"></span>
+        </div>
+      </div>
+
+      <div class="statusbar">
+        <span id="stFps">FPS --</span>
+        <span id="stFrame">FRAME 0</span>
+        <span id="stMd5" class="mono"></span>
+      </div>
+
+      <div class="controls" role="toolbar" aria-label="模拟器控制">
+        <button id="btnPause" disabled>暂停</button>
+        <button id="btnReset" disabled>复位</button>
+        <span class="gap"></span>
+        <button id="btnSave" disabled>存档</button>
+        <button id="btnLoad" disabled>读档</button>
+        <span class="gap"></span>
+        <button id="btnMute" aria-pressed="false">静音</button>
+      </div>
+    </section>
+
+    <!-- 卡带架 -->
+    <aside class="shelf" aria-label="游戏选择">
+      <h2 class="shelf-title">卡带架</h2>
+      <ul class="cart-list" id="cartList"></ul>
+      <label class="filebtn">
+        打开本地 ROM(.nes)
+        <input type="file" id="fileInput" accept=".nes" hidden />
+      </label>
+      <p class="hint">也可以直接把 .nes 文件拖进页面</p>
+      <p class="hint dim" id="shelfHint"></p>
+    </aside>
+  </main>
+
+  <!-- 说明书 -->
+  <section class="manual" aria-label="按键说明">
+    <h2 class="manual-title">操作说明</h2>
+    <div class="manual-grid">
+      <div class="manual-item"><span class="keys"><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span>方向键</div>
+      <div class="manual-item"><span class="keys"><kbd>Z</kbd><kbd>J</kbd></span>B 键</div>
+      <div class="manual-item"><span class="keys"><kbd>X</kbd><kbd>K</kbd></span>A 键</div>
+      <div class="manual-item"><span class="keys"><kbd>Enter</kbd></span>START</div>
+      <div class="manual-item"><span class="keys"><kbd>Shift</kbd></span>SELECT</div>
+      <div class="manual-item"><span class="keys"><kbd>P</kbd></span>暂停 / 继续</div>
+    </div>
+    <p class="manual-note">支持浏览器认得到的手柄(Gamepad API),插上即用。</p>
+  </section>
+
+  <footer class="site-footer">
+    <a href="https://github.com/taiyuuki/nes-sim" target="_blank" rel="noopener">GitHub</a>
+    <span>·</span>
+    <a href="https://www.npmjs.com/package/nes-wasm" target="_blank" rel="noopener">npm: nes-wasm</a>
+    <span>·</span>
+    <span>自制 ROM 来自 NESdev 社区竞赛(neshomebrew.ca)</span>
+  </footer>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

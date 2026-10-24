@@ -1,0 +1,465 @@
+/* NES·SIM 网页演示 — 1983 红白机风情
+   调色:暖炭 #16120f / 米黄 #efe4cd / 法米康红 #d8222a / 金 #c9a34e */
+
+:root {
+  --bg: #16120f;
+  --bg-raise: #1f1915;
+  --ink: #efe4cd;
+  --ink-dim: #9c8f78;
+  --red: #d8222a;
+  --red-deep: #a01218;
+  --gold: #c9a34e;
+  --green: #7ec850;
+  --line: #3a3128;
+  --font-px: "Press Start 2P", monospace;
+  --font-body: "DotGothic16", "Press Start 2P", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* 细微像素格纹理 */
+  background-image:
+    radial-gradient(rgba(239, 228, 205, 0.025) 1px, transparent 1px);
+  background-size: 4px 4px;
+}
+
+.bg-glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 480px at 50% 18%, rgba(216, 34, 42, 0.10), transparent 65%),
+    radial-gradient(700px 500px at 82% 90%, rgba(201, 163, 78, 0.05), transparent 70%);
+  z-index: 0;
+}
+
+/* ── 页眉 ─────────────────────────────── */
+
+.site-header {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  padding: 40px 16px 8px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.brand-mark { color: var(--red); font-size: 22px; }
+
+.brand h1 {
+  margin: 0;
+  font-family: var(--font-px);
+  font-size: clamp(20px, 4vw, 30px);
+  letter-spacing: 2px;
+  color: var(--ink);
+}
+
+.brand-sub {
+  font-family: var(--font-px);
+  font-size: 10px;
+  color: var(--gold);
+  letter-spacing: 3px;
+}
+
+.brand-tag {
+  margin: 14px 0 0;
+  color: var(--ink-dim);
+  font-size: 14px;
+  letter-spacing: 4px;
+}
+
+/* ── 布局 ─────────────────────────────── */
+
+.layout {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 28px;
+  width: min(1060px, calc(100% - 32px));
+  margin: 26px 0 8px;
+}
+
+@media (max-width: 880px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+/* ── 主机与 CRT ───────────────────────── */
+
+.deck { min-width: 0; }
+
+.crt {
+  background: linear-gradient(180deg, #26201a, #1b1611);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 22px 22px 0;
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(239, 228, 205, 0.06);
+}
+
+.crt-screen {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #060505;
+  box-shadow: inset 0 0 42px rgba(0, 0, 0, 0.9);
+  aspect-ratio: 256 / 240;
+}
+
+.crt-screen canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at center, transparent 58%, rgba(0, 0, 0, 0.38) 100%);
+}
+
+/* 关机 / 无卡带遮罩 */
+.screen-off-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: #0a0908;
+  transition: opacity 0.35s ease;
+}
+
+.screen-off-overlay.hidden { opacity: 0; pointer-events: none; }
+
+.off-text {
+  font-family: var(--font-px);
+  font-size: clamp(10px, 2.4vw, 16px);
+  color: var(--red);
+  letter-spacing: 4px;
+  animation: off-blink 1.6s steps(2) infinite;
+}
+
+.off-text-sm { color: var(--ink-dim); font-size: 15px; }
+
+@keyframes off-blink { 50% { opacity: 0.25; } }
+
+.crt-chin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 4px 14px;
+}
+
+.crt-label {
+  font-family: var(--font-px);
+  font-size: 8px;
+  letter-spacing: 3px;
+  color: var(--ink-dim);
+}
+
+.led {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #40292a;
+  box-shadow: inset 0 0 3px rgba(0, 0, 0, 0.8);
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.led.on {
+  background: var(--red);
+  box-shadow: 0 0 10px rgba(216, 34, 42, 0.9), 0 0 26px rgba(216, 34, 42, 0.4);
+}
+
+/* 开机闪现动画 */
+.crt-screen.power-on { animation: power-on 0.5s ease-out; }
+
+@keyframes power-on {
+  0% { filter: brightness(3) contrast(0.2); transform: scaleY(0.01); }
+  55% { filter: brightness(2); transform: scaleY(1.02); }
+  100% { filter: none; transform: scaleY(1); }
+}
+
+/* ── 状态条与按钮 ─────────────────────── */
+
+.statusbar {
+  display: flex;
+  gap: 22px;
+  align-items: center;
+  margin: 14px 2px 10px;
+  font-family: var(--font-px);
+  font-size: 9px;
+  color: var(--gold);
+  letter-spacing: 1px;
+  min-height: 12px;
+}
+
+.statusbar .mono { color: var(--ink-dim); letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.controls .gap { flex: 0 0 1px; }
+
+.controls button {
+  font-family: var(--font-body);
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: var(--ink);
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-bottom: 3px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 16px 8px;
+  cursor: pointer;
+  transition: transform 0.06s ease, border-color 0.1s, color 0.1s;
+}
+
+.controls button:hover:not(:disabled) { border-color: var(--red); color: #fff; }
+
+.controls button:active:not(:disabled) { transform: translateY(2px); border-bottom-width: 1px; }
+
+.controls button:disabled { opacity: 0.35; cursor: default; }
+
+.controls button[aria-pressed="true"] { color: var(--red); border-color: var(--red-deep); border-bottom-color: var(--red-deep); }
+
+/* ── 卡带架 ───────────────────────────── */
+
+.shelf {
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px;
+  align-self: start;
+}
+
+.shelf-title {
+  margin: 0 0 14px;
+  font-family: var(--font-px);
+  font-size: 11px;
+  color: var(--gold);
+  letter-spacing: 2px;
+}
+
+.cart-list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* 卡带造型 */
+.cart {
+  --cart-red: var(--red);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(180deg, #c92830, var(--red-deep));
+  color: var(--ink);
+  border-radius: 6px 6px 3px 3px;
+  padding: 10px 12px 12px 46px;
+  cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35);
+  transition: transform 0.08s ease, filter 0.08s ease;
+  user-select: none;
+}
+
+.cart::before {
+  /* 卡带 Grip 条纹 */
+  content: "";
+  position: absolute;
+  left: 10px; top: 8px; bottom: 8px;
+  width: 22px;
+  border-radius: 3px;
+  background:
+    repeating-linear-gradient(0deg, rgba(0,0,0,0.28) 0 3px, transparent 3px 7px),
+    #efe4cd;
+}
+
+.cart:hover { transform: translateY(-2px); filter: brightness(1.08); }
+
+.cart.active {
+  /* 已插入:金色标签 + 沉降 */
+  background: linear-gradient(180deg, var(--gold), #94742e);
+  color: #241c0d;
+  transform: translateY(1px);
+}
+
+.cart.active::before { opacity: 0.5; }
+
+.cart-name { font-size: 15px; letter-spacing: 1px; }
+
+.cart-file {
+  display: block;
+  font-size: 11px;
+  color: rgba(239, 228, 205, 0.55);
+  margin-top: 2px;
+  font-family: var(--font-px);
+  font-size: 7px;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cart.active .cart-file { color: rgba(36, 28, 13, 0.6); }
+
+.cart.custom { background: linear-gradient(180deg, #45607a, #2b3d52); }
+
+.filebtn {
+  display: block;
+  text-align: center;
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--ink);
+  border: 1px dashed var(--ink-dim);
+  border-radius: 8px;
+  padding: 10px;
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+}
+
+.filebtn:hover { border-color: var(--gold); color: var(--gold); }
+
+.hint { margin: 10px 2px 0; font-size: 12px; color: var(--ink-dim); letter-spacing: 1px; }
+.hint.dim { opacity: 0.7; font-size: 11px; }
+
+/* 拖放高亮 */
+body.dragging::after {
+  content: "松开以插入卡带";
+  position: fixed;
+  inset: 12px;
+  border: 3px dashed var(--red);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  letter-spacing: 6px;
+  color: var(--red);
+  background: rgba(22, 18, 15, 0.82);
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* ── 说明书 ───────────────────────────── */
+
+.manual {
+  position: relative;
+  z-index: 1;
+  width: min(1060px, calc(100% - 32px));
+  margin: 26px 0 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+}
+
+.manual-title {
+  margin: 0 0 16px;
+  font-family: var(--font-px);
+  font-size: 11px;
+  color: var(--gold);
+  letter-spacing: 2px;
+}
+
+.manual-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 24px;
+}
+
+.manual-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.keys { display: inline-flex; gap: 4px; }
+
+kbd {
+  font-family: var(--font-px);
+  font-size: 9px;
+  color: var(--ink);
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-bottom-width: 3px;
+  border-radius: 5px;
+  padding: 5px 7px 4px;
+  min-width: 24px;
+  text-align: center;
+}
+
+.manual-note { margin: 16px 0 0; font-size: 12px; color: var(--ink-dim); letter-spacing: 1px; }
+
+/* ── 页脚 / Toast ─────────────────────── */
+
+.site-footer {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin: 30px 0 36px;
+  font-size: 12px;
+  color: var(--ink-dim);
+  letter-spacing: 1px;
+}
+
+.site-footer a { color: var(--gold); text-decoration: none; }
+.site-footer a:hover { text-decoration: underline; }
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 30px;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--bg-raise);
+  border: 1px solid var(--gold);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 14px;
+  letter-spacing: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+  z-index: 20;
+}
+
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.toast.error { border-color: var(--red); color: #ffb3b6; }
