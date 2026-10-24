@@ -77,6 +77,16 @@ impl PpuMemory {
         self.cartridge.irq_line()
     }
 
+    /// 当前卡带 PRG‖CHR 的 MD5（无卡/FDS 为 None）。
+    pub(super) fn cartridge_rom_md5(&self) -> Option<[u8; 16]> {
+        self.cartridge.rom_md5()
+    }
+
+    /// 当前卡带 PRG‖CHR 的 CRC-32（无卡/FDS 为 None）。
+    pub(super) fn cartridge_rom_crc32(&self) -> Option<u32> {
+        self.cartridge.rom_crc32()
+    }
+
     pub(super) fn cartridge_tick_cpu_cycle(&mut self) {
         self.cartridge.tick_cpu_cycle();
     }

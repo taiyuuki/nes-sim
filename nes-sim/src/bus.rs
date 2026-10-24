@@ -253,6 +253,21 @@ impl NESBus {
         self.ppu_memory.cartridge_irq_line()
     }
 
+    /// 当前卡带 PRG‖CHR 的 MD5（无卡/FDS 为 None）。fm2 `romChecksum` 口径。
+    pub fn rom_md5(&self) -> Option<[u8; 16]> {
+        self.ppu_memory.cartridge_rom_md5()
+    }
+
+    /// 当前卡带 PRG‖CHR 的 MD5 十六进制字符串。
+    pub fn rom_md5_hex(&self) -> Option<String> {
+        self.rom_md5().map(|digest| crate::hash::to_hex(&digest))
+    }
+
+    /// 当前卡带 PRG‖CHR 的 CRC-32（无卡/FDS 为 None）。Nestopia .cht `game` 口径。
+    pub fn rom_crc32(&self) -> Option<u32> {
+        self.ppu_memory.cartridge_rom_crc32()
+    }
+
     pub fn mirroring(&self) -> Mirroring {
         self.ppu_memory.mirroring()
     }

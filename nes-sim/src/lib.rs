@@ -5,6 +5,7 @@ pub mod cartridge;
 pub mod cheat;
 mod cpu;
 mod dma;
+pub mod hash;
 pub mod headless;
 mod input;
 pub mod movie;
@@ -141,6 +142,21 @@ impl NES {
         self.movie_player = None;
         self.movie_recorder = None;
         self.recorded_movie = None;
+    }
+
+    /// 当前卡带 PRG‖CHR 的 MD5 十六进制字符串（fm2 `romChecksum` 口径）。
+    pub fn rom_md5_hex(&self) -> Option<String> {
+        self.bus.rom_md5_hex()
+    }
+
+    /// 当前卡带 PRG‖CHR 的 MD5 原始字节。
+    pub fn rom_md5(&self) -> Option<[u8; 16]> {
+        self.bus.rom_md5()
+    }
+
+    /// 当前卡带 PRG‖CHR 的 CRC-32（Nestopia .cht `game` 属性口径）。
+    pub fn rom_crc32(&self) -> Option<u32> {
+        self.bus.rom_crc32()
     }
 
     pub fn fds_command(&mut self, cmd: FdsDiskCommand) {
@@ -434,6 +450,13 @@ impl NES {
                             crate::movie::port_kind::GAMEPAD,
                             crate::movie::port_kind::NONE,
                         ],
+                        // 自动填元数据：ROM 校验和/制式/模拟器版本
+                        rom_checksum: self.bus.rom_md5_hex().unwrap_or_default(),
+                        pal_flag: matches!(
+                            self.bus.ppu().tv_system(),
+                            TVSystem::PAL | TVSystem::DENDY
+                        ),
+                        emu_version: emulator_version_number(),
                         ..Movie::default()
                     },
                     pending_reset: false,
@@ -703,6 +726,13 @@ impl NES {
         self.cpu_ppu_counter = 0;
         self.cpu_schedule_index = 0;
     }
+}
+
+/// 模拟器版本号数字化（"0.3.0" → 300），写入录像 emuVersion。
+fn emulator_version_number() -> u32 {
+    let mut parts = env!("CARGO_PKG_VERSION").split('.');
+    let mut parse = || parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    parse() * 10_000 + parse() * 100 + parse()
 }
 
 impl Default for NES {

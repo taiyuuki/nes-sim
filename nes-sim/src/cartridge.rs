@@ -369,6 +369,10 @@ pub struct Cartridge {
     mapper: MapperEnum,
     expansion_chips: Vec<Box<dyn ExpansionAudioChip>>,
     header: CartridgeHeader,
+    /// 解析后 PRG‖CHR 拼接的 MD5（FCEUX 口径；无卡/FDS 为 None）。
+    rom_md5: Option<[u8; 16]>,
+    /// 解析后 PRG‖CHR 拼接的 CRC-32（Nestopia 口径；无卡/FDS 为 None）。
+    rom_crc32: Option<u32>,
 }
 
 impl Cartridge {
@@ -377,6 +381,8 @@ impl Cartridge {
             mapper: MapperEnum::NoMapper(NoMapper::new()),
             expansion_chips: Vec::new(),
             header: CartridgeHeader::from_no_header(),
+            rom_md5: None,
+            rom_crc32: None,
         }
     }
 
@@ -400,6 +406,16 @@ impl Cartridge {
 
         let prg_rom = rom[data_start..data_start + prg_len].to_vec();
         let chr_rom = rom[data_start + prg_len..data_end].to_vec();
+
+        // ROM 标识校验和：与 FCEUX/Nestopia 同口径（PRG‖CHR，无头部）。
+        let mut md5 = crate::hash::Md5::new();
+        let mut crc32 = crate::hash::Crc32::new();
+        md5.update(&prg_rom);
+        crc32.update(&prg_rom);
+        md5.update(&chr_rom);
+        crc32.update(&chr_rom);
+        let rom_md5 = Some(md5.finalize());
+        let rom_crc32 = Some(crc32.finalize());
         // NES 2.0头可声明CHR-RAM实际容量（64<<shift字节）；未声明时按惯例8K
         let chr_ram_len = if header.chr_ram_size > CHR_BANK_LEN as u32 {
             header.chr_ram_size as usize
@@ -418,6 +434,8 @@ impl Cartridge {
             mapper,
             expansion_chips,
             header,
+            rom_md5,
+            rom_crc32,
         })
     }
 
@@ -433,6 +451,8 @@ impl Cartridge {
             mapper,
             expansion_chips,
             header,
+            rom_md5: None,
+            rom_crc32: None,
         })
     }
 
@@ -442,6 +462,21 @@ impl Cartridge {
 
     pub fn tv_system(&self) -> TVSystem {
         self.header.tv_system
+    }
+
+    /// PRG‖CHR 拼接的 MD5（FCEUX 口径）；无卡/FDS 为 None。
+    pub fn rom_md5(&self) -> Option<[u8; 16]> {
+        self.rom_md5
+    }
+
+    /// PRG‖CHR 拼接的 MD5 十六进制字符串（fm2 `romChecksum` 格式）。
+    pub fn rom_md5_hex(&self) -> Option<String> {
+        self.rom_md5.map(|digest| crate::hash::to_hex(&digest))
+    }
+
+    /// PRG‖CHR 拼接的 CRC-32（Nestopia .cht `game` 属性口径）。
+    pub fn rom_crc32(&self) -> Option<u32> {
+        self.rom_crc32
     }
 
     pub fn cpu_read(&mut self, addr: u16) -> Option<u8> {

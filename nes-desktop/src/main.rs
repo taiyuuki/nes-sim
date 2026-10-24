@@ -467,7 +467,10 @@ fn main() -> ExitCode {
                             nes_sim::cheat::parse_cht_file(&text).map_err(|e| e.to_string())
                         }) {
                         Ok(cheats) => {
-                            let message = cheats_status_message(&cheats);
+                            let warning =
+                                cheat_game_mismatch_warning(&cheats, runtime.nes().rom_crc32());
+                            let message =
+                                cheats_status_message(&cheats) + warning.as_deref().unwrap_or("");
                             runtime.nes_mut().execute(CoreCommand::SetCheats(cheats));
                             message
                         }
@@ -498,10 +501,19 @@ fn main() -> ExitCode {
             if runtime.nes().is_recording_movie() {
                 runtime.nes_mut().execute(CoreCommand::StopMovieRecording);
                 status_message = match runtime.nes_mut().take_recorded_movie() {
-                    Some(movie) => match prompt_save_movie(&current_rom_path, &movie) {
-                        Ok(path) => format!("movie saved: {path}"),
-                        Err(error) => format!("movie save failed: {error}"),
-                    },
+                    Some(mut movie) => {
+                        // 前端补全核心不知道的元数据（ROM 文件名）
+                        if movie.rom_filename.is_empty() {
+                            movie.rom_filename = PathBuf::from(&current_rom_path)
+                                .file_stem()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                        }
+                        match prompt_save_movie(&current_rom_path, &movie) {
+                            Ok(path) => format!("movie saved: {path}"),
+                            Err(error) => format!("movie save failed: {error}"),
+                        }
+                    }
                     None => "no movie recorded".to_string(),
                 };
             } else {
@@ -538,12 +550,16 @@ fn main() -> ExitCode {
                                 } else {
                                     movie.rom_filename.clone()
                                 };
+                                // romChecksum（MD5，PRG‖CHR 口径）不匹配时警告但仍可播放
+                                let mismatch =
+                                    rom_checksum_warning(&movie, runtime.nes().rom_md5_hex());
                                 runtime.nes_mut().power_cycle();
                                 runtime.nes_mut().execute(CoreCommand::PlayMovie(movie));
                                 movie_playback_active = true;
                                 rewind_buffer.clear();
                                 frames_since_rewind_snapshot = 0;
                                 format!("playing {frames} frames: {rom_name}")
+                                    + mismatch.as_deref().unwrap_or("")
                             }
                             Err(error) => format!("movie load failed: {error}"),
                         }
@@ -1268,6 +1284,26 @@ fn cheats_status_message(cheats: &[nes_sim::Cheat]) -> String {
     let total = cheats.len();
     let enabled = cheats.iter().filter(|c| c.enabled).count();
     format!("cheats {enabled}/{total} active")
+}
+
+/// Nestopia .cht 的 game 属性（CRC32）与当前 ROM 不匹配的条数提示。
+fn cheat_game_mismatch_warning(
+    cheats: &[nes_sim::Cheat],
+    rom_crc32: Option<u32>,
+) -> Option<String> {
+    let rom_crc32 = rom_crc32?;
+    let mismatched = cheats
+        .iter()
+        .filter(|c| c.game_crc.is_some_and(|crc| crc != rom_crc32))
+        .count();
+    (mismatched > 0).then(|| format!(" [warning: {mismatched} cheats bound to another ROM]"))
+}
+
+/// fm2 的 romChecksum（MD5 hex）与当前 ROM 不匹配时返回警告后缀。
+fn rom_checksum_warning(movie: &nes_sim::Movie, rom_md5_hex: Option<String>) -> Option<String> {
+    let actual = rom_md5_hex?;
+    (!movie.rom_checksum.is_empty() && !movie.rom_checksum.eq_ignore_ascii_case(&actual))
+        .then(|| " [warning: ROM mismatch!]".to_string())
 }
 
 /// 自动加载与 ROM 同名的 .cht 金手指文件（FCEUX 习惯）。

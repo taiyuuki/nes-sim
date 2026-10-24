@@ -1068,3 +1068,63 @@ fn battery_ram_supported_across_common_mappers() {
     let cart = Cartridge::from_ines(&vrc4_rom).unwrap();
     assert!(cart.battery_ram().is_none());
 }
+
+#[test]
+fn rom_checksums_match_fceux_nestopia_convention() {
+    // PRG=0x11× 16K，CHR=0x22× 8K；期望值由 Python hashlib/zlib
+    // 对 prg‖chr 拼接计算（无 iNES 头）交叉验证。
+    let prg = vec![0x11u8; 0x4000];
+    let chr = vec![0x22u8; 0x2000];
+    let rom = make_ines_with_prg_chr(&prg, &chr, 0);
+    let cartridge = Cartridge::from_ines(&rom).unwrap();
+    assert_eq!(
+        cartridge.rom_md5_hex().as_deref(),
+        Some("6199774edcf2e37da3d1f1edfe1f071a")
+    );
+    assert_eq!(cartridge.rom_crc32(), Some(0xE5E7_C9BF));
+
+    // 无卡无校验和
+    assert_eq!(Cartridge::from_no_cart().rom_md5(), None);
+    assert_eq!(Cartridge::from_no_cart().rom_crc32(), None);
+}
+
+#[test]
+fn nes_exposes_rom_checksums() {
+    use crate::NES;
+    let prg = vec![0x11u8; 0x4000];
+    let chr = vec![0x22u8; 0x2000];
+    let rom = make_ines_with_prg_chr(&prg, &chr, 0);
+    let mut nes = NES::new();
+    nes.load_cartridge_ines(&rom).unwrap();
+    assert_eq!(
+        nes.rom_md5_hex().as_deref(),
+        Some("6199774edcf2e37da3d1f1edfe1f071a")
+    );
+    assert_eq!(nes.rom_crc32(), Some(0xE5E7_C9BF));
+}
+
+#[test]
+fn recorded_movie_carries_rom_metadata() {
+    use crate::{CoreCommand, NES};
+    let prg = vec![0x11u8; 0x4000];
+    let chr = vec![0x22u8; 0x2000];
+    let rom = make_ines_with_prg_chr(&prg, &chr, 0);
+    let mut nes = NES::new();
+    nes.load_cartridge_ines(&rom).unwrap();
+    nes.reset();
+    nes.execute(CoreCommand::StartMovieRecording);
+    nes.execute(CoreCommand::RunFrame);
+    nes.execute(CoreCommand::StopMovieRecording);
+    let movie = nes.take_recorded_movie().unwrap();
+    assert_eq!(
+        movie.rom_checksum.as_str(),
+        "6199774edcf2e37da3d1f1edfe1f071a"
+    );
+    assert!(!movie.pal_flag); // NTSC ROM
+    assert!(movie.emu_version > 0);
+    // 序列化后回读仍携带元数据
+    let reparsed = crate::movie::parse_fm2(movie.to_fm2_string().as_bytes()).unwrap();
+    assert_eq!(reparsed.rom_checksum, movie.rom_checksum);
+    assert_eq!(reparsed.pal_flag, false);
+    assert_eq!(reparsed.emu_version, movie.emu_version);
+}
