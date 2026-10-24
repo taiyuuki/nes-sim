@@ -589,6 +589,14 @@ name = "nes-sim"
 version = "0.3.0"
 
 [[package]]
+name = "nes-wasm"
+version = "0.3.0"
+dependencies = [
+ "nes-sim",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "nix"
 version = "0.24.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

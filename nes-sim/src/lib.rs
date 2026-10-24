@@ -191,6 +191,11 @@ impl NES {
         self.bus.set_controller_state(port, state);
     }
 
+    /// 当前手柄状态;端口越界返回全释放状态。
+    pub fn controller_state(&self, port: usize) -> ControllerState {
+        self.bus.controller_state(port)
+    }
+
     /// 金手指主列表（含未启用项，按添加顺序）。
     pub fn cheats(&self) -> &[Cheat] {
         self.bus.cheats()

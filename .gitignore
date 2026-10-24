@@ -4,6 +4,7 @@
 **/roms
 **/refs
 **/docs
+**/pkg
 
 .DS_Store
 .codegraph

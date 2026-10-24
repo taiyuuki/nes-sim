@@ -1,5 +1,5 @@
 [workspace]
-members = ["nes-sim", "nes-desktop"]
+members = ["nes-sim", "nes-desktop", "nes-wasm"]
 resolver = "3"
 
 [workspace.package]
