@@ -99,19 +99,30 @@ impl NES {
         self.cpu.set_nmi(self.bus.ppu_nmi_line());
     }
 
+    /// 模拟断电重启：CPU RAM 清零后复位。
+    /// 播放从上电开始的 FM2 录像前调用，使机器回到确定初始状态
+    /// （近似：VRAM 等未清零，游戏通常自行初始化，对绝大多数录像足够）。
+    pub fn power_cycle(&mut self) {
+        self.bus.ram = [0; 0x800];
+        self.reset();
+    }
+
     pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
+        self.clear_movie_state();
         self.bus.insert_cartridge(cartridge);
         self.reset_cpu_schedule();
         self.reset();
     }
 
     pub fn load_cartridge_ines(&mut self, rom: &[u8]) -> Result<(), CartridgeError> {
+        self.clear_movie_state();
         self.bus.load_cartridge_ines(rom)?;
         self.reset_cpu_schedule();
         Ok(())
     }
 
     pub fn load_cartridge_fds(&mut self, image: &[u8], bios: &[u8]) -> Result<(), CartridgeError> {
+        self.clear_movie_state();
         self.bus.load_rom(image, Some(bios))?;
         self.reset_cpu_schedule();
         Ok(())
@@ -119,9 +130,17 @@ impl NES {
 
     /// 按格式嗅探加载ROM（iNES或FDS镜像；FDS需要BIOS ROM数据）。
     pub fn load_rom(&mut self, rom: &[u8], bios: Option<&[u8]>) -> Result<(), CartridgeError> {
+        self.clear_movie_state();
         self.bus.load_rom(rom, bios)?;
         self.reset_cpu_schedule();
         Ok(())
+    }
+
+    /// 录像属于当前游戏，换卡时停止播放/录像并丢弃未保存数据。
+    fn clear_movie_state(&mut self) {
+        self.movie_player = None;
+        self.movie_recorder = None;
+        self.recorded_movie = None;
     }
 
     pub fn fds_command(&mut self, cmd: FdsDiskCommand) {

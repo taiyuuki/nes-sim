@@ -2,7 +2,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
 use nes_sim::video::{VideoBuffer, frame_to_argb32_into};
 use nes_sim::{
-    ControllerButton, ControllerState, ExecutionTarget, FdsDiskCommand, FrontendInput,
+    ControllerButton, ControllerState, CoreCommand, ExecutionTarget, FdsDiskCommand, FrontendInput,
     FrontendRuntime, RunMode, TVSystem, is_fds_image,
 };
 use std::collections::VecDeque;
@@ -72,6 +72,10 @@ fn usage(program: &str) {
     eprintln!("  F8      Load state (current slot)");
     eprintln!("  F1      FDS: 插入/退出磁盘");
     eprintln!("  F2      FDS: 切换盘面(需先退盘)");
+    eprintln!("  F3      Load cheat file (.cht, FCEUX/Nestopia)");
+    eprintln!("  F4      Toggle all cheats on/off");
+    eprintln!("  F6      Start/stop FM2 recording (restarts from power-on)");
+    eprintln!("  F7      Play FM2 movie (restarts from power-on)");
     eprintln!("  O       Open ROM file");
     eprintln!("  Esc     Quit");
 }
@@ -309,6 +313,11 @@ fn main() -> ExitCode {
     let mut fps_window_start = Instant::now();
     let mut status_message = format!("slot {save_slot}");
     let mut apu_mute_mask = runtime.nes().apu_debug_mute_mask();
+    // 自动加载与 ROM 同名的 .cht 金手指文件
+    if let Some(message) = try_load_sidecar_cheats(&mut runtime, &rom_path) {
+        status_message = message;
+    }
+    let mut movie_playback_active = false;
 
     let mut snapshot;
 
@@ -413,6 +422,8 @@ fn main() -> ExitCode {
                             frames_since_rewind_snapshot = 0;
                             let new_apu_mute_mask = runtime.nes().apu_debug_mute_mask();
                             apu_mute_mask = new_apu_mute_mask;
+                            // 新 ROM：尝试自动加载同名 .cht
+                            let sidecar = try_load_sidecar_cheats(&mut runtime, &current_rom_path);
                             // 返回新状态信息
                             format!(
                                 "已加载: {}",
@@ -420,7 +431,7 @@ fn main() -> ExitCode {
                                     .file_name()
                                     .unwrap_or_default()
                                     .to_string_lossy()
-                            )
+                            ) + &sidecar.map_or(String::new(), |m| format!(" | {m}"))
                         }
                         Err(error) => format!("加载 ROM 失败: {error}"),
                     }
@@ -441,10 +452,127 @@ fn main() -> ExitCode {
             status_message = fds_status_message(&runtime);
         }
 
+        // F3：加载金手指文件（FCEUX 文本 / Nestopia/Mesen XML 自动识别）
+        if window.is_key_pressed(Key::F3, KeyRepeat::No) {
+            status_message = match rfd::FileDialog::new()
+                .add_filter("Cheat File", &["cht"])
+                .add_filter("All Files", &["*"])
+                .pick_file()
+            {
+                Some(path) => {
+                    match std::fs::read(&path)
+                        .map_err(|e| e.to_string())
+                        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                        .and_then(|text| {
+                            nes_sim::cheat::parse_cht_file(&text).map_err(|e| e.to_string())
+                        }) {
+                        Ok(cheats) => {
+                            let message = cheats_status_message(&cheats);
+                            runtime.nes_mut().execute(CoreCommand::SetCheats(cheats));
+                            message
+                        }
+                        Err(error) => format!("cheat load failed: {error}"),
+                    }
+                }
+                None => "cheat load cancelled".to_string(),
+            };
+        }
+
+        // F4：金手指总开关（全部启用/全部禁用）
+        if window.is_key_pressed(Key::F4, KeyRepeat::No) {
+            let mut cheats = runtime.nes().cheats().to_vec();
+            if cheats.is_empty() {
+                status_message = "no cheats loaded".to_string();
+            } else {
+                let disable = cheats.iter().any(|c| c.enabled);
+                for cheat in &mut cheats {
+                    cheat.enabled = !disable;
+                }
+                status_message = cheats_status_message(&cheats);
+                runtime.nes_mut().execute(CoreCommand::SetCheats(cheats));
+            }
+        }
+
+        // F6：开始/停止录像（停止时弹保存对话框）
+        if window.is_key_pressed(Key::F6, KeyRepeat::No) {
+            if runtime.nes().is_recording_movie() {
+                runtime.nes_mut().execute(CoreCommand::StopMovieRecording);
+                status_message = match runtime.nes_mut().take_recorded_movie() {
+                    Some(movie) => match prompt_save_movie(&current_rom_path, &movie) {
+                        Ok(path) => format!("movie saved: {path}"),
+                        Err(error) => format!("movie save failed: {error}"),
+                    },
+                    None => "no movie recorded".to_string(),
+                };
+            } else {
+                // FM2 只支持从上电开始录像：复位到近似上电态，保证产出可独立回放
+                runtime.nes_mut().power_cycle();
+                runtime.nes_mut().execute(CoreCommand::StartMovieRecording);
+                movie_playback_active = false;
+                rewind_buffer.clear();
+                frames_since_rewind_snapshot = 0;
+                status_message = "recording from power-on... (F6 to stop & save)".to_string();
+            }
+        }
+
+        // F7：播放 FM2 录像（从近似上电状态开始）
+        if window.is_key_pressed(Key::F7, KeyRepeat::No) {
+            if runtime.nes().is_recording_movie() {
+                status_message = "stop recording first (F6)".to_string();
+            } else {
+                status_message = match rfd::FileDialog::new()
+                    .add_filter("FM2 Movie", &["fm2"])
+                    .add_filter("All Files", &["*"])
+                    .pick_file()
+                {
+                    Some(path) => {
+                        match std::fs::read(&path)
+                            .map_err(|e| e.to_string())
+                            .and_then(|bytes| {
+                                nes_sim::movie::parse_fm2(&bytes).map_err(|e| e.to_string())
+                            }) {
+                            Ok(movie) => {
+                                let frames = movie.frames.len();
+                                let rom_name = if movie.rom_filename.is_empty() {
+                                    path.to_string_lossy().to_string()
+                                } else {
+                                    movie.rom_filename.clone()
+                                };
+                                runtime.nes_mut().power_cycle();
+                                runtime.nes_mut().execute(CoreCommand::PlayMovie(movie));
+                                movie_playback_active = true;
+                                rewind_buffer.clear();
+                                frames_since_rewind_snapshot = 0;
+                                format!("playing {frames} frames: {rom_name}")
+                            }
+                            Err(error) => format!("movie load failed: {error}"),
+                        }
+                    }
+                    None => "movie load cancelled".to_string(),
+                };
+            }
+        }
+
+        // 录像播放结束检测（FrontendRuntime 不透传事件，轮询进度）
+        if movie_playback_active
+            && runtime
+                .nes()
+                .movie()
+                .is_some_and(|m| runtime.nes().movie_frame() == Some(m.frames.len()))
+        {
+            let frames = runtime.nes().movie().map_or(0, |m| m.frames.len());
+            runtime.nes_mut().execute(CoreCommand::StopMovie);
+            movie_playback_active = false;
+            status_message = format!("movie finished ({frames} frames)");
+        }
+
         let input = collect_input(&window);
         let fast_forward = window.is_key_down(Key::Space);
-        // 按住Backspace回退；缓冲耗尽时按正常速度前进，避免空转
-        let rewinding = window.is_key_down(Key::Backspace) && !rewind_buffer.is_empty();
+        // 按住Backspace回退；缓冲耗尽时按正常速度前进，避免空转。
+        // 录像中禁用回退（倒带会破坏录像帧序）
+        let rewinding = window.is_key_down(Key::Backspace)
+            && !rewind_buffer.is_empty()
+            && !runtime.nes().is_recording_movie();
         let t_step = Instant::now();
         if rewinding {
             if let Some(state) = rewind_buffer.pop_back()
@@ -1133,6 +1261,47 @@ fn fds_status_message(runtime: &FrontendRuntime) -> String {
 /// 存档槽对应的即时存档文件： <rom>.state<slot>（槽位1-9）。
 fn slot_save_path(rom_path: &str, slot: u8) -> PathBuf {
     PathBuf::from(rom_path).with_extension(format!("state{slot}"))
+}
+
+/// 金手指状态消息："cheats 启用数/总数"。
+fn cheats_status_message(cheats: &[nes_sim::Cheat]) -> String {
+    let total = cheats.len();
+    let enabled = cheats.iter().filter(|c| c.enabled).count();
+    format!("cheats {enabled}/{total} active")
+}
+
+/// 自动加载与 ROM 同名的 .cht 金手指文件（FCEUX 习惯）。
+/// 文件不存在时静默返回 None；存在则返回状态消息（含解析失败提示）。
+fn try_load_sidecar_cheats(runtime: &mut FrontendRuntime, rom_path: &str) -> Option<String> {
+    let path = PathBuf::from(rom_path).with_extension("cht");
+    let text = String::from_utf8_lossy(&std::fs::read(&path).ok()?).into_owned();
+    match nes_sim::cheat::parse_cht_file(&text) {
+        Ok(cheats) => {
+            let message = cheats_status_message(&cheats);
+            runtime.nes_mut().execute(CoreCommand::SetCheats(cheats));
+            Some(format!("{message}: {}", path.display()))
+        }
+        Err(error) => Some(format!("cheat load failed: {error} ({})", path.display())),
+    }
+}
+
+/// 弹出保存对话框写入 FM2 录像；默认文件名 <rom>.fm2。
+fn prompt_save_movie(rom_path: &str, movie: &nes_sim::Movie) -> Result<String, String> {
+    let default_name = format!(
+        "{}.fm2",
+        PathBuf::from(rom_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "movie".to_string())
+    );
+    let path = rfd::FileDialog::new()
+        .add_filter("FM2 Movie", &["fm2"])
+        .set_file_name(&default_name)
+        .save_file()
+        .ok_or_else(|| "cancelled".to_string())?;
+    let path_str = path.to_string_lossy().to_string();
+    std::fs::write(&path, movie.to_fm2_string()).map_err(|e| format!("写入失败: {e}"))?;
+    Ok(path_str)
 }
 
 /// 弹出文件选择对话框并尝试加载 ROM

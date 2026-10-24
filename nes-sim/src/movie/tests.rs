@@ -363,6 +363,55 @@ fn recorded_movie_replays_identically() {
 }
 
 #[test]
+fn power_cycle_clears_ram_and_movie_state_survives() {
+    let rom = make_test_rom();
+    let mut nes = NES::new();
+    nes.load_cartridge_ines(&rom).unwrap();
+    nes.reset();
+
+    // 跑一帧并留下 RAM 痕迹
+    nes.bus.ram[0x10] = 0xAA;
+    nes.power_cycle();
+    assert_eq!(nes.bus.ram[0x10], 0x00);
+
+    // power_cycle 不影响录像状态（它只复位机器）
+    nes.execute(CoreCommand::StartMovieRecording);
+    nes.power_cycle();
+    assert!(nes.is_recording_movie());
+    nes.execute(CoreCommand::RunFrame); // 复位后录像继续记录新帧
+    nes.execute(CoreCommand::StopMovieRecording);
+    assert_eq!(nes.take_recorded_movie().unwrap().frames.len(), 1);
+}
+
+#[test]
+fn loading_a_cartridge_stops_playback_and_recording() {
+    let rom = make_test_rom();
+    let mut nes = NES::new();
+    nes.load_cartridge_ines(&rom).unwrap();
+    nes.reset();
+
+    nes.execute(CoreCommand::PlayMovie(Movie {
+        frames: vec![frame(0xFF, 0x00, 0); 10],
+        ..Movie::default()
+    }));
+    nes.execute(CoreCommand::RunFrame);
+    assert!(nes.movie().is_some());
+
+    nes.load_cartridge_ines(&rom).unwrap();
+    assert!(nes.movie().is_none());
+
+    // 录像中的未保存数据同样被丢弃
+    nes.execute(CoreCommand::StartMovieRecording);
+    nes.execute(CoreCommand::RunFrame);
+    assert!(nes.is_recording_movie());
+    nes.execute(CoreCommand::Reset); // 换一种路径：直接重载
+    let cartridge = crate::cartridge::Cartridge::from_ines(&rom).unwrap();
+    nes.insert_cartridge(cartridge);
+    assert!(!nes.is_recording_movie());
+    assert!(nes.take_recorded_movie().is_none());
+}
+
+#[test]
 fn movie_state_is_not_serialized_into_savestate() {
     let rom = make_test_rom();
     let mut plain = NES::new();
