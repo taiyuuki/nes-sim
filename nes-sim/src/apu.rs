@@ -12,15 +12,35 @@ use pulse::PulseChannel;
 use triangle::TriangleChannel;
 
 const CPU_CLOCK_NTSC: u64 = 1_789_773;
+const CPU_CLOCK_PAL: u64 = 1_662_607;
+const CPU_CLOCK_DENDY: u64 = 1_773_447;
 const DEFAULT_SAMPLE_RATE: u32 = 44_100;
-/// 帧序列器位置计数模型：事件在帧内固定位置触发（CPU周期，相对$4017复位生效点）
-const FRAME_PERIOD_4STEP: u16 = 29_830;
-const FRAME_PERIOD_5STEP: u16 = 37_282;
-const FRAME_QUARTER_STEPS: [u16; 4] = [7_457, 14_913, 22_371, 29_829];
-// 半帧（长度计数器时钟）位置：第二半帧在帧回绕拍(pos=0)
-const FRAME_HALF_4STEP: [u16; 2] = [14_914, 0];
-const FRAME_HALF_5STEP: [u16; 2] = [14_914, 0];
-/// 4步模式末尾IRQ标志持续置位的拍数（自29829起，读清除后仍会重新置位）
+
+/// 帧序列器位置计数模型：事件在帧内固定位置触发（CPU周期，相对$4017复位生效点）。
+/// PAL/Dendy 的帧计数器为 PAL 型（Nesdev APU Frame Counter；Dendy 克隆芯片即 2A07 语义）。
+struct FrameSequencerTiming {
+    period_4step: u16,
+    period_5step: u16,
+    quarter_steps: [u16; 4],
+    /// 半帧（长度计数器时钟）位置：第二半帧在帧回绕拍(pos=0)
+    half_steps: [u16; 2],
+}
+
+const FRAME_TIMING_NTSC: FrameSequencerTiming = FrameSequencerTiming {
+    period_4step: 29_830,
+    period_5step: 37_282,
+    quarter_steps: [7_457, 14_913, 22_371, 29_829],
+    half_steps: [14_914, 0],
+};
+
+const FRAME_TIMING_PAL: FrameSequencerTiming = FrameSequencerTiming {
+    period_4step: 33_254,
+    period_5step: 41_566,
+    quarter_steps: [8_313, 16_627, 24_939, 33_253],
+    half_steps: [16_628, 0],
+};
+
+/// 4步模式末尾IRQ标志持续置位的拍数（自quarter_steps[3]起，读清除后仍会重新置位）
 const FRAME_IRQ_SET_TICKS: u8 = 3;
 
 // 使用 Q31.31 定点数格式进行相位跟踪
@@ -63,6 +83,9 @@ pub struct APU {
     frame_reset_delay: u8,
     pending_dmc_dma: Option<DmcDmaRequest>,
     sample_rate: u32,
+    // 当前制式的CPU主频（采样率换算用）与帧序列器位置表
+    cpu_clock: u64,
+    frame_timing: &'static FrameSequencerTiming,
     // 使用 Q31.31 定点数：每个 CPU 周期增加 PHASE_SCALE / cycles_per_sample
     cycles_per_sample_fixed: u64,
     sample_phase_fixed: u64,
@@ -111,6 +134,8 @@ impl APU {
             frame_reset_delay: 0,
             pending_dmc_dma: None,
             sample_rate,
+            cpu_clock: CPU_CLOCK_NTSC,
+            frame_timing: &FRAME_TIMING_NTSC,
             cycles_per_sample_fixed,
             sample_phase_fixed: 0,
             sample_accum_pulse: 0,
@@ -136,6 +161,19 @@ impl APU {
 
     pub fn set_tv_system(&mut self, tv: TVSystem) {
         self.dmc.set_tv_system(tv);
+        self.noise.set_tv_system(tv);
+        // Dendy 的帧计数器与 noise/DMC 周期表均为 PAL 型（2A07 克隆芯片），
+        // 仅 CPU 分频不同（主时钟/15 而非 /16）
+        self.frame_timing = match tv {
+            TVSystem::NTSC => &FRAME_TIMING_NTSC,
+            TVSystem::PAL | TVSystem::DENDY => &FRAME_TIMING_PAL,
+        };
+        self.cpu_clock = match tv {
+            TVSystem::NTSC => CPU_CLOCK_NTSC,
+            TVSystem::PAL => CPU_CLOCK_PAL,
+            TVSystem::DENDY => CPU_CLOCK_DENDY,
+        };
+        self.update_sample_phase();
     }
 
     pub fn reset(&mut self) {
@@ -354,7 +392,7 @@ impl APU {
         }
 
         self.sample_rate = sample_rate;
-        self.cycles_per_sample_fixed = (PHASE_SCALE * sample_rate as u64) / CPU_CLOCK_NTSC;
+        self.update_sample_phase();
         self.sample_phase_fixed = 0;
         self.sample_accum_pulse = 0;
         self.sample_accum_tri = 0;
@@ -363,6 +401,11 @@ impl APU {
         self.sample_accum_exp = 0;
         self.sample_accum_count = 0;
         self.audio_samples.clear();
+    }
+
+    /// 按当前制式的CPU主频重算每个CPU周期对应的采样相位增量。
+    fn update_sample_phase(&mut self) {
+        self.cycles_per_sample_fixed = (PHASE_SCALE * u64::from(self.sample_rate)) / self.cpu_clock;
     }
 
     pub fn audio_samples(&self) -> &[f32] {
@@ -520,10 +563,11 @@ impl APU {
         }
 
         self.frame_pos = self.frame_pos.wrapping_add(1);
+        let timing = self.frame_timing;
         let period = if self.frame_mode_five_step {
-            FRAME_PERIOD_5STEP
+            timing.period_5step
         } else {
-            FRAME_PERIOD_4STEP
+            timing.period_4step
         };
         if self.frame_pos >= period {
             self.frame_pos = 0;
@@ -537,21 +581,18 @@ impl APU {
             }
         }
 
-        if FRAME_QUARTER_STEPS.contains(&self.frame_pos) {
+        if timing.quarter_steps.contains(&self.frame_pos) {
             self.clock_quarter_frame();
         }
-        if self.frame_mode_five_step {
-            if FRAME_HALF_5STEP.contains(&self.frame_pos) {
-                self.clock_half_frame();
-            }
-        } else {
-            if FRAME_HALF_4STEP.contains(&self.frame_pos) {
-                self.clock_half_frame();
-            }
-            if self.frame_pos == FRAME_QUARTER_STEPS[3] && !self.frame_irq_inhibit {
-                self.frame_irq_flag = true;
-                self.frame_irq_set_ticks = FRAME_IRQ_SET_TICKS - 1;
-            }
+        if timing.half_steps.contains(&self.frame_pos) {
+            self.clock_half_frame();
+        }
+        if !self.frame_mode_five_step
+            && self.frame_pos == timing.quarter_steps[3]
+            && !self.frame_irq_inhibit
+        {
+            self.frame_irq_flag = true;
+            self.frame_irq_set_ticks = FRAME_IRQ_SET_TICKS - 1;
         }
     }
 

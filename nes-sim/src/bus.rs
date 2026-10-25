@@ -1,6 +1,6 @@
 use crate::apu::APU;
 use crate::cartridge::{
-    Cartridge, CartridgeError, FdsDiskCommand, FdsDiskInfo, Mirroring, is_fds_image,
+    Cartridge, CartridgeError, FdsDiskCommand, FdsDiskInfo, Mirroring, TVSystem, is_fds_image,
 };
 use crate::cheat::{Cheat, CheatTable};
 use crate::dma::{DmaBusRequest, DmaController};
@@ -359,7 +359,15 @@ impl NESBus {
             controller.load_state(reader)?;
         }
         self.cpu_open_bus = reader.read_u8()?;
+        // APU 存档不含制式，从 PPU 恢复的制式同步帧序列器/周期表/采样率主频
+        self.apu.set_tv_system(self.ppu.tv_system());
         Ok(())
+    }
+
+    /// 覆盖制式（桌面端 --tv-system 等）：换卡后以新卡带头部为准。
+    pub(crate) fn set_tv_system(&mut self, tv: TVSystem) {
+        self.ppu.set_parameters(tv);
+        self.apu.set_tv_system(tv);
     }
 
     fn latched_cpu_read(&mut self, data: u8) -> u8 {

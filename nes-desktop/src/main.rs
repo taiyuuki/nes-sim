@@ -81,27 +81,35 @@ fn usage(program: &str) {
 }
 
 /// 按扩展名/魔数加载ROM；FDS镜像自动查找BIOS并优先加载 <rom>.sav 备份，
-/// 普通卡带带电池时自动载入 <rom>.sav 存档。
-fn load_rom_runtime(rom_path: &str) -> Result<FrontendRuntime, String> {
+/// 普通卡带带电池时自动载入 <rom>.sav 存档。`tv_override` 覆盖卡带头部的制式。
+fn load_rom_runtime(
+    rom_path: &str,
+    tv_override: Option<TVSystem>,
+) -> Result<FrontendRuntime, String> {
     let rom = std::fs::read(rom_path).map_err(|e| format!("读取文件失败: {e}"))?;
-    if !is_fds_image(&rom) {
+    let mut runtime = if !is_fds_image(&rom) {
         let mut runtime =
             FrontendRuntime::from_rom_bytes(&rom).map_err(|e| format!("加载 ROM 失败: {e}"))?;
         load_battery_save(&mut runtime, rom_path);
-        return Ok(runtime);
-    }
+        runtime
+    } else {
+        // FDS: 优先使用写盘备份(.sav), 其次原镜像
+        let sav_path = PathBuf::from(rom_path).with_extension("sav");
+        let (image, image_path) = match std::fs::read(&sav_path) {
+            Ok(sav) if is_fds_image(&sav) => (sav, sav_path.to_string_lossy().to_string()),
+            _ => (rom, rom_path.to_string()),
+        };
 
-    // FDS: 优先使用写盘备份(.sav), 其次原镜像
-    let sav_path = PathBuf::from(rom_path).with_extension("sav");
-    let (image, image_path) = match std::fs::read(&sav_path) {
-        Ok(sav) if is_fds_image(&sav) => (sav, sav_path.to_string_lossy().to_string()),
-        _ => (rom, rom_path.to_string()),
+        let bios = find_fds_bios(rom_path)?;
+        let runtime = FrontendRuntime::from_rom_bytes_with_bios(&image, Some(&bios))
+            .map_err(|e| format!("加载 FDS 失败: {e}"))?;
+        eprintln!("FDS: 使用镜像 {image_path} + BIOS ({} 字节)", bios.len());
+        runtime
     };
-
-    let bios = find_fds_bios(rom_path)?;
-    let runtime = FrontendRuntime::from_rom_bytes_with_bios(&image, Some(&bios))
-        .map_err(|e| format!("加载 FDS 失败: {e}"))?;
-    eprintln!("FDS: 使用镜像 {image_path} + BIOS ({} 字节)", bios.len());
+    if let Some(tv) = tv_override {
+        runtime.nes_mut().set_tv_system(tv);
+        eprintln!("TV system override: {tv:?}");
+    }
     Ok(runtime)
 }
 
@@ -193,6 +201,7 @@ fn main() -> ExitCode {
         .unwrap_or_else(|| "desktop_frontend".to_string());
 
     let mut rom_path = None;
+    let mut tv_override: Option<TVSystem> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -206,10 +215,15 @@ fn main() -> ExitCode {
                     usage(&program);
                     return ExitCode::from(2);
                 };
-                if parse_tv_system_override(&value).is_none() {
-                    eprintln!("invalid --tv-system value {value:?}");
-                    usage(&program);
-                    return ExitCode::from(2);
+                match parse_tv_system_override(&value) {
+                    // "auto"（None）沿用卡带头部
+                    Some(Some(tv)) => tv_override = Some(tv),
+                    Some(None) => {}
+                    None => {
+                        eprintln!("invalid --tv-system value {value:?}");
+                        usage(&program);
+                        return ExitCode::from(2);
+                    }
                 }
             }
             _ if rom_path.is_none() => rom_path = Some(arg),
@@ -244,7 +258,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let mut runtime = match load_rom_runtime(&rom_path) {
+    let mut runtime = match load_rom_runtime(&rom_path, tv_override) {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("{error} ({rom_path:?})");
@@ -324,7 +338,7 @@ fn main() -> ExitCode {
     // 预分配视频缓冲区，避免每帧堆分配
     let mut video_buffer = VideoBuffer::new(nes_sim::FRAME_WIDTH * nes_sim::FRAME_HEIGHT);
 
-    let frame_period = Duration::from_micros(16_667);
+    let mut frame_period = tv_frame_period(runtime.nes().tv_system());
     let mut next_frame_deadline = Instant::now() + frame_period;
     let mut frame_times = VecDeque::new();
     let frame_time_window = 60; // 采样 60 帧计算平均值
@@ -383,7 +397,7 @@ fn main() -> ExitCode {
                 Ok(new_rom_path) => {
                     // 先保存旧FDS磁盘
                     save_persist_data(&runtime, &current_rom_path);
-                    match load_rom_runtime(&new_rom_path) {
+                    match load_rom_runtime(&new_rom_path, tv_override) {
                         Ok(mut new_runtime) => {
                             // 停止旧音频播放
                             if let Some(player) = &mut audio_player {
@@ -418,6 +432,8 @@ fn main() -> ExitCode {
                             // 更新状态
                             runtime = new_runtime;
                             current_rom_path = new_rom_path.clone();
+                            frame_period = tv_frame_period(runtime.nes().tv_system());
+                            next_frame_deadline = Instant::now() + frame_period;
                             rewind_buffer.clear();
                             frames_since_rewind_snapshot = 0;
                             let new_apu_mute_mask = runtime.nes().apu_debug_mute_mask();
@@ -767,6 +783,14 @@ fn parse_tv_system_override(value: &str) -> Option<Option<TVSystem>> {
         "pal" => Some(Some(TVSystem::PAL)),
         "dendy" => Some(Some(TVSystem::DENDY)),
         _ => None,
+    }
+}
+
+/// 按制式的视频帧周期：NTSC 60.0988fps，PAL/Dendy 50.0070fps。
+fn tv_frame_period(tv: TVSystem) -> Duration {
+    match tv {
+        TVSystem::NTSC => Duration::from_micros(16_639),
+        TVSystem::PAL | TVSystem::DENDY => Duration::from_micros(19_997),
     }
 }
 

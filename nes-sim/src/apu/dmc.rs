@@ -71,9 +71,10 @@ impl Default for DmcState {
 
 impl DmcState {
     pub(super) fn set_tv_system(&mut self, tv: TVSystem) {
+        // Dendy 的DMC周期表为PAL型（2A07克隆芯片，Mesen同款映射）
         self.dmc_periods = match tv {
-            TVSystem::NTSC | TVSystem::DENDY => &DMC_PERIODS_NTSC,
-            TVSystem::PAL => &DMC_PERIODS_PAL,
+            TVSystem::NTSC => &DMC_PERIODS_NTSC,
+            TVSystem::PAL | TVSystem::DENDY => &DMC_PERIODS_PAL,
         };
         self.timer_reload = self.dmc_periods[self.rate_index as usize];
     }

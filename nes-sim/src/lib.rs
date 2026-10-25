@@ -486,6 +486,21 @@ impl NES {
         self.master_clock
     }
 
+    /// 当前制式（由卡带头部解析，或经 [`NES::set_tv_system`] 覆盖）。
+    pub fn tv_system(&self) -> TVSystem {
+        self.bus.ppu().tv_system()
+    }
+
+    /// 覆盖当前制式（重新计时为 NTSC/PAL/DENDY）。
+    /// 影响PPU帧长、CPU/PPU分频调度与APU帧序列器/周期表/采样率主频。
+    pub fn set_tv_system(&mut self, tv: TVSystem) {
+        self.bus.set_tv_system(tv);
+        self.cached_tv_system = tv;
+        // PAL 的 CPU/PPU 分频调度相位按新制式重新对齐
+        self.cpu_schedule_index = 0;
+        self.cpu_ppu_counter = 0;
+    }
+
     pub fn frame_number(&self) -> u64 {
         self.bus.ppu_frame()
     }
