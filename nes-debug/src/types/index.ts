@@ -40,6 +40,7 @@ export interface FrameData {
     width:      number;
     height:     number;
     pixels_b64: string;
+    emphasis:   number;
 }
 
 export interface RunFrameResult {

@@ -18,3 +18,39 @@ export const NES_LUT = new Uint8ClampedArray([
     204, 210, 120, 255, 180, 222, 120, 255, 168, 226, 144, 255, 152, 226, 180, 255,
     160, 214, 228, 255, 160, 162, 160, 255, 0, 0, 0, 255, 0, 0, 0, 255,
 ])
+
+// 颜色强调调制系数（千分比；Nesdev NTSC video "Color Tint Bits"，
+// 与核心库 nes-sim/src/video.rs 的 EMPHASIS_TINT 保持一致）。
+// 索引为 RGB 语义掩码：bit0=R, bit1=G, bit2=B。
+const EMPHASIS_TINT: readonly [number, number, number][] = [
+    [1000, 1000, 1000], // 无强调
+    [1239, 915, 743],   // R
+    [794, 1086, 882],   // G
+    [1019, 980, 653],   // RG (黄)
+    [905, 1026, 1277],  // B
+    [1023, 908, 979],   // RB (品红)
+    [741, 987, 1001],   // GB (青)
+    [750, 750, 750],    // RGB 全开（整体压暗）
+]
+
+/// 生成应用颜色强调后的 64 色 LUT32（小端序 RGBA）。
+/// $xE/$xF 两列（黑/白）不受强调影响。
+export function tintedLut32(emphasis: number): Uint32Array {
+    const lut = new Uint32Array(64)
+    const tint = EMPHASIS_TINT[emphasis & 7]!
+    for (let i = 0; i < 64; i++) {
+        const low = i & 0x0F
+        let r = NES_LUT[i * 4]!
+        let g = NES_LUT[i * 4 + 1]!
+        let b = NES_LUT[i * 4 + 2]!
+        if (tint[0] !== 1000 || tint[1] !== 1000 || tint[2] !== 1000) {
+            if (low < 0x0E) {
+                r = Math.min(255, Math.round((r * tint[0]) / 1000))
+                g = Math.min(255, Math.round((g * tint[1]) / 1000))
+                b = Math.min(255, Math.round((b * tint[2]) / 1000))
+            }
+        }
+        lut[i] = (255 << 24) | (b << 16) | (g << 8) | r
+    }
+    return lut
+}

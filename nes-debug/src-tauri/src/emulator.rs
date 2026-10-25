@@ -64,6 +64,8 @@ pub struct FrameData {
     pub width: usize,
     pub height: usize,
     pub pixels_b64: String,
+    /// 颜色强调掩码（bit0=R, bit1=G, bit2=B），用于调色板调制
+    pub emphasis: u8,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -154,6 +156,7 @@ pub fn run_frame(controller: u8, window: tauri::Window) -> Result<RunFrameResult
             width: video.width,
             height: video.height,
             pixels_b64: STANDARD.encode(video.pixels),
+            emphasis: video.emphasis,
         };
 
         let audio_samples = rt.nes().apu_audio_samples();
@@ -198,6 +201,7 @@ pub fn get_frame() -> Result<FrameData, String> {
             width: video.width,
             height: video.height,
             pixels_b64: STANDARD.encode(video.pixels),
+            emphasis: video.emphasis,
         })
     })
 }
@@ -428,35 +432,6 @@ pub fn read_palette() -> Result<Vec<u8>, String> {
 pub struct AudioData {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
-}
-
-#[tauri::command]
-pub fn get_audio_samples() -> Result<AudioData, String> {
-    with_runtime(|rt| {
-        let samples = rt.nes().apu_audio_samples().to_vec();
-        let sample_rate = rt.nes().apu_sample_rate();
-        rt.nes_mut().clear_apu_audio_samples();
-        println!(
-            "获取音频样本: {} 个样本, 采样率: {}",
-            samples.len(),
-            sample_rate
-        );
-        Ok(AudioData {
-            samples,
-            sample_rate,
-        })
-    })
-}
-
-#[tauri::command]
-pub fn set_audio_volume(percent: f64) -> Result<(), String> {
-    with_runtime(|_rt| {
-        // 将百分比转换为 APU 音量（0-255）
-        let _volume = (percent / 100.0 * 255.0) as u8;
-        // 设置为全局音量控制
-        // 这里可以添加音量控制逻辑
-        Ok(())
-    })
 }
 
 #[derive(serde::Deserialize)]
