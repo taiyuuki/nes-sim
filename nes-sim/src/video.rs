@@ -71,10 +71,40 @@ pub fn palette_index_to_rgb(index: u8) -> [u8; 3] {
     NES_RGB_PALETTE[(index & 0x3F) as usize]
 }
 
+/// RGB 空间的颜色强调调制系数（千分比，实测拟合表，Nesdev NTSC video "Color Tint Bits"）。
+/// 索引为 RGB 语义掩码（bit0=R, bit1=G, bit2=B），即 [`crate::api::VideoFrame::emphasis`]。
+/// 语义：强调一色的同时压暗另外两色；三位全开时整体压暗。
+const EMPHASIS_TINT: [[i32; 3]; 8] = [
+    [1000, 1000, 1000], // 无强调
+    [1239, 915, 743],   // R
+    [794, 1086, 882],   // G
+    [1019, 980, 653],   // RG (黄)
+    [905, 1026, 1277],  // B
+    [1023, 908, 979],   // RB (品红)
+    [741, 987, 1001],   // GB (青)
+    [750, 750, 750],    // RGB 全开（整体压暗）
+];
+
+/// 应用颜色强调后的 RGB。
+/// `$xE`/`$xF` 两列（黑/白）不受强调影响，其余列（含 $1D 黑）按系数调制。
+pub fn palette_index_to_rgb_tinted(index: u8, emphasis: u8) -> [u8; 3] {
+    let [r, g, b] = palette_index_to_rgb(index);
+    let tint = EMPHASIS_TINT[(emphasis & 7) as usize];
+    let low = index & 0x0F;
+    if tint == [1000, 1000, 1000] || low >= 0x0E {
+        return [r, g, b];
+    }
+    [
+        ((i32::from(r) * tint[0]) / 1000).clamp(0, 255) as u8,
+        ((i32::from(g) * tint[1]) / 1000).clamp(0, 255) as u8,
+        ((i32::from(b) * tint[2]) / 1000).clamp(0, 255) as u8,
+    ]
+}
+
 pub fn frame_to_rgb(frame: VideoFrame<'_>) -> Vec<u8> {
     let mut rgb = Vec::with_capacity(frame.pixels.len() * 3);
     for &pixel in frame.pixels {
-        rgb.extend_from_slice(&palette_index_to_rgb(pixel));
+        rgb.extend_from_slice(&palette_index_to_rgb_tinted(pixel, frame.emphasis));
     }
     rgb
 }
@@ -82,7 +112,7 @@ pub fn frame_to_rgb(frame: VideoFrame<'_>) -> Vec<u8> {
 pub fn frame_to_argb32(frame: VideoFrame<'_>) -> Vec<u32> {
     let mut argb = Vec::with_capacity(frame.pixels.len());
     for &pixel in frame.pixels {
-        let [r, g, b] = palette_index_to_rgb(pixel);
+        let [r, g, b] = palette_index_to_rgb_tinted(pixel, frame.emphasis);
         argb.push((0xFF_u32 << 24) | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b));
     }
     argb
@@ -112,7 +142,7 @@ impl VideoBuffer {
 /// 将帧数据转换为 ARGB32 格式，写入预分配的缓冲区
 pub fn frame_to_argb32_into(frame: VideoFrame<'_>, output: &mut [u32]) {
     for (dst, &pixel) in output.iter_mut().zip(frame.pixels) {
-        let [r, g, b] = palette_index_to_rgb(pixel);
+        let [r, g, b] = palette_index_to_rgb_tinted(pixel, frame.emphasis);
         *dst = (0xFF_u32 << 24) | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
     }
 }
@@ -121,7 +151,7 @@ pub fn frame_to_argb32_into(frame: VideoFrame<'_>, output: &mut [u32]) {
 pub fn frame_to_rgba(frame: VideoFrame<'_>) -> Vec<u8> {
     let mut rgba = Vec::with_capacity(frame.pixels.len() * 4);
     for &pixel in frame.pixels {
-        let [r, g, b] = palette_index_to_rgb(pixel);
+        let [r, g, b] = palette_index_to_rgb_tinted(pixel, frame.emphasis);
         rgba.push(r);
         rgba.push(g);
         rgba.push(b);

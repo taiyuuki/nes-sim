@@ -517,7 +517,19 @@ impl NES {
             format: PixelFormat::Indexed8,
             frame_number: self.frame_number(),
             pixels: self.frame_pixels(),
+            emphasis: self.emphasis_rgb_bits(),
         }
+    }
+
+    /// $2001 强调位换算为 RGB 语义掩码（bit0=R, bit1=G, bit2=B）。
+    /// PAL/Dendy 上 bit5/6 的含义与 NTSC 互换（Nesdev Colour emphasis）。
+    fn emphasis_rgb_bits(&self) -> u8 {
+        let bits = self.bus.ppu().emphasis_bits();
+        let (r, g, b) = match self.cached_tv_system {
+            TVSystem::NTSC => (bits & 1, (bits >> 1) & 1, (bits >> 2) & 1),
+            TVSystem::PAL | TVSystem::DENDY => ((bits >> 1) & 1, bits & 1, (bits >> 2) & 1),
+        };
+        r | (g << 1) | (b << 2)
     }
 
     pub fn audio_batch(&self) -> AudioBatch<'_> {

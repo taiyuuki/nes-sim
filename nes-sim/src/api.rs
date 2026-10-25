@@ -18,6 +18,10 @@ pub struct VideoFrame<'a> {
     pub format: PixelFormat,
     pub frame_number: u64,
     pub pixels: &'a [u8],
+    /// 帧末取样的颜色强调（RGB 语义掩码：bit0=R, bit1=G, bit2=B；
+    /// PAL/Dendy 的 $2001 bit5/6 互换已在输出前换算）。
+    /// 配合 `palette_index_to_rgb_tinted` 生成调制后的调色板。
+    pub emphasis: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

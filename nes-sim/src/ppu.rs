@@ -542,6 +542,12 @@ impl PPU {
         self.mask
     }
 
+    /// $2001 颜色强调位（bit5/6/7 的原始值，0-7）。
+    /// NTSC 语义为 R/G/B；PAL/Dendy 的 bit5/6 互换（由上层换算）。
+    pub fn emphasis_bits(&self) -> u8 {
+        (self.mask >> 5) & 0x07
+    }
+
     #[cfg(feature = "debug")]
     pub fn debug_status(&self) -> u8 {
         self.status

@@ -6,7 +6,7 @@
 //! 手柄位掩码(`set_controller_bits`):
 //! A=1, B=2, Select=4, Start=8, Up=16, Down=32, Left=64, Right=128。
 
-use nes_sim::video::palette_index_to_rgb;
+use nes_sim::video::{palette_index_to_rgb, palette_index_to_rgb_tinted};
 use nes_sim::{ControllerState, FRAME_HEIGHT, FRAME_WIDTH, NES};
 use wasm_bindgen::prelude::*;
 
@@ -85,10 +85,12 @@ impl NesWasm {
     }
 
     /// RGBA 帧缓冲(256×240×4),可直接写入 `ImageData`。
+    /// 已应用当前帧的颜色强调($2001 bit5-7)。
     pub fn frame_rgba(&mut self) -> Vec<u8> {
+        let emphasis = self.nes.video_frame().emphasis;
         let pixels = self.nes.frame_pixels();
         for (dst, &index) in self.rgba.as_chunks_mut::<4>().0.iter_mut().zip(pixels) {
-            let [r, g, b] = palette_index_to_rgb(index);
+            let [r, g, b] = palette_index_to_rgb_tinted(index, emphasis);
             dst[0] = r;
             dst[1] = g;
             dst[2] = b;
@@ -97,10 +99,23 @@ impl NesWasm {
         self.rgba.clone()
     }
 
-    /// 系统调色板,64 色 × 3 字节 RGB。
+    /// 当前帧的颜色强调掩码(bit0=R, bit1=G, bit2=B)。
+    pub fn emphasis_bits(&self) -> u8 {
+        self.nes.video_frame().emphasis
+    }
+
+    /// 系统调色板,64 色 × 3 字节 RGB(不含强调)。
     pub fn palette_rgb() -> Vec<u8> {
         (0..64)
             .flat_map(|i| palette_index_to_rgb(i as u8))
+            .collect()
+    }
+
+    /// 应用颜色强调后的系统调色板,64 色 × 3 字节 RGB
+    /// (emphasis 为 `emphasis_bits` 返回的掩码)。
+    pub fn palette_rgb_tinted(emphasis: u8) -> Vec<u8> {
+        (0..64)
+            .flat_map(|i| palette_index_to_rgb_tinted(i as u8, emphasis))
             .collect()
     }
 
