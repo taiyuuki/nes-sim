@@ -251,6 +251,8 @@ async function insertCartridge(bytes, label, listItem = null) {
   ensureAudio(); // 用户手势内创建/恢复音频
   try {
     nes.load_rom(bytes);
+    // 换卡即整机重启:清 CPU RAM 并复位,避免沿用旧游戏的脏 VRAM/寄存器导致花屏
+    nes.power_cycle();
   } catch (err) {
     toast(`载入失败:${err.message || err}`, true);
     return;

@@ -395,7 +395,7 @@ body.dragging::after {
 
 .manual-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px 24px;
 }
 
@@ -405,9 +405,13 @@ body.dragging::after {
   gap: 12px;
   font-size: 15px;
   color: var(--ink);
+  min-width: 0;
 }
 
-.keys { display: inline-flex; gap: 4px; }
+/* 方向键有 8 个键帽,单独占一整行,避免把网格列撑乱 */
+.manual-item.manual-wide { grid-column: 1 / -1; }
+
+.keys { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 
 kbd {
   font-family: var(--font-px);
