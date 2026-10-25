@@ -5,7 +5,7 @@ A NES (Famicom) emulator core library written in Rust. Headless design decouples
 ## Features
 
 - **Complete CPU emulation** — 6502 processor with full addressing mode support and undocumented instructions
-- **PPU rendering** — 256x240 resolution with sprite and background rendering
+- **PPU rendering** — 256x240 resolution with sprite and background rendering, color emphasis ($2001 tint bits)
 - **APU audio** — 5 standard channels (Pulse x2, Triangle, Noise, DMC)
 - **Expansion audio** — VRC6, Namco 163, Sunsoft 5B, MMC5
 - **Mappers** — Coverage of MMC1/MMC3/VRC series/Namco/Taito/Sunsoft and other common mappers
@@ -51,6 +51,9 @@ nes.clear_audio_samples();
 ```
 nes-sim/            Core library (zero dependencies)
 nes-desktop/        Desktop frontend (minifb + cpal)
+nes-wasm/           WebAssembly bindings (wasm-bindgen, npm: nes-wasm)
+web/                Browser demo (static site, no JS toolchain)
+nes-debug/          Debugger frontend (Tauri + Vue 3)
 ```
 
 ## Building
@@ -84,6 +87,9 @@ cargo run -p nes-sim --example export_frame -- "game.nes" "output.ppm" 180
 
 ```bash
 cargo run --release -p nes-desktop -- "game.nes"
+
+# Override the TV system (default: from the ROM header)
+cargo run --release -p nes-desktop -- --tv-system pal "game.nes"
 ```
 
 ## Supported Mappers

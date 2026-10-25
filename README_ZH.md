@@ -5,7 +5,7 @@
 ## 特性
 
 - **完整的 CPU 模拟** — 6502 处理器，支持全部寻址模式及未授权指令
-- **PPU 渲染** — 256x240 分辨率，精灵与背景渲染
+- **PPU 渲染** — 256x240 分辨率，精灵与背景渲染，颜色强调（$2001 色调位）
 - **APU 音频** — 5 个标准声道（Pulse x2、Triangle、Noise、DMC）
 - **扩展音频** — VRC6、Namco 163、Sunsoft 5B、MMC5
 - **Mapper** — 覆盖 MMC1/MMC3/VRC 系列/Namco/Taito/Sunsoft 等常见 Mapper
@@ -51,6 +51,9 @@ nes.clear_audio_samples();
 ```
 nes-sim/            核心库（零依赖）
 nes-desktop/        桌面前端（minifb + cpal）
+nes-wasm/           WebAssembly 绑定（wasm-bindgen，npm 包 nes-wasm）
+web/                网页演示（纯静态，无需 JS 构建工具）
+nes-debug/          调试器前端（Tauri + Vue 3）
 ```
 
 ## 构建
@@ -84,6 +87,9 @@ cargo run -p nes-sim --example export_frame -- "game.nes" "output.ppm" 180
 
 ```bash
 cargo run --release -p nes-desktop -- "game.nes"
+
+# 覆盖电视制式（默认按 ROM 头部）
+cargo run --release -p nes-desktop -- --tv-system pal "game.nes"
 ```
 
 ## 支持的 Mapper

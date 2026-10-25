@@ -9,6 +9,8 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 keywords.workspace = true
+rust-version.workspace = true
+categories = ["emulators", "game-engines"]
 
 [features]
 default = []

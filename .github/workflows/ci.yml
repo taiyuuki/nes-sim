@@ -57,3 +57,22 @@ jobs:
         run: cargo build --release -p nes-desktop
       - name: Test
         run: cargo test --release -p nes-desktop
+
+  wasm:
+    name: WASM build & smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - name: Build nes-wasm
+        run: wasm-pack build nes-wasm --target web --release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # fixture ROM 缺失时 smoke.mjs 自动改用合成 NROM
+      - name: Smoke test (node)
+        run: node nes-wasm/smoke.mjs

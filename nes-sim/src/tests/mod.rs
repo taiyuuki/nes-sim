@@ -85,10 +85,19 @@ fn parse_accuracy_coin_result(raw: u8) -> AccuracyCoinResult {
     }
 }
 
+/// 缺 fixture 的测试默认静默跳过；设置 NES_TEST_STRICT=1 后改为失败，
+/// 用于本地/CI 有完整 fixture 的环境，防止精度测试静默退化成空操作。
+fn strict_fixtures() -> bool {
+    std::env::var_os("NES_TEST_STRICT").is_some_and(|value| value != "0")
+}
+
 fn read_optional_binary_fixture(path: &str) -> Option<Vec<u8>> {
     match std::fs::read(path) {
         Ok(bytes) => Some(bytes),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if strict_fixtures() {
+                panic!("NES_TEST_STRICT: fixture {path} is missing");
+            }
             eprintln!("skipping fixture-dependent test because {path} is missing");
             None
         }
@@ -100,6 +109,9 @@ fn read_optional_text_fixture(path: &str) -> Option<String> {
     match std::fs::read_to_string(path) {
         Ok(text) => Some(text),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if strict_fixtures() {
+                panic!("NES_TEST_STRICT: fixture {path} is missing");
+            }
             eprintln!("skipping fixture-dependent test because {path} is missing");
             None
         }

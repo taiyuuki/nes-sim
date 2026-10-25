@@ -3,6 +3,27 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# 只复制确认无版权问题的自制 ROM（NESdev 社区竞赛作品）。
+# 列表外的 ROM（包括任何商业 ROM）一律不进 web 构建。
+HOMEBREW_ROMS=(
+  "Atmo Sphere.nes"
+  "BlobQuest.nes"
+  "Chocoblip_Alpha_0.1.nes"
+  "FINes.nes"
+  "Immunatio (nesdemia).nes"
+  "Spacegulls-1.1.nes"
+  "Upsad_down_v0_6.nes"
+  "WolfSpirit.nes"
+  "altercation-0.1.nes"
+  "arkade-rush.nes"
+  "bare-metal-6b2e249b.nes"
+  "blobert.nes"
+  "guntner(29).nes"
+  "nogoodchoice.nes"
+  "trouble_at_2a03-nesdev-submission-build.nes"
+  "witchnwiz_2021_02_22_nes_dev_v_1_0_0.nes"
+)
+
 echo "==> 构建 nes-wasm (wasm32, release)"
 wasm-pack build nes-wasm --target web --release
 
@@ -11,16 +32,24 @@ rm -rf web/pkg
 cp -r nes-wasm/pkg web/pkg
 
 echo "==> 复制自制 ROM → web/roms"
+rm -rf web/roms
 mkdir -p web/roms
-cp roms/*.nes web/roms/
+copied=()
+for f in "${HOMEBREW_ROMS[@]}"; do
+  if [ -f "roms/$f" ]; then
+    cp "roms/$f" web/roms/
+    copied+=("$f")
+  else
+    echo "  跳过（不存在）: $f" >&2
+  fi
+done
 
 echo "==> 生成 roms/roms.json"
 manifest="["
 sep=""
-for f in web/roms/*.nes; do
-  file=$(basename "$f")
-  size=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f")
-  manifest+="${sep}{\"file\":\"${file}\",\"size\":${size}}"
+for f in "${copied[@]}"; do
+  size=$(stat -f%z "web/roms/$f" 2>/dev/null || stat -c%s "web/roms/$f")
+  manifest+="${sep}{\"file\":\"${f}\",\"size\":${size}}"
   sep=","
 done
 manifest+="]"
