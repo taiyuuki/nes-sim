@@ -192,15 +192,11 @@ impl PPUBus for PpuMemory {
     fn ppu_write(&mut self, addr: u16, data: u8) {
         let addr = Self::normalize_addr(addr);
         match addr {
-            0x0000..=0x1FFF => {
-                if !self.cartridge.ppu_write(addr, data) {
-                    self.chr_ram[addr as usize] = data;
-                }
+            0x0000..=0x1FFF if !self.cartridge.ppu_write(addr, data) => {
+                self.chr_ram[addr as usize] = data;
             }
-            0x2000..=0x3EFF => {
-                if !self.ppu_write_nametable(addr, data) {
-                    self.vram[self.nametable_index(addr)] = data;
-                }
+            0x2000..=0x3EFF if !self.ppu_write_nametable(addr, data) => {
+                self.vram[self.nametable_index(addr)] = data;
             }
             0x3F00..=0x3FFF => self.palette[Self::palette_index(addr)] = data,
             _ => {}

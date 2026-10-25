@@ -134,12 +134,10 @@ impl Mmc5Audio {
             0x5006 => self.pulse2.write_timer_low(data),
             0x5007 => self.pulse2.write_timer_high(data),
             0x5010 => self.pcm_control = data,
-            0x5011 => {
-                // $5011是完整的8位DAC（全8位有效，区别于APU $4011的7位）。
-                // 硬件语义：写$00不改变DAC当前输出；读模式（$5010 bit0=1）下写入被忽略
-                if self.pcm_control & 0x01 == 0 && data != 0 {
-                    self.pcm_value = data;
-                }
+            // $5011是完整的8位DAC（全8位有效，区别于APU $4011的7位）。
+            // 硬件语义：写$00不改变DAC当前输出；读模式（$5010 bit0=1）下写入被忽略
+            0x5011 if self.pcm_control & 0x01 == 0 && data != 0 => {
+                self.pcm_value = data;
             }
             0x5015 => {
                 self.enable = data & 0x03;

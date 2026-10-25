@@ -88,11 +88,9 @@ impl FdsAudio {
     /// $4080-$408A 寄存器写入（index = 地址 - 0x4080）。
     pub(crate) fn write_reg(&mut self, index: usize, data: u8) {
         match index {
-            0x0 | 0x4 => {
-                // bit7=1 时包络禁用，直接写幅度
-                if data & 0x80 != 0 {
-                    self.amplitude[index >> 2] = data & 0x3F;
-                }
+            // bit7=1 时包络禁用，直接写幅度
+            0x0 | 0x4 if data & 0x80 != 0 => {
+                self.amplitude[index >> 2] = data & 0x3F;
             }
             0x2 => self.cwave_freq = (self.cwave_freq & 0xFF00) | u32::from(data),
             0x3 => {
