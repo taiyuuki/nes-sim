@@ -137,6 +137,7 @@ fn blargg_instr_test_v5() {
             "04-zero_page.nes",
             "05-zp_xy.nes",
             "06-absolute.nes",
+            "07-abs_xy.nes",
             "08-ind_x.nes",
             "09-ind_y.nes",
             "10-branches.nes",
@@ -247,13 +248,6 @@ fn blargg_apu_test() {
 #[ignore = "已知模拟器精度差距，修复后逐项挪回常跑套件"]
 fn blargg_known_accuracy_gaps() {
     let mut failures = Vec::new();
-    // CPU: 非官方指令 SHX/SHY (9E/9C)
-    collect_blargg_suite(
-        &mut failures,
-        "instr_test-v5/rom_singles",
-        &["07-abs_xy.nes"],
-        3600,
-    );
     // CPU: NMI/BRK/IRQ交互与时序。诊断: 5-branch_delays_irq的首行PC=00对期望04
     // ——中断识别晚~1周期。真机在指令的特定周期轮询中断且taken分支末拍抑制轮询;
     // 我们只在指令边界轮询(interrupt_delay机制是近似)。1-cli_latency通过=基础延迟正确。

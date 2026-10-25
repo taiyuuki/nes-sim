@@ -1810,25 +1810,18 @@ impl CPU {
     }
 
     fn shx(&mut self, operand: ResolvedOperand, bus: &mut impl CPUBus) {
-        // 写入值 = X & (基地址高字节+1)；跨页时写地址的高字节与X相与
-        let base_hi = (operand.dummy_addr >> 8) as u8;
-        let value = self.x & base_hi.wrapping_add(1);
-        let target = if operand.page_crossed {
-            (((base_hi & self.x) as u16) << 8) | (operand.addr & 0x00FF)
-        } else {
-            operand.addr
-        };
+        // 真机：AND结果同时驱动数据总线与地址高字节（FCEUX/Mesen同款语义）：
+        // value = X & (hi(base+Y)+1)，写入 (value<<8)|lo(base+Y)
+        let full_hi = (operand.addr >> 8) as u8;
+        let value = self.x & full_hi.wrapping_add(1);
+        let target = (u16::from(value) << 8) | (operand.addr & 0x00FF);
         bus.cpu_write(target, value);
     }
 
     fn shy(&mut self, operand: ResolvedOperand, bus: &mut impl CPUBus) {
-        let base_hi = (operand.dummy_addr >> 8) as u8;
-        let value = self.y & base_hi.wrapping_add(1);
-        let target = if operand.page_crossed {
-            (((base_hi & self.y) as u16) << 8) | (operand.addr & 0x00FF)
-        } else {
-            operand.addr
-        };
+        let full_hi = (operand.addr >> 8) as u8;
+        let value = self.y & full_hi.wrapping_add(1);
+        let target = (u16::from(value) << 8) | (operand.addr & 0x00FF);
         bus.cpu_write(target, value);
     }
 }

@@ -81,9 +81,11 @@ fn cpu_step_executes_shy_absolute_x_without_debug_overflow() {
 
     assert_eq!(cpu.pc, 0x0203);
     assert_eq!(cpu.cycles, 5);
-    // 跨页: 写地址高字节 = base_hi(0x00) & Y = 0x00, 即写入 0x0000;
-    // 值 = Y & (base_hi+1) = 0xFF & 0x01 = 0x01 (blargg instr_test 07-abs_xy)
-    assert_eq!(bus.cpu_read(0x0000), 0x01);
+    // AND结果同时驱动数据与地址高位总线（FCEUX/Mesen语义, blargg 07-abs_xy）:
+    // full = $00FF+1 = $0100; value = Y & (hi(full)+1) = $FF & $02 = $02;
+    // 写入 $02 到 (value<<8)|lo(full) = $0200
+    assert_eq!(bus.cpu_read(0x0200), 0x02);
+    assert_eq!(bus.cpu_read(0x0000), 0x00);
     assert_eq!(bus.cpu_read(0x0100), 0x00);
 }
 
