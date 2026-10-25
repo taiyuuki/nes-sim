@@ -6,7 +6,7 @@
 //! 手柄位掩码(`set_controller_bits`):
 //! A=1, B=2, Select=4, Start=8, Up=16, Down=32, Left=64, Right=128。
 
-use nes_sim::video::{palette_index_to_rgb, palette_index_to_rgb_tinted};
+use nes_sim::video::Palette;
 use nes_sim::{ControllerState, FRAME_HEIGHT, FRAME_WIDTH, NES};
 use wasm_bindgen::prelude::*;
 
@@ -31,6 +31,8 @@ pub struct NesWasm {
     nes: NES,
     /// 复用的 RGBA 帧缓冲,避免每帧分配。
     rgba: Vec<u8>,
+    /// 当前调色板(默认内置,可经 `set_palette` 替换)。
+    palette: Palette,
 }
 
 #[wasm_bindgen]
@@ -40,6 +42,7 @@ impl NesWasm {
         Self {
             nes: NES::new(),
             rgba: vec![0; RGBA_LEN],
+            palette: Palette::DEFAULT,
         }
     }
 
@@ -85,12 +88,12 @@ impl NesWasm {
     }
 
     /// RGBA 帧缓冲(256×240×4),可直接写入 `ImageData`。
-    /// 已应用当前帧的颜色强调($2001 bit5-7)。
+    /// 已应用当前帧的颜色强调($2001 bit5-7)与当前调色板。
     pub fn frame_rgba(&mut self) -> Vec<u8> {
         let emphasis = self.nes.video_frame().emphasis;
         let pixels = self.nes.frame_pixels();
         for (dst, &index) in self.rgba.as_chunks_mut::<4>().0.iter_mut().zip(pixels) {
-            let [r, g, b] = palette_index_to_rgb_tinted(index, emphasis);
+            let [r, g, b] = self.palette.lookup(index, emphasis);
             dst[0] = r;
             dst[1] = g;
             dst[2] = b;
@@ -104,19 +107,35 @@ impl NesWasm {
         self.nes.video_frame().emphasis
     }
 
-    /// 系统调色板,64 色 × 3 字节 RGB(不含强调)。
-    pub fn palette_rgb() -> Vec<u8> {
-        (0..64)
-            .flat_map(|i| palette_index_to_rgb(i as u8))
-            .collect()
+    /// 加载 .pal 调色板文件内容(FCEUX/Nestopia 通用格式):
+    /// 192 字节 = 64 色基色(强调块自动合成);1536 字节 = 512 色(自带强调块)。
+    pub fn set_palette(&mut self, bytes: &[u8]) -> Result<(), JsError> {
+        self.palette = Palette::from_pal_bytes(bytes).map_err(js_err)?;
+        Ok(())
+    }
+
+    /// 恢复默认调色板。
+    pub fn clear_palette(&mut self) {
+        self.palette = Palette::DEFAULT;
+    }
+
+    /// 系统调色板,64 色 × 3 字节 RGB(当前调色板的基色块,不含强调)。
+    pub fn palette_rgb(&self) -> Vec<u8> {
+        self.palette.rgb_entries()[..192].to_vec()
     }
 
     /// 应用颜色强调后的系统调色板,64 色 × 3 字节 RGB
-    /// (emphasis 为 `emphasis_bits` 返回的掩码)。
-    pub fn palette_rgb_tinted(emphasis: u8) -> Vec<u8> {
+    /// (emphasis 为 `emphasis_bits` 返回的掩码,取自当前调色板)。
+    pub fn palette_rgb_tinted(&self, emphasis: u8) -> Vec<u8> {
         (0..64)
-            .flat_map(|i| palette_index_to_rgb_tinted(i as u8, emphasis))
+            .flat_map(|i| self.palette.lookup(i as u8, emphasis))
             .collect()
+    }
+
+    /// 当前调色板完整 512 色 × 3 字节 RGB
+    /// (8 个强调块,布局 `(emphasis<<6|color)*3`,供 JS 构建 LUT)。
+    pub fn palette_rgb_full(&self) -> Vec<u8> {
+        self.palette.rgb_entries().to_vec()
     }
 
     /// 自上次读取以来累积的音频采样(单声道 f32)。

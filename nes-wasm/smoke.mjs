@@ -78,7 +78,7 @@ const indexed = nes.frame_pixels();
 check(indexed.length === 256 * 240, `indexed length ${indexed.length}`);
 
 // 调色板
-const pal = NesWasm.palette_rgb();
+const pal = nes.palette_rgb();
 check(pal.length === 192 && pal[0] === 84 && pal[1] === 84 && pal[2] === 84, "palette rgb");
 
 // 音频
@@ -104,6 +104,22 @@ check(nes.frame_number() > 0, "load state");
 // MD5
 check(nes.rom_md5_hex()?.length === 32, "rom md5");
 check(nes.master_clock() > 0, "master clock");
+
+// 自定义调色板: 64 色全部填纯蓝,加载后帧应变成蓝色,clear 后恢复
+const bluePal = new Uint8Array(192);
+for (let i = 0; i < 64; i++) {
+  bluePal[i * 3] = 0;
+  bluePal[i * 3 + 1] = 0;
+  bluePal[i * 3 + 2] = 255;
+}
+nes.set_palette(bluePal);
+check(nes.palette_rgb()[2] === 255 && nes.palette_rgb()[0] === 0, "set_palette 64-color base");
+check(nes.palette_rgb_full().length === 1536, "palette_rgb_full 512 entries");
+const blueFrame = nes.frame_rgba();
+check(blueFrame[0] === 0 && blueFrame[1] === 0 && blueFrame[2] === 255, "frame_rgba uses custom palette");
+nes.clear_palette();
+const defaultFrame = nes.frame_rgba();
+check(defaultFrame[0] === 84 && defaultFrame[1] === 84 && defaultFrame[2] === 84, "clear_palette restores default");
 
 console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

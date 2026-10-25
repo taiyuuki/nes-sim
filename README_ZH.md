@@ -6,6 +6,7 @@
 
 - **完整的 CPU 模拟** — 6502 处理器，支持全部寻址模式及未授权指令
 - **PPU 渲染** — 256x240 分辨率，精灵与背景渲染，颜色强调（$2001 色调位）
+- **自定义调色板** — 运行时加载 `.pal` 调色板文件（FCEUX/Nestopia 格式，64/512 色）
 - **APU 音频** — 5 个标准声道（Pulse x2、Triangle、Noise、DMC）
 - **扩展音频** — VRC6、Namco 163、Sunsoft 5B、MMC5
 - **Mapper** — 覆盖 MMC1/MMC3/VRC 系列/Namco/Taito/Sunsoft 等常见 Mapper
@@ -90,6 +91,9 @@ cargo run --release -p nes-desktop -- "game.nes"
 
 # 覆盖电视制式（默认按 ROM 头部）
 cargo run --release -p nes-desktop -- --tv-system pal "game.nes"
+
+# 加载自定义调色板（运行中 F9 加载、F10 恢复默认）
+cargo run --release -p nes-desktop -- --palette "palette.pal" "game.nes"
 ```
 
 ## 支持的 Mapper

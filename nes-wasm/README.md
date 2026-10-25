@@ -65,6 +65,7 @@ loop();
 | `run_frame()` | 运行一帧,返回帧号 |
 | `frame_rgba()` | RGBA 帧缓冲(256×240×4),可直接写 `ImageData` |
 | `frame_pixels()` | 8 位调色板索引帧;`palette_rgb()` 为 64 色系统调色板 |
+| `set_palette(bytes)` / `clear_palette()` | 加载/重置 `.pal` 调色板(FCEUX/Nestopia 格式,192=64 色或 1536=512 色);`palette_rgb_full()` 返回当前 512×3 字节 |
 | `audio_samples()` / `clear_audio_samples()` / `audio_sample_rate()` / `set_audio_sample_rate(rate)` | 音频 |
 | `set_controller_bits(port, bits)` / `set_button(port, name, pressed)` | 手柄输入 |
 | `save_state()` / `load_state(bytes)` | 快照存读档 |

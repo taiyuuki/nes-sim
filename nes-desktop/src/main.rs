@@ -1,6 +1,6 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
-use nes_sim::video::{VideoBuffer, frame_to_argb32_into};
+use nes_sim::video::{Palette, VideoBuffer, frame_to_argb32_into_with};
 use nes_sim::{
     ControllerButton, ControllerState, CoreCommand, ExecutionTarget, FdsDiskCommand, FrontendInput,
     FrontendRuntime, RunMode, TVSystem, is_fds_image,
@@ -53,8 +53,11 @@ mod winmm {
 }
 
 fn usage(program: &str) {
-    eprintln!("Usage: {program} [--tv-system auto|ntsc|pal|dendy] [rom-path]");
+    eprintln!("Usage: {program} [--tv-system auto|ntsc|pal|dendy] [--palette file.pal] [rom-path]");
     eprintln!(r#"Example: {program} --tv-system ntsc "roms/mmc1/Rockman2(J).nes""#);
+    eprintln!(
+        r#"Example: {program} --palette "refs/nestopia/palettes/Nostalgia-FBX.pal" game.nes"#
+    );
     eprintln!("说明: 如果不指定 ROM 路径，运行后会弹出文件选择对话框");
     eprintln!("Controls:");
     eprintln!("  P1: Arrows D-pad | Z/X B/A | Tab Select | Enter Start");
@@ -70,6 +73,8 @@ fn usage(program: &str) {
     eprintln!("  [ / ]   Select save slot 1-9");
     eprintln!("  F5      Save state (current slot)");
     eprintln!("  F8      Load state (current slot)");
+    eprintln!("  F9      Load palette (.pal, FCEUX/Nestopia format)");
+    eprintln!("  F10     Reset palette to default");
     eprintln!("  F1      FDS: 插入/退出磁盘");
     eprintln!("  F2      FDS: 切换盘面(需先退盘)");
     eprintln!("  F3      Load cheat file (.cht, FCEUX/Nestopia)");
@@ -202,12 +207,21 @@ fn main() -> ExitCode {
 
     let mut rom_path = None;
     let mut tv_override: Option<TVSystem> = None;
+    let mut palette_path = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
                 usage(&program);
                 return ExitCode::SUCCESS;
+            }
+            "--palette" => {
+                let Some(value) = args.next() else {
+                    eprintln!("missing value after --palette");
+                    usage(&program);
+                    return ExitCode::from(2);
+                };
+                palette_path = Some(value);
             }
             "--tv-system" => {
                 let Some(value) = args.next() else {
@@ -267,6 +281,22 @@ fn main() -> ExitCode {
     };
     let mut current_rom_path = rom_path.clone();
     let mut save_slot: u8 = 1;
+    let mut palette = Palette::DEFAULT;
+    if let Some(path) = &palette_path {
+        let loaded = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| Palette::from_pal_bytes(&bytes).map_err(|e| e.to_string()));
+        match loaded {
+            Ok(custom) => {
+                palette = custom;
+                eprintln!("Palette: {path}");
+            }
+            Err(error) => {
+                eprintln!("加载调色板失败: {error} ({path})");
+                return ExitCode::from(1);
+            }
+        }
+    }
     let mut audio_player = match AudioPlayer::new(runtime.snapshot().audio.sample_rate) {
         Ok(player) => Some(player),
         Err(error) => {
@@ -375,6 +405,41 @@ fn main() -> ExitCode {
                 },
                 Err(error) => format!("load failed: {error}"),
             };
+        }
+
+        // F9：加载调色板文件；F10：恢复默认
+        if window.is_key_pressed(Key::F9, KeyRepeat::No) {
+            status_message = match rfd::FileDialog::new()
+                .add_filter("Palette", &["pal"])
+                .set_title("选择调色板 (.pal, 64/512 色)")
+                .pick_file()
+            {
+                Some(path) => {
+                    let loaded =
+                        std::fs::read(&path)
+                            .map_err(|e| e.to_string())
+                            .and_then(|bytes| {
+                                Palette::from_pal_bytes(&bytes).map_err(|e| e.to_string())
+                            });
+                    match loaded {
+                        Ok(custom) => {
+                            palette = custom;
+                            let name = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned();
+                            format!("palette: {name}")
+                        }
+                        Err(error) => format!("palette load failed: {error}"),
+                    }
+                }
+                None => "palette: (unchanged)".to_string(),
+            };
+        }
+        if window.is_key_pressed(Key::F10, KeyRepeat::No) {
+            palette = Palette::DEFAULT;
+            status_message = "palette: default".to_string();
         }
 
         // [ / ] 循环切换存档槽 1-9
@@ -677,7 +742,7 @@ fn main() -> ExitCode {
 
         // 使用预分配的缓冲区转换帧数据
         let t_render = Instant::now();
-        frame_to_argb32_into(snapshot.video, video_buffer.as_mut_slice());
+        frame_to_argb32_into_with(snapshot.video, &palette, video_buffer.as_mut_slice());
         if let Err(error) = window.update_with_buffer(
             video_buffer.as_slice(),
             snapshot.video.width,

@@ -6,6 +6,7 @@ A NES (Famicom) emulator core library written in Rust. Headless design decouples
 
 - **Complete CPU emulation** — 6502 processor with full addressing mode support and undocumented instructions
 - **PPU rendering** — 256x240 resolution with sprite and background rendering, color emphasis ($2001 tint bits)
+- **Custom palettes** — load `.pal` files (FCEUX/Nestopia format, 64 or 512 colors) at runtime
 - **APU audio** — 5 standard channels (Pulse x2, Triangle, Noise, DMC)
 - **Expansion audio** — VRC6, Namco 163, Sunsoft 5B, MMC5
 - **Mappers** — Coverage of MMC1/MMC3/VRC series/Namco/Taito/Sunsoft and other common mappers
@@ -90,6 +91,9 @@ cargo run --release -p nes-desktop -- "game.nes"
 
 # Override the TV system (default: from the ROM header)
 cargo run --release -p nes-desktop -- --tv-system pal "game.nes"
+
+# Load a custom palette (F9 in-app loads one, F10 resets to default)
+cargo run --release -p nes-desktop -- --palette "palette.pal" "game.nes"
 ```
 
 ## Supported Mappers
