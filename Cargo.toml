@@ -25,6 +25,8 @@ fmt = "cargo fmt"
 cgs = "codegraph sync"
 cginit = "codegraph init"
 test = "cargo test"
+demo = "./web/build.sh"
+serve = "python3 -m http.server -d web 8000"
 
 [workspace.lints.clippy]
 upper_case_acronyms = "allow"
