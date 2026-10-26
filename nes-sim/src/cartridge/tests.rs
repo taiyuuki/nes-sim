@@ -1358,3 +1358,105 @@ fn mapper232_outer_and_inner_banks() {
     assert_eq!(cartridge.ppu_read(0x0000), Some(0x00));
     assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
 }
+
+fn write_mmc3_register(cartridge: &mut Cartridge, select: u8, value: u8) {
+    assert!(cartridge.cpu_write(0x8000, select));
+    assert!(cartridge.cpu_write(0x8001, value));
+}
+
+#[test]
+fn waixing_mmc3_variants_route_chr_between_rom_and_ram() {
+    struct Case {
+        mapper_id: u8,
+        ram_bank_value: u8,
+        rom_bank_value: u8,
+    }
+    // R:0控制$0000-$07FF的2K对；bank值低1位对齐到偶数
+    let cases = [
+        Case {
+            mapper_id: 191,
+            ram_bank_value: 0x80,
+            rom_bank_value: 0x02,
+        },
+        Case {
+            mapper_id: 192,
+            ram_bank_value: 0x08,
+            rom_bank_value: 0x10,
+        },
+        Case {
+            mapper_id: 194,
+            ram_bank_value: 0x00,
+            rom_bank_value: 0x02,
+        },
+        Case {
+            mapper_id: 195,
+            ram_bank_value: 0x02,
+            rom_bank_value: 0x04,
+        },
+    ];
+
+    for case in cases {
+        let prg_rom = tagged_prg_rom(16, 0x2000);
+        let chr_rom = tagged_chr_rom(64, 0x0400);
+        let rom = make_ines_mapper(&prg_rom, &chr_rom, case.mapper_id);
+        let mut cartridge = Cartridge::from_ines(&rom).unwrap_or_else(|e| panic!("{e}"));
+
+        // MMC3 PRG语义：R:6选$8000的8K bank
+        write_mmc3_register(&mut cartridge, 6, 3);
+        assert_eq!(
+            cartridge.cpu_read(0x8000),
+            Some(0x03),
+            "prg mapper {}",
+            case.mapper_id
+        );
+        assert_eq!(cartridge.cpu_read(0xE000), Some(0x0F));
+
+        // CHR RAM路由：bank值命中变体范围时可写读CHR RAM
+        write_mmc3_register(&mut cartridge, 0, case.ram_bank_value);
+        assert!(
+            cartridge.ppu_write(0x0000, 0xAB),
+            "chr write mapper {}",
+            case.mapper_id
+        );
+        assert_eq!(
+            cartridge.ppu_read(0x0000),
+            Some(0xAB),
+            "chr ram mapper {}",
+            case.mapper_id
+        );
+        // 未命中范围时读CHR ROM
+        write_mmc3_register(&mut cartridge, 0, case.rom_bank_value);
+        let rom_bank = case.rom_bank_value & 0xFE;
+        assert_eq!(
+            cartridge.ppu_read(0x0000),
+            Some(rom_bank),
+            "chr rom mapper {}",
+            case.mapper_id
+        );
+    }
+}
+
+#[test]
+fn waixing_type_e_exposes_5000_prg_ram_window() {
+    let prg_rom = tagged_prg_rom(16, 0x2000);
+    let chr_rom = tagged_chr_rom(64, 0x0400);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 195);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 195 should parse");
+
+    assert!(cartridge.cpu_write(0x5000, 0x5A));
+    assert_eq!(cartridge.cpu_read(0x5000), Some(0x5A));
+    // $5000窗口与$6000的8K PRG RAM独立
+    assert!(cartridge.cpu_write(0x6000, 0xA5));
+    assert_eq!(cartridge.cpu_read(0x6000), Some(0xA5));
+    assert_eq!(cartridge.cpu_read(0x5000), Some(0x5A));
+}
+
+#[test]
+fn waixing_chr_ram_only_cartridge_backed_by_ram() {
+    let prg_rom = tagged_prg_rom(16, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &[], 192);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 192 CHR-RAM should parse");
+
+    assert!(cartridge.ppu_write(0x1FFF, 0x77));
+    assert_eq!(cartridge.ppu_read(0x1FFF), Some(0x77));
+}

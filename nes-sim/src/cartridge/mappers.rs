@@ -78,6 +78,7 @@ mod vrc3;
 mod vrc4;
 mod vrc6;
 mod vrc7;
+mod waixing;
 
 use self::action53::Action53;
 use self::anrom::Anrom;
@@ -158,6 +159,7 @@ use self::vrc3::Vrc3;
 use self::vrc4::Vrc4;
 use self::vrc6::{Vrc6, new_vrc6};
 use self::vrc7::{Vrc7, new_vrc7};
+use self::waixing::{Waixing, WaixingVariant};
 use super::{CartridgeError, FdsDiskCommand, FdsDiskInfo, Mirroring};
 use crate::apu::ExpansionAudioChip;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
@@ -301,6 +303,7 @@ macro_rules! dispatch_mapper {
             Self::Vrc4(m) => m.$method($($arg),*),
             Self::Vrc6(m) => m.$method($($arg),*),
             Self::Vrc7(m) => m.$method($($arg),*),
+            Self::Waixing(m) => m.$method($($arg),*),
             Self::Rambo1(m) => m.$method($($arg),*),
             Self::Bnrom(m) => m.$method($($arg),*),
             Self::Gxrom(m) => m.$method($($arg),*),
@@ -389,6 +392,7 @@ pub(super) enum MapperEnum {
     Vrc4(Vrc4),
     Vrc6(Vrc6),
     Vrc7(Vrc7),
+    Waixing(Waixing),
     Rambo1(Rambo1),
     Bnrom(Bnrom),
     Gxrom(Gxrom),
@@ -872,6 +876,42 @@ pub(super) fn from_mapper_id(
         )),
         185 => Ok((
             MapperEnum::Sunsoft185(Sunsoft185::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        191 => Ok((
+            MapperEnum::Waixing(Waixing::new(
+                prg_rom,
+                chr_rom,
+                mirroring,
+                WaixingVariant::TypeB,
+            )),
+            vec![],
+        )),
+        192 => Ok((
+            MapperEnum::Waixing(Waixing::new(
+                prg_rom,
+                chr_rom,
+                mirroring,
+                WaixingVariant::TypeC,
+            )),
+            vec![],
+        )),
+        194 => Ok((
+            MapperEnum::Waixing(Waixing::new(
+                prg_rom,
+                chr_rom,
+                mirroring,
+                WaixingVariant::TypeD,
+            )),
+            vec![],
+        )),
+        195 => Ok((
+            MapperEnum::Waixing(Waixing::new(
+                prg_rom,
+                chr_rom,
+                mirroring,
+                WaixingVariant::TypeE,
+            )),
             vec![],
         )),
         200 => Ok((
