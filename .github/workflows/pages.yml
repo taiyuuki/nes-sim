@@ -52,7 +52,10 @@ jobs:
       - name: Build demo
         run: ./web/build.sh
 
+      # enablement: 仓库未开通 Pages 时自动启用(需上面 pages: write 权限)
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web
