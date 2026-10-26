@@ -87,7 +87,17 @@ jobs:
         run: wasm-pack build nes-wasm --target web --release
       - name: Publish
         # 裸相对路径会被 npm 11 当作包 spec(如 github:owner/repo),必须 ./ 前缀;
-        # Trusted Publisher 走 OIDC,显式清掉任何残留令牌
+        # Trusted Publisher 走 OIDC,显式清掉任何残留令牌;
+        # 版本已发布(tag重推)视为成功
         run: |
           unset NODE_AUTH_TOKEN
-          npm publish ./nes-wasm/pkg --access public
+          set +e
+          output=$(npm publish ./nes-wasm/pkg --access public 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ "$status" -ne 0 ] && echo "$output" | grep -q "cannot publish over"; then
+            echo "nes-wasm ${GITHUB_REF_NAME#v} already published, skipping"
+            exit 0
+          fi
+          exit "$status"
