@@ -56,6 +56,12 @@ let lastBits = 0;
 let fpsFrames = 0;
 let fpsTime = 0;
 
+// 倒带:每模拟帧存一份快照,按住时回退
+const REWIND_MAX_FRAMES = 360; // ~6 秒 @60fps
+const REWIND_SPEED = 3;        // 每渲染帧回退的模拟帧数(~3×速)
+const rewindBuf = [];          // Uint8Array 环形缓冲
+let rewinding = false;
+
 // 自制 ROM 标题美化(文件名 → 展示名)
 const TITLES = {
   "altercation-0.1.nes": "Altercation",
@@ -171,6 +177,7 @@ function currentBits() {
 
 window.addEventListener("keydown", (e) => {
   if (e.key === "p" || e.key === "P") { togglePause(); return; }
+  if (e.code === "Backspace") { e.preventDefault(); startRewind(); return; }
   const name = KEY_MAP[e.code];
   if (!name) return;
   e.preventDefault();
@@ -178,12 +185,13 @@ window.addEventListener("keydown", (e) => {
 });
 
 window.addEventListener("keyup", (e) => {
+  if (e.code === "Backspace") { stopRewind(); return; }
   const name = KEY_MAP[e.code];
   if (name) pressed.delete(name);
 });
 
 // 页面失焦时清空按键,避免“卡键”
-window.addEventListener("blur", () => pressed.clear());
+window.addEventListener("blur", () => { pressed.clear(); stopRewind(); });
 
 // ── 主循环 ──────────────────────────────────────────────
 
@@ -217,6 +225,11 @@ function tick(now) {
     return;
   }
 
+  if (rewinding) {
+    rewindStep();
+    return;
+  }
+
   if (!paused) {
     // 按音频队列水位补帧:队列不足时运行模拟
     const target = QUEUE_TARGET * samplesPerFrame;
@@ -226,6 +239,11 @@ function tick(now) {
       pushSamples(nes.audio_samples());
       nes.clear_audio_samples();
       fpsFrames++;
+      // 每帧快照供倒带(失败不影响游戏)
+      try {
+        rewindBuf.push(nes.save_state());
+        if (rewindBuf.length > REWIND_MAX_FRAMES) rewindBuf.shift();
+      } catch { /* ignore */ }
     }
 
     const bits = currentBits();
@@ -245,6 +263,39 @@ function tick(now) {
   }
 }
 
+// ── 倒带 ────────────────────────────────────────────
+
+function startRewind() {
+  if (!romLoaded || rewinding || rewindBuf.length === 0) return;
+  rewinding = true;
+  $("#btnRewind").setAttribute("aria-pressed", "true");
+  $("#stFps").textContent = "◀◀ REWIND";
+}
+
+function stopRewind() {
+  if (!rewinding) return;
+  rewinding = false;
+  $("#btnRewind").setAttribute("aria-pressed", "false");
+  fpsTime = 0; // 下个 tick 重置 FPS 统计
+}
+
+function rewindStep() {
+  if (rewindBuf.length === 0) { stopRewind(); return; }
+  let state = null;
+  for (let i = 0; i < REWIND_SPEED && rewindBuf.length > 0; i++) {
+    state = rewindBuf.pop();
+  }
+  try {
+    nes.load_state(state);
+    clearAudioQueue();
+    blitFrame();
+    $("#stFrame").textContent = `FRAME ${nes.frame_number()}`;
+  } catch (err) {
+    stopRewind();
+    toast(`倒带失败:${err.message || err}`, true);
+  }
+}
+
 // ── ROM 装载 ────────────────────────────────────────────
 
 async function insertCartridge(bytes, label, listItem = null) {
@@ -261,6 +312,8 @@ async function insertCartridge(bytes, label, listItem = null) {
   romLoaded = true;
   paused = false;
   lastBits = 0;
+  stopRewind();
+  rewindBuf.length = 0;
   clearAudioQueue();
 
   // UI:遮罩掀开、LED 亮起、开机闪现
@@ -280,7 +333,7 @@ async function insertCartridge(bytes, label, listItem = null) {
   $("#stFrame").textContent = "FRAME 0";
   $("#stFps").textContent = "FPS --";
 
-  for (const id of ["btnPause", "btnReset", "btnSave", "btnLoad"]) $(`#${id}`).disabled = false;
+  for (const id of ["btnPause", "btnReset", "btnRewind", "btnSave", "btnLoad"]) $(`#${id}`).disabled = false;
   $("#btnPause").textContent = "暂停";
   $("#btnPause").setAttribute("aria-pressed", "false");
 
@@ -420,6 +473,13 @@ $("#btnMute").addEventListener("click", () => {
   if (gainNode) gainNode.gain.value = muted ? 0 : 1;
   toast(muted ? "已静音" : "声音开启");
 });
+
+// 倒带按钮:按住即回退(指针事件兼容鼠标/触摸)
+const btnRewind = $("#btnRewind");
+btnRewind.addEventListener("pointerdown", (e) => { e.preventDefault(); startRewind(); });
+for (const ev of ["pointerup", "pointerleave", "pointercancel"]) {
+  btnRewind.addEventListener(ev, stopRewind);
+}
 
 // ── 启动 ────────────────────────────────────────────────
 
