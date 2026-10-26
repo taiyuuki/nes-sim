@@ -40,7 +40,13 @@ jobs:
             exit 1
           fi
       - name: Publish
-        run: cargo publish -p nes-sim --token "$CARGO_REGISTRY_TOKEN"
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if curl -fsSL "https://crates.io/api/v1/crates/nes-sim/$VERSION" >/dev/null 2>&1; then
+            echo "nes-sim $VERSION already published, skipping"
+          else
+            cargo publish -p nes-sim --token "$CARGO_REGISTRY_TOKEN"
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -75,4 +81,8 @@ jobs:
       - name: Build pkg
         run: wasm-pack build nes-wasm --target web --release
       - name: Publish
-        run: npm publish nes-wasm/pkg --access public
+        # 裸相对路径会被 npm 11 当作包 spec(如 github:owner/repo),必须 ./ 前缀;
+        # Trusted Publisher 走 OIDC,显式清掉任何残留令牌
+        run: |
+          unset NODE_AUTH_TOKEN
+          npm publish ./nes-wasm/pkg --access public
