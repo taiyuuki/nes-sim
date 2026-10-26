@@ -1,0 +1,71 @@
+# 发版:推送 v* tag 时发布 crates.io (nes-sim) 与 npm (nes-wasm)
+#
+# 需要的仓库 Secrets(Settings → Secrets and variables → Actions):
+#   CARGO_REGISTRY_TOKEN — crates.io 发布令牌(https://crates.io/settings/tokens)
+#   NPM_TOKEN            — npm Automation 令牌(https://www.npmjs.com/settings/~/tokens)
+#
+# 发版步骤:
+#   1. 同步升级 nes-sim 与 nes-wasm 的 Cargo.toml 版本(两者需一致)
+#   2. 提交并打 tag: git tag v0.3.1 && git push origin v0.3.1
+#   3. tag 与版本不一致时工作流会拒绝发布
+#
+# Pages 演示页由 pages.yml 在 main 分支自动部署,无需在此处理。
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  crates-io:
+    name: crates.io (nes-sim)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tag must match nes-sim version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER="$(sed -n 's/^version = "\(.*\)"/\1/p' nes-sim/Cargo.toml | head -n1)"
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::tag v$TAG does not match nes-sim version $VER"
+            exit 1
+          fi
+      - name: Publish
+        run: cargo publish -p nes-sim --token "$CARGO_REGISTRY_TOKEN"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  npm:
+    name: npm (nes-wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Tag must match nes-wasm version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER="$(sed -n 's/^version = "\(.*\)"/\1/p' nes-wasm/Cargo.toml | head -n1)"
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::tag v$TAG does not match nes-wasm version $VER"
+            exit 1
+          fi
+      - name: Build pkg
+        run: wasm-pack build nes-wasm --target web --release
+      - name: Publish
+        run: npm publish nes-wasm/pkg --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
