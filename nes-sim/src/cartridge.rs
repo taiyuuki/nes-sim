@@ -428,6 +428,8 @@ impl Cartridge {
             prg_rom,
             chr_rom,
             chr_ram_len,
+            flags6,
+            header.submapper,
         )?;
 
         Ok(Self {

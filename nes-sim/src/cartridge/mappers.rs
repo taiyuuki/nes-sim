@@ -59,6 +59,7 @@ mod namco3433;
 mod nina003;
 mod nrom;
 mod ntdec112;
+mod quattro;
 mod rambo1;
 mod ss8805;
 mod sunsoft1;
@@ -69,6 +70,7 @@ mod taito0190;
 mod taito_x1005;
 mod taito_x1017;
 mod tqrom;
+mod unrom512;
 mod uxrom;
 mod vrc1;
 mod vrc2;
@@ -137,6 +139,7 @@ use self::namco3433::Namco3433;
 use self::nina003::Nina003;
 use self::nrom::Nrom;
 use self::ntdec112::Ntdec112;
+use self::quattro::Quattro;
 use self::rambo1::Rambo1;
 use self::ss8805::Ss8805;
 use self::sunsoft1::{Sunsoft1, Sunsoft184, Sunsoft185};
@@ -147,6 +150,7 @@ use self::taito_x1005::TaitoX1005;
 use self::taito_x1017::TaitoX1017;
 use self::taito0190::Taito0190;
 use self::tqrom::Tqrom;
+use self::unrom512::Unrom512;
 use self::uxrom::Uxrom;
 use self::vrc1::Vrc1;
 use self::vrc2::Vrc2;
@@ -282,6 +286,7 @@ macro_rules! dispatch_mapper {
             Self::Mmc2(m) => m.$method($($arg),*),
             Self::Mmc4(m) => m.$method($($arg),*),
             Self::Uxrom(m) => m.$method($($arg),*),
+            Self::Unrom512(m) => m.$method($($arg),*),
             Self::Cnrom(m) => m.$method($($arg),*),
             Self::Mmc3(m) => m.$method($($arg),*),
             Self::Mapper74(m) => m.$method($($arg),*),
@@ -328,6 +333,7 @@ macro_rules! dispatch_mapper {
             Self::Jaleco140(m) => m.$method($($arg),*),
             Self::CrazyClimber(m) => m.$method($($arg),*),
             Self::Ntdec112(m) => m.$method($($arg),*),
+            Self::Quattro(m) => m.$method($($arg),*),
             Self::Mapper107(m) => m.$method($($arg),*),
             Self::Mapper15(m) => m.$method($($arg),*),
             Self::Mapper182(m) => m.$method($($arg),*),
@@ -368,6 +374,7 @@ pub(super) enum MapperEnum {
     Mmc2(Mmc2),
     Mmc4(Mmc4),
     Uxrom(Uxrom),
+    Unrom512(Unrom512),
     Cnrom(Cnrom),
     Mmc3(Mmc3),
     Mapper74(Mapper74),
@@ -414,6 +421,7 @@ pub(super) enum MapperEnum {
     Jaleco140(Jaleco140),
     CrazyClimber(CrazyClimber),
     Ntdec112(Ntdec112),
+    Quattro(Quattro),
     Mapper107(Mapper107),
     Mapper15(Mapper15),
     Mapper182(Mapper182),
@@ -561,6 +569,8 @@ pub(super) fn from_mapper_id(
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,
     chr_ram_len: usize,
+    flags6: u8,
+    submapper: u8,
 ) -> Result<(MapperEnum, Vec<Box<dyn ExpansionAudioChip>>), CartridgeError> {
     match mapper_id {
         0 => Ok((
@@ -644,6 +654,16 @@ pub(super) fn from_mapper_id(
         }
         28 => Ok((
             MapperEnum::Action53(Action53::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        30 => Ok((
+            MapperEnum::Unrom512(Unrom512::new(
+                prg_rom,
+                chr_rom,
+                chr_ram_len,
+                flags6,
+                submapper,
+            )),
             vec![],
         )),
         32 => Ok((
@@ -876,6 +896,10 @@ pub(super) fn from_mapper_id(
         )),
         229 => Ok((
             MapperEnum::Mapper229(Mapper229::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        232 => Ok((
+            MapperEnum::Quattro(Quattro::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         240 => Ok((

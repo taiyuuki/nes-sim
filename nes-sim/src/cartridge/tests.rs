@@ -496,6 +496,19 @@ fn make_ines_mapper(prg_rom: &[u8], chr_rom: &[u8], mapper_id: u8) -> Vec<u8> {
     rom
 }
 
+fn make_ines_mapper_with_flags6(prg_rom: &[u8], mapper_id: u8, flags6: u8) -> Vec<u8> {
+    assert_eq!(prg_rom.len() % PRG_BANK_LEN, 0);
+
+    let mut rom = vec![0; INES_HEADER_LEN];
+    rom[0..4].copy_from_slice(b"NES\x1A");
+    rom[4] = (prg_rom.len() / PRG_BANK_LEN) as u8;
+    rom[5] = 0;
+    rom[6] = flags6;
+    rom[7] = mapper_id & 0xF0;
+    rom.extend_from_slice(prg_rom);
+    rom
+}
+
 fn tagged_prg_rom(bank_count: usize, bank_len: usize) -> Vec<u8> {
     let mut rom = Vec::with_capacity(bank_count * bank_len);
     for bank in 0..bank_count {
@@ -1217,4 +1230,131 @@ fn mapper28_chr_ram_banks_selected_by_register() {
     // 切回bank 0（32K CHR RAM的开头）应为空白
     assert!(cartridge.cpu_write(0x8000, 0x00));
     assert_eq!(cartridge.ppu_read(0x0000), Some(0x00));
+}
+
+fn make_nes20_mapper(prg_rom: &[u8], mapper_id: u16, flags6: u8, submapper: u8) -> Vec<u8> {
+    assert_eq!(prg_rom.len() % PRG_BANK_LEN, 0);
+
+    let mut rom = vec![0; INES_HEADER_LEN];
+    rom[0..4].copy_from_slice(b"NES\x1A");
+    rom[4] = (prg_rom.len() / PRG_BANK_LEN) as u8;
+    rom[5] = 0;
+    rom[6] = flags6;
+    rom[7] = 0x08 | (mapper_id & 0xF0) as u8;
+    rom[8] = ((submapper & 0x0F) << 4) | (mapper_id >> 8) as u8;
+    // byte11低位nibble：CHR RAM容量 = 64 << 9 = 32K
+    rom[11] = 9;
+    rom.extend_from_slice(prg_rom);
+    rom
+}
+
+#[test]
+fn mapper30_banks_prg_and_applies_bus_conflicts() {
+    let mut prg_rom = tagged_prg_rom(8, 0x4000);
+    // 尾bank首字节改成0xFF，作为总线冲突下写任意值都保持的bank表项
+    prg_rom[7 * 0x4000] = 0xFF;
+    // iNES 1.0头：submapper 0、无电池 → 有总线冲突，$8000-$FFFF全范围写latch
+    let rom = make_ines_mapper(&prg_rom, &[], 30);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 30 should parse");
+
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    // 写0x07到$8000：当前映射bank 0内容为0x00，冲突与后bank仍为0
+    assert!(cartridge.cpu_write(0x8000, 0x07));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    // $C000映射尾bank（首字节0xFF），写5 → latch=5
+    assert!(cartridge.cpu_write(0xC000, 0x05));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x05));
+    assert_eq!(cartridge.cpu_read(0xC001), Some(0x07));
+}
+
+#[test]
+fn mapper30_submapper1_has_no_bus_conflicts_and_limited_range() {
+    let prg_rom = tagged_prg_rom(8, 0x4000);
+    let rom = make_nes20_mapper(&prg_rom, 30, 0xE0, 1);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 30 should parse");
+
+    // latch仅$C000-$FFFF可写且无总线冲突
+    assert!(cartridge.cpu_write(0xC000, 0x05));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x05));
+    // $8000-$BFFF写入属于flash区，不修改latch
+    assert!(cartridge.cpu_write(0x8000, 0x02));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x05));
+    // CHR bank由latch位6-5选择（32K CHR RAM共4个bank）
+    assert!(cartridge.cpu_write(0xC000, 0x21));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x01));
+    assert!(cartridge.ppu_write(0x0000, 0xAB));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0xAB));
+    assert!(cartridge.cpu_write(0xC000, 0x01));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x00));
+}
+
+#[test]
+fn mapper30_one_screen_mirroring_switched_by_latch_bit7() {
+    let mut prg_rom = tagged_prg_rom(8, 0x4000);
+    prg_rom[7 * 0x4000] = 0xFF;
+    // flags6位1置位、位0清零 → 单屏模式
+    let rom = make_ines_mapper_with_flags6(&prg_rom, 30, 0xE2);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 30 should parse");
+
+    assert_eq!(cartridge.mirroring(), Mirroring::SPAGE0);
+    assert!(cartridge.cpu_write(0xC000, 0x80));
+    assert_eq!(cartridge.mirroring(), Mirroring::SPAGE1);
+}
+
+#[test]
+fn mapper30_submapper3_switches_hv_mirroring_by_latch_bit7() {
+    let prg_rom = tagged_prg_rom(8, 0x4000);
+    let rom = make_nes20_mapper(&prg_rom, 30, 0xE0, 3);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 30 should parse");
+
+    assert_eq!(cartridge.mirroring(), Mirroring::Horizontal);
+    assert!(cartridge.cpu_write(0xC000, 0x80));
+    assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
+}
+
+#[test]
+fn mapper30_four_screen_uses_last_8k_of_chr_ram() {
+    let prg_rom = tagged_prg_rom(8, 0x4000);
+    // flags6位1、位0均置位 → 4屏模式（命名表在CHR RAM末8K）
+    let rom = make_ines_mapper_with_flags6(&prg_rom, 30, 0xE3);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 30 should parse");
+
+    assert_eq!(cartridge.mirroring(), Mirroring::FourScreen);
+    assert!(cartridge.ppu_write_nametable(0x2000, 0x5A));
+    assert!(cartridge.ppu_write_nametable(0x2400, 0xA5));
+    // 四个命名表相互独立
+    assert_eq!(cartridge.ppu_read_nametable(0x2000), Some(0x5A));
+    assert_eq!(cartridge.ppu_read_nametable(0x2400), Some(0xA5));
+    assert_eq!(cartridge.ppu_read_nametable(0x2800), Some(0x00));
+    // 命名表占用CHR RAM bank 3的起始处
+    assert!(cartridge.cpu_write(0xC000, 0x60));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x5A));
+}
+
+#[test]
+fn mapper232_outer_and_inner_banks() {
+    let prg_rom = tagged_prg_rom(16, 0x4000);
+    let chr_rom = tagged_chr_rom(1, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 232);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 232 should parse");
+
+    // 上电：区0，$8000=bank 0，$C000=区内最后bank 3
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x03));
+
+    // 写0x10：外层区 = (0x10 & 0x18) >> 1 = 8
+    assert!(cartridge.cpu_write(0x8000, 0x10));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x0B));
+    // 内层bank 2 → $8000 = 8 + 2 = 10
+    assert!(cartridge.cpu_write(0xC000, 0x02));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x0A));
+
+    // 写0x08：外层区 4
+    assert!(cartridge.cpu_write(0x8000, 0x08));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x06));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x07));
+
+    // CHR固定 + 头部镜像
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x00));
+    assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
 }
