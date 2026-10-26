@@ -40,13 +40,18 @@ jobs:
             exit 1
           fi
       - name: Publish
+        # 幂等:版本已存在(crates.io索引存在但CDN API可能暂时404)视为成功,便于tag重推
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          if curl -fsSL "https://crates.io/api/v1/crates/nes-sim/$VERSION" >/dev/null 2>&1; then
-            echo "nes-sim $VERSION already published, skipping"
-          else
-            cargo publish -p nes-sim --token "$CARGO_REGISTRY_TOKEN"
+          set +e
+          output=$(cargo publish -p nes-sim 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ "$status" -ne 0 ] && echo "$output" | grep -q "already exists"; then
+            echo "nes-sim ${GITHUB_REF_NAME#v} already published, skipping"
+            exit 0
           fi
+          exit "$status"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
