@@ -17,11 +17,11 @@ nes-sim = { workspace = true }
 wasm-bindgen = "0.2"
 
 [package.metadata.scripts]
-# 从 workspace 根目录执行
-build = "wasm-pack build nes-wasm --target web --release"
-build-dev = "wasm-pack build nes-wasm --target web --dev"
-clippy = "cargo clippy -p nes-wasm --target wasm32-unknown-unknown --all-targets --fix"
-smoke = "node nes-wasm/smoke.mjs"
+# 在本 crate 目录（nes-wasm/）下执行
+build = "wasm-pack build --target web --release"
+build-dev = "wasm-pack build --target web --dev"
+clippy = "cargo clippy --target wasm32-unknown-unknown --all-targets --fix"
+smoke = "node smoke.mjs"
 
 [lints]
 workspace = true
