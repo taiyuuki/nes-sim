@@ -1128,3 +1128,93 @@ fn recorded_movie_carries_rom_metadata() {
     assert!(!reparsed.pal_flag);
     assert_eq!(reparsed.emu_version, movie.emu_version);
 }
+
+#[test]
+fn mapper28_poweron_maps_last_bank_to_c000() {
+    let prg_rom = tagged_prg_rom(8, 0x4000);
+    let rom = make_ines_mapper(&prg_rom, &[], 28);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 28 should parse");
+
+    // 上电：mode=0、outer=$3F、inner=$0F → lo=126、hi=127，对8个bank取模为6/7
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x06));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x07));
+    // 无PRG RAM
+    assert_eq!(cartridge.cpu_read(0x6000), None);
+    assert!(!cartridge.cpu_write(0x6000, 0x00));
+}
+
+#[test]
+fn mapper28_registers_bank_prg_by_mode() {
+    let prg_rom = tagged_prg_rom(8, 0x4000);
+    let rom = make_ines_mapper(&prg_rom, &[], 28);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 28 should parse");
+
+    fn select(cartridge: &mut Cartridge, reg: u8, value: u8) {
+        assert!(cartridge.cpu_write(0x5000, reg));
+        assert!(cartridge.cpu_write(0x8000, value));
+    }
+
+    select(&mut cartridge, 0x81, 0x01); // outer = 1
+    select(&mut cartridge, 0x80, 0x38); // 底部固定，256K外部bank
+    select(&mut cartridge, 0x01, 0x05); // inner = 5
+    // lo = outb = 2（固定），hi = (2 & !0x0E) | 5 = 5
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x02));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x05));
+
+    select(&mut cartridge, 0x80, 0x3C); // 顶部固定（UNROM #2风格）
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x05));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x03));
+
+    select(&mut cartridge, 0x80, 0x10); // 32K模式，64K外部bank
+    select(&mut cartridge, 0x01, 0x01); // inner贡献bit1 → bank 2/3
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x02));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x03));
+    select(&mut cartridge, 0x01, 0x02); // inner=2 → bit1为0 → bank 0/1
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x01));
+}
+
+#[test]
+fn mapper28_switches_chr_and_mirroring() {
+    let prg_rom = tagged_prg_rom(8, 0x4000);
+    let chr_rom = tagged_chr_rom(4, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 28);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 28 should parse");
+
+    fn select(cartridge: &mut Cartridge, reg: u8, value: u8) {
+        assert!(cartridge.cpu_write(0x5000, reg));
+        assert!(cartridge.cpu_write(0x8000, value));
+    }
+
+    // CHR bank由$00寄存器低2位选择
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x00));
+    select(&mut cartridge, 0x00, 0x02);
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x02));
+
+    // 镜像模式由$80寄存器位1-0选择
+    select(&mut cartridge, 0x80, 0x3E);
+    assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
+    select(&mut cartridge, 0x80, 0x3F);
+    assert_eq!(cartridge.mirroring(), Mirroring::Horizontal);
+
+    // 单屏模式下$01写入的D4切换镜像页
+    select(&mut cartridge, 0x80, 0x38);
+    assert_eq!(cartridge.mirroring(), Mirroring::SPAGE0);
+    select(&mut cartridge, 0x01, 0x10);
+    assert_eq!(cartridge.mirroring(), Mirroring::SPAGE1);
+}
+
+#[test]
+fn mapper28_chr_ram_banks_selected_by_register() {
+    let prg_rom = tagged_prg_rom(8, 0x4000);
+    let rom = make_ines_mapper(&prg_rom, &[], 28);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 28 should parse");
+
+    assert!(cartridge.cpu_write(0x5000, 0x00));
+    assert!(cartridge.cpu_write(0x8000, 0x01));
+    assert!(cartridge.ppu_write(0x0000, 0xAB));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0xAB));
+    // 切回bank 0（32K CHR RAM的开头）应为空白
+    assert!(cartridge.cpu_write(0x8000, 0x00));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x00));
+}

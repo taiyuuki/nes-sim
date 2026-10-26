@@ -1,3 +1,4 @@
+mod action53;
 mod anrom;
 mod bandai;
 mod bitcorp38;
@@ -76,6 +77,7 @@ mod vrc4;
 mod vrc6;
 mod vrc7;
 
+use self::action53::Action53;
 use self::anrom::Anrom;
 use self::bandai::Bandai;
 use self::bitcorp38::BitCorp38;
@@ -274,6 +276,7 @@ macro_rules! dispatch_mapper {
         match $self {
             Self::NoMapper(m) => m.$method($($arg),*),
             Self::Fds(m) => m.$method($($arg),*),
+            Self::Action53(m) => m.$method($($arg),*),
             Self::Nrom(m) => m.$method($($arg),*),
             Self::Mmc1(m) => m.$method($($arg),*),
             Self::Mmc2(m) => m.$method($($arg),*),
@@ -359,6 +362,7 @@ macro_rules! dispatch_mapper {
 pub(super) enum MapperEnum {
     NoMapper(NoMapper),
     Fds(fds::Fds),
+    Action53(Action53),
     Nrom(Nrom),
     Mmc1(Mmc1),
     Mmc2(Mmc2),
@@ -638,6 +642,10 @@ pub(super) fn from_mapper_id(
             let (mapper, chips) = new_vrc6(prg_rom, chr_rom, mirroring, mapper_id);
             Ok((MapperEnum::Vrc6(mapper), chips))
         }
+        28 => Ok((
+            MapperEnum::Action53(Action53::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         32 => Ok((
             MapperEnum::IremG101(IremG101::new(prg_rom, chr_rom, mirroring)),
             vec![],
