@@ -193,6 +193,95 @@ window.addEventListener("keyup", (e) => {
 // 页面失焦时清空按键,避免“卡键”
 window.addEventListener("blur", () => { pressed.clear(); stopRewind(); });
 
+// ── 触屏虚拟手柄 ──────────────────────────────────────
+
+const touchCapable =
+  window.matchMedia?.("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
+
+if (touchCapable) {
+  document.body.classList.add("touch");
+  setupTouchPad();
+}
+
+function setupTouchPad() {
+  const dpad = $("#dpad");
+  const ARMS = { Up: ".dp-up", Down: ".dp-down", Left: ".dp-left", Right: ".dp-right" };
+  // pointerId → 该指当前压住的方向集合;多指取并集后与键盘状态合并
+  const active = new Map();
+  let touchUnion = new Set();
+
+  // 坐标 → 8 向方向集合(±67.5° 扇区,中心死区)
+  function zones(x, y) {
+    const r = dpad.getBoundingClientRect();
+    const dx = x - (r.left + r.width / 2);
+    const dy = y - (r.top + r.height / 2);
+    const len = Math.hypot(dx, dy);
+    const set = new Set();
+    if (len < Math.min(r.width, r.height) * 0.14) return set;
+    const T = 0.3827; // cos 67.5°
+    const ux = dx / len;
+    const uy = dy / len;
+    if (ux > T) set.add("Right");
+    if (ux < -T) set.add("Left");
+    if (uy > T) set.add("Down");
+    if (uy < -T) set.add("Up");
+    return set;
+  }
+
+  function syncPressed() {
+    const union = new Set();
+    for (const set of active.values()) for (const d of set) union.add(d);
+    for (const d of union) if (!touchUnion.has(d)) pressed.add(d);
+    for (const d of touchUnion) if (!union.has(d)) pressed.delete(d);
+    touchUnion = union;
+    for (const [name, sel] of Object.entries(ARMS)) {
+      $(sel).classList.toggle("active", union.has(name));
+    }
+  }
+
+  dpad.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    dpad.setPointerCapture(e.pointerId);
+    active.set(e.pointerId, zones(e.clientX, e.clientY));
+    syncPressed();
+  });
+  dpad.addEventListener("pointermove", (e) => {
+    if (!active.has(e.pointerId)) return;
+    active.set(e.pointerId, zones(e.clientX, e.clientY));
+    syncPressed();
+  });
+  const release = (e) => {
+    if (!active.delete(e.pointerId)) return;
+    syncPressed();
+  };
+  dpad.addEventListener("pointerup", release);
+  dpad.addEventListener("pointercancel", release);
+  dpad.addEventListener("lostpointercapture", release);
+  dpad.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // A / B / START / SELECT:按住即按住(指针捕获,滑出也可靠释放)
+  function bindHold(el, name) {
+    el.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      pressed.add(name);
+      el.classList.add("active");
+    });
+    const off = () => {
+      pressed.delete(name);
+      el.classList.remove("active");
+    };
+    el.addEventListener("pointerup", off);
+    el.addEventListener("pointercancel", off);
+    el.addEventListener("lostpointercapture", off);
+    el.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+  bindHold($("#padB"), "B");
+  bindHold($("#padA"), "A");
+  bindHold($("#padStart"), "Start");
+  bindHold($("#padSelect"), "Select");
+}
+
 // ── 主循环 ──────────────────────────────────────────────
 
 function drawNoise() {
@@ -480,6 +569,19 @@ btnRewind.addEventListener("pointerdown", (e) => { e.preventDefault(); startRewi
 for (const ev of ["pointerup", "pointerleave", "pointercancel"]) {
   btnRewind.addEventListener(ev, stopRewind);
 }
+
+// 全屏
+$("#btnFull").addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      await document.documentElement.requestFullscreen();
+    }
+  } catch {
+    toast("当前环境不支持全屏", true);
+  }
+});
 
 // ── 启动 ────────────────────────────────────────────────
 

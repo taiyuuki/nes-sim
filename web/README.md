@@ -34,8 +34,9 @@ Release,填入资产下载地址)。CI 会下载后由 `build.sh` 白名单过�
 - 卡带架选游戏 / 本地文件打开 / 拖拽 `.nes` 进页面
 - 音频时钟驱动时序(队列水位补帧),对 60/120/144Hz 显示器均按真实速度运行
 - 键盘(方向键/WASD、Z=B、X=A、Enter=Start、Shift=Select、P=暂停、按住 Backspace 倒带)与 Gamepad API
+- 触屏虚拟手柄:主指针为触屏的设备自动显示(8 向 D-pad 支持滑动换向、多指并发)
 - 倒带:每帧快照环形缓冲(约 6 秒),按住即约 3× 速回退
-- 暂停、复位、快照存档/读档(localStorage,按 ROM MD5 隔离)、静音
+- 暂停、复位、快照存档/读档(localStorage,按 ROM MD5 隔离)、静音、全屏
 - FPS / 帧号 / ROM 校验和显示
 
 ## 目录
