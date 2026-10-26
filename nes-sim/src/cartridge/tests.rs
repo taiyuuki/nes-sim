@@ -1460,3 +1460,123 @@ fn waixing_chr_ram_only_cartridge_backed_by_ram() {
     assert!(cartridge.ppu_write(0x1FFF, 0x77));
     assert_eq!(cartridge.ppu_read(0x1FFF), Some(0x77));
 }
+
+#[test]
+fn mapper77_irem_lrog057_banks_and_split_chr() {
+    let mut prg_rom = tagged_prg_rom(4, 0x8000);
+    // $8000处放0x45，总线冲突下写入0x7F时latch=0x45
+    prg_rom[0] = 0x45;
+    let chr_rom = tagged_chr_rom(4, 0x0800);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 77);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 77 should parse");
+
+    // 32K PRG bank = latch & 7；总线冲突后 latch = 0x7F & 0x45 = 0x45 → bank 5 → 取模4 = 1
+    assert!(cartridge.cpu_write(0x8000, 0x7F));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x01));
+    // $0000的2K CHR ROM bank = latch >> 4 = 4 → 取模4 = 0
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x00));
+    // $0800-$1FFF为6K CHR RAM，三个2K窗口相互独立
+    assert!(cartridge.ppu_write(0x0800, 0x11));
+    assert!(cartridge.ppu_write(0x1000, 0x22));
+    assert!(cartridge.ppu_write(0x1800, 0x33));
+    assert_eq!(cartridge.ppu_read(0x0800), Some(0x11));
+    assert_eq!(cartridge.ppu_read(0x1000), Some(0x22));
+    assert_eq!(cartridge.ppu_read(0x1800), Some(0x33));
+}
+
+#[test]
+fn mapper91_unl_mk2_registers_and_scanline_irq() {
+    let prg_rom = tagged_prg_rom(16, 0x2000);
+    let chr_rom = tagged_chr_rom(8, 0x0800);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 91);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 91 should parse");
+
+    assert!(cartridge.cpu_write(0x6000, 0x03));
+    assert!(cartridge.cpu_write(0x6001, 0x05));
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x03));
+    assert_eq!(cartridge.ppu_read(0x0800), Some(0x05));
+    assert_eq!(cartridge.ppu_read(0x1000), Some(0x00));
+
+    assert!(cartridge.cpu_write(0x7000, 0x02));
+    assert!(cartridge.cpu_write(0x7001, 0x04));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x02));
+    assert_eq!(cartridge.cpu_read(0xA000), Some(0x04));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x0E));
+    assert_eq!(cartridge.cpu_read(0xE000), Some(0x0F));
+
+    // 使能IRQ后第8条扫描线触发；$7002写清除
+    assert!(!cartridge.irq_line());
+    assert!(cartridge.cpu_write(0x7003, 0x00));
+    for _ in 0..7 {
+        cartridge.notify_scanline(0, true);
+        assert!(!cartridge.irq_line());
+    }
+    cartridge.notify_scanline(0, true);
+    assert!(cartridge.irq_line());
+    assert!(cartridge.cpu_write(0x7002, 0x00));
+    assert!(!cartridge.irq_line());
+}
+
+#[test]
+fn mapper96_oeka_kids_ppu_latch_selects_chr() {
+    let prg_rom = tagged_prg_rom(4, 0x8000);
+    let chr_rom = tagged_chr_rom(4, 0x1000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 96);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 96 should parse");
+
+    assert!(cartridge.cpu_write(0x8000, 0x01));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x01));
+    assert_eq!(cartridge.mirroring(), Mirroring::SPAGE0);
+    // 读$2100锁存ppulatch=1 → $0000的4K CHR bank = (0&4)|1 = 1
+    assert_eq!(cartridge.ppu_read_nametable(0x2100), None);
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x01));
+    assert_eq!(cartridge.ppu_read(0x1000), Some(0x03));
+    // 读$2000锁存0
+    assert_eq!(cartridge.ppu_read_nametable(0x2000), None);
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x00));
+}
+
+#[test]
+fn mapper193_ntdec_fighting_hero_banks() {
+    let prg_rom = tagged_prg_rom(16, 0x2000);
+    let chr_rom = tagged_chr_rom(8, 0x0800);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 193);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 193 should parse");
+
+    assert!(cartridge.cpu_write(0x6000, 0x08)); // 4K bank = 8>>2 = 2
+    assert!(cartridge.cpu_write(0x6001, 0x06)); // 2K bank = 3
+    assert!(cartridge.cpu_write(0x6002, 0x0A)); // 2K bank = 5
+    assert!(cartridge.cpu_write(0x6003, 0x07)); // $8000的8K bank = 7
+
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x02));
+    assert_eq!(cartridge.ppu_read(0x1000), Some(0x03));
+    assert_eq!(cartridge.ppu_read(0x1800), Some(0x05));
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x07));
+    assert_eq!(cartridge.cpu_read(0xA000), Some(0x0D));
+    assert_eq!(cartridge.cpu_read(0xC000), Some(0x0E));
+    assert_eq!(cartridge.cpu_read(0xE000), Some(0x0F));
+    assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
+}
+
+#[test]
+fn mapper234_ave_d1012_read_latch_registers() {
+    let prg_rom = tagged_prg_rom(4, 0x8000);
+    let chr_rom = tagged_chr_rom(8, 0x2000);
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 234);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 234 should parse");
+
+    // 上电：bank 0、垂直镜像
+    assert_eq!(cartridge.mirroring(), Mirroring::Vertical);
+    assert_eq!(cartridge.cpu_read(0x8000), Some(0x00));
+    // $FF80位于bank 0，该处ROM内容为0x00 → 读后bank仍为0（latch只在bank==0时写）
+    // 在$FFE8-$FFF7放一个非零值做preg：bank 0的最后8K里手工放置
+    // （tagged PRG内容为bank号，故先手动构造再重建）
+    let mut prg_rom = tagged_prg_rom(4, 0x8000);
+    prg_rom[0x7FE8] = 0x30; // bank 0的$FFE8处：preg = 0x30 → (preg>>4)&3 = 3
+    let rom = make_ines_mapper(&prg_rom, &chr_rom, 234);
+    let mut cartridge = Cartridge::from_ines(&rom).expect("mapper 234 should parse");
+    // $FFE8在bank 0的最后8K（0x8000*1 - 0x18处）
+    assert_eq!(cartridge.cpu_read(0xFFE8), Some(0x30));
+    // preg=0x30 → chr8 bank = ((0&0xF)<<2) | 3 = 3 → tag 3
+    assert_eq!(cartridge.ppu_read(0x0000), Some(0x03));
+}

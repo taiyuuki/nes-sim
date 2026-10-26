@@ -26,12 +26,14 @@ mod mapper15;
 mod mapper152;
 mod mapper162;
 mod mapper182;
+mod mapper193;
 mod mapper200;
 mod mapper201;
 mod mapper206;
 mod mapper225;
 mod mapper226;
 mod mapper229;
+mod mapper234;
 mod mapper240;
 mod mapper241;
 mod mapper242;
@@ -45,9 +47,12 @@ mod mapper62;
 mod mapper70;
 mod mapper72;
 mod mapper74;
+mod mapper77;
 mod mapper78;
 mod mapper87;
+mod mapper91;
 mod mapper94;
+mod mapper96;
 
 mod mmc1;
 mod mmc2;
@@ -110,9 +115,12 @@ use self::mapper62::Mapper62;
 use self::mapper70::Mapper70;
 use self::mapper72::Mapper72;
 use self::mapper74::Mapper74;
+use self::mapper77::Mapper77;
 use self::mapper78::Mapper78;
 use self::mapper87::Mapper87;
+use self::mapper91::Mapper91;
 use self::mapper94::Mapper94;
+use self::mapper96::Mapper96;
 use self::mapper105::Mapper105;
 use self::mapper107::Mapper107;
 use self::mapper115::Mapper115;
@@ -120,12 +128,14 @@ use self::mapper118::Mapper118;
 use self::mapper152::Mapper152;
 use self::mapper162::Mapper162;
 use self::mapper182::Mapper182;
+use self::mapper193::Mapper193;
 use self::mapper200::Mapper200;
 use self::mapper201::Mapper201;
 use self::mapper206::Mapper206;
 use self::mapper225::Mapper225;
 use self::mapper226::Mapper226;
 use self::mapper229::Mapper229;
+use self::mapper234::Mapper234;
 use self::mapper240::Mapper240;
 use self::mapper241::Mapper241;
 use self::mapper242::Mapper242;
@@ -309,9 +319,11 @@ macro_rules! dispatch_mapper {
             Self::Gxrom(m) => m.$method($($arg),*),
             Self::Fme7(m) => m.$method($($arg),*),
             Self::Camerica(m) => m.$method($($arg),*),
+            Self::Mapper77(m) => m.$method($($arg),*),
             Self::Mapper78(m) => m.$method($($arg),*),
             Self::Nina003(m) => m.$method($($arg),*),
             Self::Mapper87(m) => m.$method($($arg),*),
+            Self::Mapper91(m) => m.$method($($arg),*),
             Self::Mapper118(m) => m.$method($($arg),*),
             Self::Tqrom(m) => m.$method($($arg),*),
             Self::Taito0190(m) => m.$method($($arg),*),
@@ -340,12 +352,14 @@ macro_rules! dispatch_mapper {
             Self::Mapper107(m) => m.$method($($arg),*),
             Self::Mapper15(m) => m.$method($($arg),*),
             Self::Mapper182(m) => m.$method($($arg),*),
+            Self::Mapper193(m) => m.$method($($arg),*),
             Self::BitCorp38(m) => m.$method($($arg),*),
             Self::Mapper36(m) => m.$method($($arg),*),
             Self::Mapper46(m) => m.$method($($arg),*),
             Self::Mapper62(m) => m.$method($($arg),*),
             Self::Mapper72(m) => m.$method($($arg),*),
             Self::Mapper94(m) => m.$method($($arg),*),
+            Self::Mapper96(m) => m.$method($($arg),*),
             Self::Mapper115(m) => m.$method($($arg),*),
             Self::Mapper152(m) => m.$method($($arg),*),
             Self::Mapper162(m) => m.$method($($arg),*),
@@ -359,6 +373,7 @@ macro_rules! dispatch_mapper {
             Self::Mapper225(m) => m.$method($($arg),*),
             Self::Mapper226(m) => m.$method($($arg),*),
             Self::Mapper229(m) => m.$method($($arg),*),
+            Self::Mapper234(m) => m.$method($($arg),*),
             Self::Mapper240(m) => m.$method($($arg),*),
             Self::Mapper241(m) => m.$method($($arg),*),
             Self::Mapper242(m) => m.$method($($arg),*),
@@ -398,9 +413,11 @@ pub(super) enum MapperEnum {
     Gxrom(Gxrom),
     Fme7(Fme7),
     Camerica(Camerica),
+    Mapper77(Mapper77),
     Mapper78(Mapper78),
     Nina003(Nina003),
     Mapper87(Mapper87),
+    Mapper91(Mapper91),
     Mapper118(Mapper118),
     Tqrom(Tqrom),
     Taito0190(Taito0190),
@@ -429,12 +446,14 @@ pub(super) enum MapperEnum {
     Mapper107(Mapper107),
     Mapper15(Mapper15),
     Mapper182(Mapper182),
+    Mapper193(Mapper193),
     BitCorp38(BitCorp38),
     Mapper36(Mapper36),
     Mapper46(Mapper46),
     Mapper62(Mapper62),
     Mapper72(Mapper72),
     Mapper94(Mapper94),
+    Mapper96(Mapper96),
     Mapper115(Mapper115),
     Mapper152(Mapper152),
     Mapper162(Mapper162),
@@ -448,6 +467,7 @@ pub(super) enum MapperEnum {
     Mapper225(Mapper225),
     Mapper226(Mapper226),
     Mapper229(Mapper229),
+    Mapper234(Mapper234),
     Mapper240(Mapper240),
     Mapper241(Mapper241),
     Mapper242(Mapper242),
@@ -766,6 +786,10 @@ pub(super) fn from_mapper_id(
             MapperEnum::Irem76(Irem76::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
+        77 => Ok((
+            MapperEnum::Mapper77(Mapper77::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         78 => Ok((
             MapperEnum::Mapper78(Mapper78::new(prg_rom, chr_rom, mirroring)),
             vec![],
@@ -800,6 +824,14 @@ pub(super) fn from_mapper_id(
         )),
         89 => Ok((
             MapperEnum::Sunsoft2(Sunsoft2::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        91 => Ok((
+            MapperEnum::Mapper91(Mapper91::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        96 => Ok((
+            MapperEnum::Mapper96(Mapper96::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         92 => Ok((
@@ -896,6 +928,10 @@ pub(super) fn from_mapper_id(
             )),
             vec![],
         )),
+        193 => Ok((
+            MapperEnum::Mapper193(Mapper193::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
         194 => Ok((
             MapperEnum::Waixing(Waixing::new(
                 prg_rom,
@@ -940,6 +976,10 @@ pub(super) fn from_mapper_id(
         )),
         232 => Ok((
             MapperEnum::Quattro(Quattro::new(prg_rom, chr_rom, mirroring)),
+            vec![],
+        )),
+        234 => Ok((
+            MapperEnum::Mapper234(Mapper234::new(prg_rom, chr_rom, mirroring)),
             vec![],
         )),
         240 => Ok((
