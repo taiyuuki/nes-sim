@@ -67,7 +67,10 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - uses: jetli/wasm-pack-action@v0.4.0
+      # jetli/wasm-pack-action 已停更且在 runner 新镜像上 EXDEV 崩溃,换用 taiki-e/install-action
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.15.0
       - name: Build nes-wasm
         run: wasm-pack build nes-wasm --target web --release
       - uses: actions/setup-node@v4
