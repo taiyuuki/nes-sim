@@ -428,6 +428,134 @@ kbd {
 
 .manual-note { margin: 16px 0 0; font-size: 12px; color: var(--ink-dim); letter-spacing: 1px; }
 
+/* ── 触屏虚拟手柄 ────────────────────── */
+
+.touchpad {
+  display: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 10px 20px calc(14px + env(safe-area-inset-bottom));
+  pointer-events: none; /* 子元素各自接收事件 */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+body.touch .touchpad { display: flex; }
+
+/* D-pad:容器印十字,几何命中测试在 JS */
+.dpad {
+  position: relative;
+  width: 150px;
+  height: 150px;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dp-arm {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(239, 228, 205, 0.10);
+  border: 1px solid rgba(239, 228, 205, 0.28);
+  transition: background 0.06s;
+}
+
+.dp-up    { left: 33%; top: 0;    width: 34%; height: 40%; border-radius: 8px 8px 0 0; }
+.dp-down  { left: 33%; bottom: 0; width: 34%; height: 40%; border-radius: 0 0 8px 8px; }
+.dp-left  { top: 33%; left: 0;    width: 40%; height: 34%; border-radius: 8px 0 0 8px; }
+.dp-right { top: 33%; right: 0;   width: 40%; height: 34%; border-radius: 0 8px 8px 0; }
+
+.dp-center {
+  position: absolute;
+  left: 33%; top: 33%; width: 34%; height: 34%;
+  pointer-events: none;
+  background: rgba(239, 228, 205, 0.10);
+  border: 1px solid rgba(239, 228, 205, 0.28);
+  box-shadow: inset 0 0 0 6px rgba(22, 18, 15, 0.55);
+}
+
+.dpad .dp-arm.active,
+.dpad.zone-Up .dp-up,
+.dpad.zone-Down .dp-down,
+.dpad.zone-Left .dp-left,
+.dpad.zone-Right .dp-right {
+  background: rgba(216, 34, 42, 0.45);
+  border-color: rgba(216, 34, 42, 0.8);
+}
+
+/* SELECT / START */
+.pad-mid {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 22px;
+}
+
+.pill {
+  pointer-events: auto;
+  touch-action: none;
+  padding: 10px 16px 9px;
+  border-radius: 999px;
+  background: rgba(239, 228, 205, 0.10);
+  border: 1px solid rgba(239, 228, 205, 0.28);
+  color: var(--ink-dim);
+  font-family: var(--font-px);
+  font-size: 8px;
+  letter-spacing: 1px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pill.active {
+  background: rgba(216, 34, 42, 0.45);
+  border-color: rgba(216, 34, 42, 0.8);
+  color: var(--ink);
+}
+
+/* A / B 圆键 */
+.ab {
+  display: flex;
+  gap: 18px;
+  align-items: flex-end;
+}
+
+.round {
+  pointer-events: auto;
+  touch-action: none;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-px);
+  font-size: 16px;
+  color: var(--ink);
+  background: radial-gradient(circle at 35% 30%, #c92830, var(--red-deep));
+  border: 1px solid rgba(0, 0, 0, 0.45);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.4);
+  transition: transform 0.05s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.round-a { transform: translateY(-16px); }
+
+.round.active {
+  filter: brightness(1.25);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+  transform: translateY(3px);
+}
+
+.round-a.active { transform: translateY(-13px); }
+
+/* 触屏设备:屏幕内容下移,别被手柄挡住 */
+body.touch .site-footer { margin-bottom: 210px; }
+
 /* ── 页脚 / Toast ─────────────────────── */
 
 .site-footer {

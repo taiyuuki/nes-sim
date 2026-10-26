@@ -48,11 +48,14 @@
       <div class="controls" role="toolbar" aria-label="模拟器控制">
         <button id="btnPause" disabled>暂停</button>
         <button id="btnReset" disabled>复位</button>
+        <button id="btnRewind" disabled>⏪按住倒带</button>
         <span class="gap"></span>
         <button id="btnSave" disabled>存档</button>
         <button id="btnLoad" disabled>读档</button>
         <span class="gap"></span>
         <button id="btnMute" aria-pressed="false">静音</button>
+        <span class="gap"></span>
+        <button id="btnFull">全屏</button>
       </div>
     </section>
 
@@ -69,6 +72,25 @@
     </aside>
   </main>
 
+  <!-- 触屏虚拟手柄(主指针为触屏时显示) -->
+  <div class="touchpad" id="touchpad">
+    <div class="dpad" id="dpad">
+      <div class="dp-arm dp-up"></div>
+      <div class="dp-arm dp-down"></div>
+      <div class="dp-arm dp-left"></div>
+      <div class="dp-arm dp-right"></div>
+      <div class="dp-center"></div>
+    </div>
+    <div class="pad-mid">
+      <div class="pill" id="padSelect">SELECT</div>
+      <div class="pill" id="padStart">START</div>
+    </div>
+    <div class="ab">
+      <div class="round" id="padB">B</div>
+      <div class="round round-a" id="padA">A</div>
+    </div>
+  </div>
+
   <!-- 说明书 -->
   <section class="manual" aria-label="按键说明">
     <h2 class="manual-title">操作说明</h2>
@@ -79,8 +101,9 @@
       <div class="manual-item"><span class="keys"><kbd>Enter</kbd></span>START</div>
       <div class="manual-item"><span class="keys"><kbd>Shift</kbd></span>SELECT</div>
       <div class="manual-item"><span class="keys"><kbd>P</kbd></span>暂停 / 继续</div>
+      <div class="manual-item"><span class="keys"><kbd>Backspace</kbd></span>按住倒带(约 6 秒)</div>
     </div>
-    <p class="manual-note">支持浏览器认得到的手柄(Gamepad API),插上即用。</p>
+    <p class="manual-note">支持浏览器认得到的手柄(Gamepad API),插上即用;触屏设备自动显示虚拟手柄。</p>
   </section>
 
   <footer class="site-footer">

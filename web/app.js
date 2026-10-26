@@ -56,6 +56,12 @@ let lastBits = 0;
 let fpsFrames = 0;
 let fpsTime = 0;
 
+// 倒带:每模拟帧存一份快照,按住时回退
+const REWIND_MAX_FRAMES = 360; // ~6 秒 @60fps
+const REWIND_SPEED = 3;        // 每渲染帧回退的模拟帧数(~3×速)
+const rewindBuf = [];          // Uint8Array 环形缓冲
+let rewinding = false;
+
 // 自制 ROM 标题美化(文件名 → 展示名)
 const TITLES = {
   "altercation-0.1.nes": "Altercation",
@@ -171,6 +177,7 @@ function currentBits() {
 
 window.addEventListener("keydown", (e) => {
   if (e.key === "p" || e.key === "P") { togglePause(); return; }
+  if (e.code === "Backspace") { e.preventDefault(); startRewind(); return; }
   const name = KEY_MAP[e.code];
   if (!name) return;
   e.preventDefault();
@@ -178,12 +185,102 @@ window.addEventListener("keydown", (e) => {
 });
 
 window.addEventListener("keyup", (e) => {
+  if (e.code === "Backspace") { stopRewind(); return; }
   const name = KEY_MAP[e.code];
   if (name) pressed.delete(name);
 });
 
 // 页面失焦时清空按键,避免“卡键”
-window.addEventListener("blur", () => pressed.clear());
+window.addEventListener("blur", () => { pressed.clear(); stopRewind(); });
+
+// ── 触屏虚拟手柄 ──────────────────────────────────────
+
+const touchCapable =
+  window.matchMedia?.("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
+
+if (touchCapable) {
+  document.body.classList.add("touch");
+  setupTouchPad();
+}
+
+function setupTouchPad() {
+  const dpad = $("#dpad");
+  const ARMS = { Up: ".dp-up", Down: ".dp-down", Left: ".dp-left", Right: ".dp-right" };
+  // pointerId → 该指当前压住的方向集合;多指取并集后与键盘状态合并
+  const active = new Map();
+  let touchUnion = new Set();
+
+  // 坐标 → 8 向方向集合(±67.5° 扇区,中心死区)
+  function zones(x, y) {
+    const r = dpad.getBoundingClientRect();
+    const dx = x - (r.left + r.width / 2);
+    const dy = y - (r.top + r.height / 2);
+    const len = Math.hypot(dx, dy);
+    const set = new Set();
+    if (len < Math.min(r.width, r.height) * 0.14) return set;
+    const T = 0.3827; // cos 67.5°
+    const ux = dx / len;
+    const uy = dy / len;
+    if (ux > T) set.add("Right");
+    if (ux < -T) set.add("Left");
+    if (uy > T) set.add("Down");
+    if (uy < -T) set.add("Up");
+    return set;
+  }
+
+  function syncPressed() {
+    const union = new Set();
+    for (const set of active.values()) for (const d of set) union.add(d);
+    for (const d of union) if (!touchUnion.has(d)) pressed.add(d);
+    for (const d of touchUnion) if (!union.has(d)) pressed.delete(d);
+    touchUnion = union;
+    for (const [name, sel] of Object.entries(ARMS)) {
+      $(sel).classList.toggle("active", union.has(name));
+    }
+  }
+
+  dpad.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    dpad.setPointerCapture(e.pointerId);
+    active.set(e.pointerId, zones(e.clientX, e.clientY));
+    syncPressed();
+  });
+  dpad.addEventListener("pointermove", (e) => {
+    if (!active.has(e.pointerId)) return;
+    active.set(e.pointerId, zones(e.clientX, e.clientY));
+    syncPressed();
+  });
+  const release = (e) => {
+    if (!active.delete(e.pointerId)) return;
+    syncPressed();
+  };
+  dpad.addEventListener("pointerup", release);
+  dpad.addEventListener("pointercancel", release);
+  dpad.addEventListener("lostpointercapture", release);
+  dpad.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // A / B / START / SELECT:按住即按住(指针捕获,滑出也可靠释放)
+  function bindHold(el, name) {
+    el.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      pressed.add(name);
+      el.classList.add("active");
+    });
+    const off = () => {
+      pressed.delete(name);
+      el.classList.remove("active");
+    };
+    el.addEventListener("pointerup", off);
+    el.addEventListener("pointercancel", off);
+    el.addEventListener("lostpointercapture", off);
+    el.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+  bindHold($("#padB"), "B");
+  bindHold($("#padA"), "A");
+  bindHold($("#padStart"), "Start");
+  bindHold($("#padSelect"), "Select");
+}
 
 // ── 主循环 ──────────────────────────────────────────────
 
@@ -217,6 +314,11 @@ function tick(now) {
     return;
   }
 
+  if (rewinding) {
+    rewindStep();
+    return;
+  }
+
   if (!paused) {
     // 按音频队列水位补帧:队列不足时运行模拟
     const target = QUEUE_TARGET * samplesPerFrame;
@@ -226,6 +328,11 @@ function tick(now) {
       pushSamples(nes.audio_samples());
       nes.clear_audio_samples();
       fpsFrames++;
+      // 每帧快照供倒带(失败不影响游戏)
+      try {
+        rewindBuf.push(nes.save_state());
+        if (rewindBuf.length > REWIND_MAX_FRAMES) rewindBuf.shift();
+      } catch { /* ignore */ }
     }
 
     const bits = currentBits();
@@ -245,6 +352,39 @@ function tick(now) {
   }
 }
 
+// ── 倒带 ────────────────────────────────────────────
+
+function startRewind() {
+  if (!romLoaded || rewinding || rewindBuf.length === 0) return;
+  rewinding = true;
+  $("#btnRewind").setAttribute("aria-pressed", "true");
+  $("#stFps").textContent = "◀◀ REWIND";
+}
+
+function stopRewind() {
+  if (!rewinding) return;
+  rewinding = false;
+  $("#btnRewind").setAttribute("aria-pressed", "false");
+  fpsTime = 0; // 下个 tick 重置 FPS 统计
+}
+
+function rewindStep() {
+  if (rewindBuf.length === 0) { stopRewind(); return; }
+  let state = null;
+  for (let i = 0; i < REWIND_SPEED && rewindBuf.length > 0; i++) {
+    state = rewindBuf.pop();
+  }
+  try {
+    nes.load_state(state);
+    clearAudioQueue();
+    blitFrame();
+    $("#stFrame").textContent = `FRAME ${nes.frame_number()}`;
+  } catch (err) {
+    stopRewind();
+    toast(`倒带失败:${err.message || err}`, true);
+  }
+}
+
 // ── ROM 装载 ────────────────────────────────────────────
 
 async function insertCartridge(bytes, label, listItem = null) {
@@ -261,6 +401,8 @@ async function insertCartridge(bytes, label, listItem = null) {
   romLoaded = true;
   paused = false;
   lastBits = 0;
+  stopRewind();
+  rewindBuf.length = 0;
   clearAudioQueue();
 
   // UI:遮罩掀开、LED 亮起、开机闪现
@@ -280,7 +422,7 @@ async function insertCartridge(bytes, label, listItem = null) {
   $("#stFrame").textContent = "FRAME 0";
   $("#stFps").textContent = "FPS --";
 
-  for (const id of ["btnPause", "btnReset", "btnSave", "btnLoad"]) $(`#${id}`).disabled = false;
+  for (const id of ["btnPause", "btnReset", "btnRewind", "btnSave", "btnLoad"]) $(`#${id}`).disabled = false;
   $("#btnPause").textContent = "暂停";
   $("#btnPause").setAttribute("aria-pressed", "false");
 
@@ -419,6 +561,26 @@ $("#btnMute").addEventListener("click", () => {
   $("#btnMute").setAttribute("aria-pressed", String(muted));
   if (gainNode) gainNode.gain.value = muted ? 0 : 1;
   toast(muted ? "已静音" : "声音开启");
+});
+
+// 倒带按钮:按住即回退(指针事件兼容鼠标/触摸)
+const btnRewind = $("#btnRewind");
+btnRewind.addEventListener("pointerdown", (e) => { e.preventDefault(); startRewind(); });
+for (const ev of ["pointerup", "pointerleave", "pointercancel"]) {
+  btnRewind.addEventListener(ev, stopRewind);
+}
+
+// 全屏
+$("#btnFull").addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      await document.documentElement.requestFullscreen();
+    }
+  } catch {
+    toast("当前环境不支持全屏", true);
+  }
 });
 
 // ── 启动 ────────────────────────────────────────────────
