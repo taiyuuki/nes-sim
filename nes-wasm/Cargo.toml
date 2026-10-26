@@ -1,6 +1,6 @@
 [package]
 name = "nes-wasm"
-version = "0.3.0"
+version = "0.4.0"
 description = "WebAssembly bindings for the nes-sim NES emulator core."
 edition.workspace = true
 license.workspace = true

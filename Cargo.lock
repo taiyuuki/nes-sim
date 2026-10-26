@@ -586,11 +586,11 @@ dependencies = [
 
 [[package]]
 name = "nes-sim"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "nes-wasm"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "nes-sim",
  "wasm-bindgen",

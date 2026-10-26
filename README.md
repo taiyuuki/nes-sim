@@ -119,6 +119,8 @@ cargo run --release -p nes-desktop -- --palette "palette.pal" "game.nes"
 - 21/23/25 (VRC4)
 - 22 (VRC2)
 - 24/26 (VRC6)
+- 28 (Action 53)
+- 30 (UNROM 512)
 - 32 (Irem G-101)
 - 33/48 (Taito TC0190)
 - 34 (BNROM)
@@ -143,6 +145,7 @@ cargo run --release -p nes-desktop -- --palette "palette.pal" "game.nes"
 - 74
 - 75
 - 76
+- 77 (Irem LROG057H)
 - 78
 - 79/113 (NINA-003)
 - 80 (Taito X1-005)
@@ -152,9 +155,11 @@ cargo run --release -p nes-desktop -- --palette "palette.pal" "game.nes"
 - 87
 - 88/154 (Namco 3433)
 - 89
+- 91 (UNL MK2)
 - 92 (JF-19)
 - 93
 - 94
+- 96 (Oeka Kids)
 - 97 (Irem Tam S1)
 - 105 (Nintendo World Championship)
 - 107
@@ -171,12 +176,16 @@ cargo run --release -p nes-desktop -- --palette "palette.pal" "game.nes"
 - 182
 - 184
 - 185
+- 191/192/194/195 (Waixing MMC3)
+- 193 (NTDEC Fighting Hero)
 - 200 (BMC 36-in-1)
 - 201 (BMC 21-in-1)
 - 206 (DE1ROM)
 - 225 (BMC 72-in-1)
 - 226 (BMC 76-in-1)
 - 229 (BMC 31-in-1)
+- 232 (Camerica Quattro)
+- 234 (AVE D1012)
 - 240 (CNE Shui Hu Zhuan)
 - 241 (TXC MXMDHTWO)
 - 242 (Waixing DQVII)
