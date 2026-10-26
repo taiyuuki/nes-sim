@@ -1,0 +1,58 @@
+name: Pages
+
+# 推送 main 时自动构建网页演示并部署到 GitHub Pages
+on:
+  push:
+    branches: [main]
+    paths: ["nes-sim/**", "nes-wasm/**", "web/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # 自制 ROM 包(内含 .nes 的 zip)下载地址,可选。
+  # 推荐:把 web/build.sh 白名单内的 ROM 打包为 homebrew-roms.zip 传到本仓库任意
+  # Release,然后在 Settings → Secrets and variables → Actions → Variables
+  # 添加 ROMS_URL 指向该资产。不设置时演示页不带预置卡带(仍可拖拽本地 ROM)。
+  ROMS_URL: ${{ vars.ROMS_URL }}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只部署一个版本
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+
+      - name: Fetch homebrew ROMs (optional)
+        if: env.ROMS_URL != ''
+        run: |
+          curl -fL "$ROMS_URL" -o /tmp/roms.zip
+          mkdir -p roms
+          unzip -j -o /tmp/roms.zip -d roms/
+
+      - name: Build demo
+        run: ./web/build.sh
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deployment
+        uses: actions/deploy-pages@v4

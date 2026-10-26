@@ -2,6 +2,9 @@
 
 A NES (Famicom) emulator core library written in Rust. Headless design decouples the emulation engine from the frontend, making it easy to integrate into different UI frameworks or testing environments.
 
+[![CI](https://github.com/taiyuuki/nes-sim/actions/workflows/ci.yml/badge.svg)](https://github.com/taiyuuki/nes-sim/actions/workflows/ci.yml)
+[**在线试玩 / Live Demo →**](https://taiyuuki.github.io/nes-sim/)
+
 ## Features
 
 - **Complete CPU emulation** — 6502 processor with full addressing mode support and undocumented instructions

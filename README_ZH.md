@@ -2,6 +2,9 @@
 
 用 Rust 编写的 NES（FC/红白机）模拟器核心库。采用 headless 设计，将模拟引擎与前端解耦，可方便地集成到不同的 UI 框架或测试环境中。
 
+[![CI](https://github.com/taiyuuki/nes-sim/actions/workflows/ci.yml/badge.svg)](https://github.com/taiyuuki/nes-sim/actions/workflows/ci.yml)
+[**在线试玩 →**](https://taiyuuki.github.io/nes-sim/)
+
 ## 特性
 
 - **完整的 CPU 模拟** — 6502 处理器，支持全部寻址模式及未授权指令

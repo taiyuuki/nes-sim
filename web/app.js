@@ -299,6 +299,10 @@ async function fetchRomList() {
     hint.textContent = "未找到 roms/roms.json — 在仓库根目录运行 ./web/build.sh 生成";
     return;
   }
+  if (roms.length === 0) {
+    hint.textContent = "卡带架空空如也 — 把 .nes 文件拖进页面即可开玩";
+    return;
+  }
   for (const entry of roms) {
     const li = document.createElement("li");
     li.className = "cart";
