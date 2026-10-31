@@ -59,7 +59,7 @@ impl Namco163Audio {
     pub(crate) fn read_ram(&mut self) -> u8 {
         let data = self.ram[(self.addr_reg & 0x7F) as usize];
         if self.addr_reg & 0x80 != 0 {
-            self.addr_reg = (self.addr_reg & 0x80) | ((self.addr_reg + 1) & 0x7F);
+            self.addr_reg = (self.addr_reg & 0x80) | (self.addr_reg.wrapping_add(1) & 0x7F);
         }
         data
     }
@@ -78,7 +78,7 @@ impl Namco163Audio {
         }
 
         if self.addr_reg & 0x80 != 0 {
-            self.addr_reg = (self.addr_reg & 0x80) | ((self.addr_reg + 1) & 0x7F);
+            self.addr_reg = (self.addr_reg & 0x80) | (self.addr_reg.wrapping_add(1) & 0x7F);
         }
     }
 
@@ -228,5 +228,9 @@ impl ExpansionAudioChip for Namco163AudioChip {
 
     fn output_sample(&self) -> f32 {
         self.audio.borrow().output()
+    }
+
+    fn reset(&mut self) {
+        *self.audio.borrow_mut() = Namco163Audio::new();
     }
 }

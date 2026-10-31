@@ -26,6 +26,12 @@ let romLoaded = false;
 let paused = false;
 let romKey = null; // md5 hex,存档隔离用
 
+// NSF 模式(无画面,canvas 画示波器)
+let nsfMode = false;
+let nsfTrackCount = 1;
+let nsfElapsed = 0;        // 播放秒数
+let nsfWaveform = null;    // 最近一帧音频(示波器用)
+
 // 音频
 let audioCtx = null;
 let gainNode = null;
@@ -177,6 +183,8 @@ function currentBits() {
 
 window.addEventListener("keydown", (e) => {
   if (e.key === "p" || e.key === "P") { togglePause(); return; }
+  if (e.key === "[") { nsfStep(-1); return; }
+  if (e.key === "]") { nsfStep(1); return; }
   if (e.code === "Backspace") { e.preventDefault(); startRewind(); return; }
   const name = KEY_MAP[e.code];
   if (!name) return;
@@ -304,6 +312,33 @@ function blitFrame() {
   ctx2d.drawImage(off, 0, 0, canvas.width, canvas.height);
 }
 
+// NSF 示波器:把最近一帧音频采样画成波形
+function blitWaveform() {
+  const w = off.width, h = off.height;
+  offCtx.fillStyle = "#05070d";
+  offCtx.fillRect(0, 0, w, h);
+  // 中线网格
+  offCtx.strokeStyle = "rgba(80,220,160,0.15)";
+  offCtx.beginPath();
+  offCtx.moveTo(0, h / 2);
+  offCtx.lineTo(w, h / 2);
+  offCtx.stroke();
+  const wave = nsfWaveform;
+  if (wave && wave.length > 0) {
+    offCtx.strokeStyle = "#39d98a";
+    offCtx.lineWidth = 2;
+    offCtx.beginPath();
+    const step = Math.max(1, Math.floor(wave.length / w / 2));
+    let x = 0;
+    for (let i = 0; i < wave.length && x < w; i += step, x += 2) {
+      const y = h / 2 - wave[i] * (h / 2 - 8);
+      if (x === 0) offCtx.moveTo(x, y); else offCtx.lineTo(x, y);
+    }
+    offCtx.stroke();
+  }
+  ctx2d.drawImage(off, 0, 0, canvas.width, canvas.height);
+}
+
 let lastNoise = 0;
 
 function tick(now) {
@@ -325,23 +360,35 @@ function tick(now) {
     let guard = 12; // 单次最多补 12 帧,防御死循环
     while (queued < target && guard-- > 0) {
       nes.run_frame();
-      pushSamples(nes.audio_samples());
+      const chunk = nes.audio_samples();
+      pushSamples(chunk);
+      if (nsfMode && chunk.length > 0) nsfWaveform = chunk.slice();
       nes.clear_audio_samples();
       fpsFrames++;
       // 每帧快照供倒带(失败不影响游戏)
-      try {
-        rewindBuf.push(nes.save_state());
-        if (rewindBuf.length > REWIND_MAX_FRAMES) rewindBuf.shift();
-      } catch { /* ignore */ }
+      if (!nsfMode) {
+        try {
+          rewindBuf.push(nes.save_state());
+          if (rewindBuf.length > REWIND_MAX_FRAMES) rewindBuf.shift();
+        } catch { /* ignore */ }
+      }
     }
 
-    const bits = currentBits();
-    if (bits !== lastBits) {
-      nes.set_controller_bits(0, bits);
-      lastBits = bits;
+    if (!nsfMode) {
+      const bits = currentBits();
+      if (bits !== lastBits) {
+        nes.set_controller_bits(0, bits);
+        lastBits = bits;
+      }
     }
 
-    blitFrame();
+    if (nsfMode) {
+      blitWaveform();
+      nsfElapsed += 1 / 60;
+      updateNsfTime();
+    } else {
+      blitFrame();
+    }
 
     if (now - fpsTime >= 500) {
       $("#stFps").textContent = `FPS ${Math.round(fpsFrames * 1000 / (now - fpsTime))}`;
@@ -387,12 +434,50 @@ function rewindStep() {
 
 // ── ROM 装载 ────────────────────────────────────────────
 
+// NSF 面板刷新
+function updateNsfPanel(info) {
+  $("#nsfName").textContent = info.name || "<?>";
+  $("#nsfArtist").textContent = info.artist || "";
+  $("#nsfCopyright").textContent = info.copyright || "";
+  $("#nsfDot").hidden = !(info.artist && info.copyright);
+  nsfTrackCount = info.track_count;
+  $("#nsfTrack").textContent = `${info.current_track} / ${info.track_count}`;
+  const chips = [info.tv_system, ...info.chips];
+  $("#nsfChips").innerHTML = chips.map((c) => `<span class="chip">${c}</span>`).join("");
+  nsfElapsed = 0;
+  updateNsfTime();
+  $("#nsfPanel").hidden = false;
+}
+
+function updateNsfTime() {
+  const s = Math.floor(nsfElapsed);
+  $("#nsfTime").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function nsfStep(dir) {
+  if (!nsfMode) return;
+  const cur = nes.nsf_track() || 1;
+  let next = cur + dir;
+  if (next < 1) next = nsfTrackCount;
+  if (next > nsfTrackCount) next = 1;
+  nes.nsf_select_track(next);
+  const info = nes.nsf_info();
+  $("#nsfTrack").textContent = `${info.current_track} / ${info.track_count}`;
+  nsfElapsed = 0;
+  updateNsfTime();
+  clearAudioQueue();
+  toast(`曲目 ${info.current_track} / ${info.track_count}`);
+}
+
+$("#nsfPrev").addEventListener("click", () => nsfStep(-1));
+$("#nsfNext").addEventListener("click", () => nsfStep(1));
+
 async function insertCartridge(bytes, label, listItem = null) {
   ensureAudio(); // 用户手势内创建/恢复音频
   try {
     nes.load_rom(bytes);
     // 换卡即整机重启:清 CPU RAM 并复位,避免沿用旧游戏的脏 VRAM/寄存器导致花屏
-    nes.power_cycle();
+    if (!nes.nsf_info()) nes.power_cycle();
   } catch (err) {
     toast(`载入失败:${err.message || err}`, true);
     return;
@@ -404,6 +489,14 @@ async function insertCartridge(bytes, label, listItem = null) {
   stopRewind();
   rewindBuf.length = 0;
   clearAudioQueue();
+
+  // NSF 模式:显示播放器面板,倒带不适用
+  const nsfInfo = nes.nsf_info();
+  nsfMode = !!nsfInfo;
+  $("#nsfPanel").hidden = !nsfMode;
+  nsfWaveform = null;
+  $("#btnRewind").disabled = nsfMode;
+  if (nsfInfo) updateNsfPanel(nsfInfo);
 
   // UI:遮罩掀开、LED 亮起、开机闪现
   $("#offOverlay").classList.add("hidden");
@@ -423,6 +516,7 @@ async function insertCartridge(bytes, label, listItem = null) {
   $("#stFps").textContent = "FPS --";
 
   for (const id of ["btnPause", "btnReset", "btnRewind", "btnSave", "btnLoad"]) $(`#${id}`).disabled = false;
+  if (nsfMode) $("#btnRewind").disabled = true;
   $("#btnPause").textContent = "暂停";
   $("#btnPause").setAttribute("aria-pressed", "false");
 
@@ -490,7 +584,7 @@ window.addEventListener("drop", async (e) => {
   e.preventDefault();
   document.body.classList.remove("dragging");
   const file = e.dataTransfer.files[0];
-  if (!file || !/\.nes$/i.test(file.name)) { toast("只支持 .nes 文件", true); return; }
+  if (!file || !/\.(nes|nsf)$/i.test(file.name)) { toast("只支持 .nes / .nsf 文件", true); return; }
   const bytes = new Uint8Array(await file.arrayBuffer());
   const li = document.createElement("li");
   li.className = "cart custom";
@@ -518,6 +612,7 @@ $("#btnReset").addEventListener("click", () => {
   if (!romLoaded) return;
   nes.reset();
   clearAudioQueue();
+  if (nsfMode) { nsfElapsed = 0; updateNsfTime(); }
   $("#stFrame").textContent = "FRAME 0";
   toast("已复位");
 });

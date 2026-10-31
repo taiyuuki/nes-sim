@@ -45,6 +45,21 @@
         <span id="stMd5" class="mono"></span>
       </div>
 
+      <!-- NSF 播放器面板(加载 .nsf 后显示) -->
+      <div class="nsf-panel" id="nsfPanel" hidden>
+        <div class="nsf-meta">
+          <div class="nsf-name" id="nsfName"></div>
+          <div class="nsf-sub"><span id="nsfArtist"></span><span class="nsf-dot" hidden id="nsfDot">·</span><span id="nsfCopyright"></span></div>
+        </div>
+        <div class="nsf-ctrl">
+          <button id="nsfPrev" title="上一曲([)">◀</button>
+          <span class="nsf-track" id="nsfTrack">1 / 1</span>
+          <button id="nsfNext" title="下一曲(])">▶</button>
+          <span class="nsf-time" id="nsfTime">0:00</span>
+        </div>
+        <div class="nsf-chips" id="nsfChips"></div>
+      </div>
+
       <div class="controls" role="toolbar" aria-label="模拟器控制">
         <button id="btnPause" disabled>暂停</button>
         <button id="btnReset" disabled>复位</button>
@@ -64,10 +79,10 @@
       <h2 class="shelf-title">卡带架</h2>
       <ul class="cart-list" id="cartList"></ul>
       <label class="filebtn">
-        打开本地 ROM(.nes)
-        <input type="file" id="fileInput" accept=".nes" hidden />
+        打开本地 ROM(.nes / .nsf)
+        <input type="file" id="fileInput" accept=".nes,.nsf" hidden />
       </label>
-      <p class="hint">也可以直接把 .nes 文件拖进页面</p>
+      <p class="hint">也可以直接把 .nes / .nsf 文件拖进页面</p>
       <p class="hint dim" id="shelfHint"></p>
     </aside>
   </main>

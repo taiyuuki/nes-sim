@@ -11,7 +11,8 @@
 - **PPU 渲染** — 256x240 分辨率，精灵与背景渲染，颜色强调（$2001 色调位）
 - **自定义调色板** — 运行时加载 `.pal` 调色板文件（FCEUX/Nestopia 格式，64/512 色）
 - **APU 音频** — 5 个标准声道（Pulse x2、Triangle、Noise、DMC）
-- **扩展音频** — VRC6、Namco 163、Sunsoft 5B、MMC5
+- **扩展音频** — VRC6、VRC7、FDS、Namco 163、Sunsoft 5B、MMC5
+- **NSF 播放** — NES Sound Format 音乐文件，支持全部扩展音源、曲目切换、元数据（曲名/艺术家/版权）
 - **Mapper** — 覆盖 MMC1/MMC3/VRC 系列/Namco/Taito/Sunsoft 等常见 Mapper
 - **多制式支持** — NTSC、PAL、DENDY
 - **存档功能** — 自定义二进制格式，支持 Mapper 校验

@@ -63,6 +63,7 @@ mod namco163;
 mod namco3433;
 mod nina003;
 mod nrom;
+mod nsf;
 mod ntdec112;
 mod quattro;
 mod rambo1;
@@ -149,6 +150,7 @@ use self::namco163::{Namco163, new_namco163};
 use self::namco3433::Namco3433;
 use self::nina003::Nina003;
 use self::nrom::Nrom;
+pub(super) use self::nsf::{NsfMapper, new_nsf};
 use self::ntdec112::Ntdec112;
 use self::quattro::Quattro;
 use self::rambo1::Rambo1;
@@ -218,6 +220,8 @@ pub(super) trait Mapper {
     }
     /// 载入电池后备PRG RAM（数据与RAM长度不一致时按短者截断）。
     fn load_battery_ram(&mut self, _data: &[u8]) {}
+    /// NSF切曲复位：恢复初始bank窗口、清wram/EXRAM。
+    fn nsf_prepare_song(&mut self) {}
 }
 
 /// 为以 `$field`（prg_ram/wram）保存PRG RAM的mapper生成电池存档存取实现。
@@ -378,6 +382,7 @@ macro_rules! dispatch_mapper {
             Self::Mapper241(m) => m.$method($($arg),*),
             Self::Mapper242(m) => m.$method($($arg),*),
             Self::Mapper244(m) => m.$method($($arg),*),
+            Self::Nsf(m) => m.$method($($arg),*),
         }
     };
 }
@@ -472,6 +477,7 @@ pub(super) enum MapperEnum {
     Mapper241(Mapper241),
     Mapper242(Mapper242),
     Mapper244(Mapper244),
+    Nsf(NsfMapper),
 }
 
 impl MapperEnum {
@@ -568,6 +574,10 @@ impl MapperEnum {
 
     pub(super) fn load_battery_ram(&mut self, data: &[u8]) {
         dispatch_mapper!(self, load_battery_ram(data))
+    }
+
+    pub(super) fn nsf_prepare_song(&mut self) {
+        dispatch_mapper!(self, nsf_prepare_song())
     }
 }
 

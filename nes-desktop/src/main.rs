@@ -58,6 +58,7 @@ fn usage(program: &str) {
     eprintln!(
         r#"Example: {program} --palette "refs/nestopia/palettes/Nostalgia-FBX.pal" game.nes"#
     );
+    eprintln!(r#"Example (NSF): {program} music.nsf — 按 [ / ] 切换曲目"#);
     eprintln!("说明: 如果不指定 ROM 路径，运行后会弹出文件选择对话框");
     eprintln!("Controls:");
     eprintln!("  P1: Arrows D-pad | Z/X B/A | Tab Select | Enter Start");
@@ -280,6 +281,24 @@ fn main() -> ExitCode {
         }
     };
     let mut current_rom_path = rom_path.clone();
+    // NSF:打印元数据,[ / ] 切曲(边沿检测避免连发)
+    let nsf_loaded = runtime.nes().nsf_info().is_some();
+    let mut nsf_prev_keys = (false, false);
+    if let Some(info) = runtime.nes().nsf_info() {
+        eprintln!(
+            "NSF: {} / {} / {} — {} 曲, {}, {}",
+            info.name,
+            info.artist,
+            info.copyright,
+            info.track_count,
+            if matches!(info.tv_system, TVSystem::PAL) {
+                "PAL"
+            } else {
+                "NTSC"
+            },
+            info.chip_names().join("+")
+        );
+    }
     let mut save_slot: u8 = 1;
     let mut palette = Palette::DEFAULT;
     if let Some(path) = &palette_path {
@@ -665,6 +684,35 @@ fn main() -> ExitCode {
 
         let input = collect_input(&window);
         let fast_forward = window.is_key_down(Key::Space);
+        // NSF切曲: [ / ]
+        if nsf_loaded {
+            let prev = nsf_prev_keys;
+            let down_left = window.is_key_down(Key::LeftBracket);
+            let down_right = window.is_key_down(Key::RightBracket);
+            nsf_prev_keys = (down_left, down_right);
+            let delta = if down_right && !prev.1 {
+                1
+            } else if down_left && !prev.0 {
+                -1
+            } else {
+                0
+            };
+            if delta != 0
+                && let Some(info) = runtime.nes().nsf_info()
+            {
+                let count = info.track_count as i32;
+                let mut next = info.current_track as i32 + delta;
+                if next < 1 {
+                    next = count;
+                }
+                if next > count {
+                    next = 1;
+                }
+                if runtime.nes_mut().nsf_select_track(next as u16) {
+                    status_message = format!("track {next}/{count}");
+                }
+            }
+        }
         // 按住Backspace回退；缓冲耗尽时按正常速度前进，避免空转。
         // 录像中禁用回退（倒带会破坏录像帧序）
         let rewinding = window.is_key_down(Key::Backspace)

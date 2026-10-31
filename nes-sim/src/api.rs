@@ -57,6 +57,8 @@ pub enum CoreCommand {
     #[cfg(feature = "debug")]
     SetPaused(bool),
     FdsDisk(FdsDiskCommand),
+    /// NSF切换曲目（1起；非NSF模式忽略）
+    NsfSelectTrack(u16),
     SetCheats(Vec<Cheat>),
     AddCheat(Cheat),
     RemoveCheat(usize),

@@ -112,6 +112,11 @@ impl<'a> StateReader<'a> {
         }
     }
 
+    /// 是否已读完全部字节（向后兼容的追加字段探测）。
+    pub(crate) fn is_empty(&self) -> bool {
+        self.offset == self.bytes.len()
+    }
+
     pub(crate) fn read_u8(&mut self) -> Result<u8, SaveStateError> {
         let mut buf = [0];
         self.read_exact(&mut buf)?;

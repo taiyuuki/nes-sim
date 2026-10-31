@@ -10,6 +10,7 @@ import PpuPanel from './components/PpuPanel.vue'
 import MemoryView from './components/MemoryView.vue'
 import BreakpointPanel from './components/BreakpointPanel.vue'
 import StatusPanel from './components/StatusPanel.vue'
+import NsfPanel from './components/NsfPanel.vue'
 import PatternTableView from './components/PatternTableView.vue'
 import NametableView from './components/NametableView.vue'
 import AudioPanel from './components/AudioPanel.vue'
@@ -85,6 +86,10 @@ function onToolbarEvent(event: string, payload?: string) {
           :info="emu.debugInfo.value"
           :rom-path="emu.romPath.value"
           :error="emu.error.value"
+        />
+        <NsfPanel
+          :info="emu.nsfInfo.value"
+          @select-track="(t: number) => emu.nsfSelectTrack(t)"
         />
         <CpuPanel :cpu="emu.debugInfo.value?.cpu ?? null" />
         <PpuPanel :ppu="emu.debugInfo.value?.ppu ?? null" />

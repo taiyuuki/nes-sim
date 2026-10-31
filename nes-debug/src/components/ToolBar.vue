@@ -10,7 +10,7 @@ const emit = defineEmits<{
 }>()
 
 async function openRom() {
-    const path = await open({ filters: [{ name: 'NES ROM', extensions: ['nes', 'fds'] }] })
+    const path = await open({ filters: [{ name: 'NES ROM', extensions: ['nes', 'fds', 'nsf'] }] })
     if (path) {
         emit('loadRom', path)
     }

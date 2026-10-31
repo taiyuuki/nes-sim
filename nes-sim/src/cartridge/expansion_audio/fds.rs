@@ -299,6 +299,10 @@ impl ExpansionAudioChip for FdsAudioChip {
     fn output_sample(&self) -> f32 {
         self.audio.borrow().output_sample()
     }
+
+    fn reset(&mut self) {
+        self.audio.borrow_mut().reset();
+    }
 }
 
 #[cfg(test)]

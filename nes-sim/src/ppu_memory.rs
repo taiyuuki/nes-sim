@@ -77,6 +77,10 @@ impl PpuMemory {
         self.cartridge.irq_line()
     }
 
+    pub(super) fn cartridge_nsf_prepare_song(&mut self) {
+        self.cartridge.nsf_prepare_song()
+    }
+
     /// 当前卡带 PRG‖CHR 的 MD5（无卡/FDS 为 None）。
     pub(super) fn cartridge_rom_md5(&self) -> Option<[u8; 16]> {
         self.cartridge.rom_md5()

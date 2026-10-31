@@ -111,6 +111,48 @@ pub fn reset() -> Result<(), String> {
     })
 }
 
+/// NSF元数据(序列化给前端)。
+#[derive(serde::Serialize, Clone)]
+pub struct NsfInfoT {
+    pub name: String,
+    pub artist: String,
+    pub copyright: String,
+    pub track_count: u16,
+    pub current_track: u16,
+    pub tv_system: String,
+    pub chips: Vec<String>,
+}
+
+#[tauri::command]
+pub fn get_nsf_info() -> Result<Option<NsfInfoT>, String> {
+    with_runtime(|rt| {
+        Ok(rt.nes().nsf_info().map(|info| NsfInfoT {
+            name: info.name.clone(),
+            artist: info.artist.clone(),
+            copyright: info.copyright.clone(),
+            track_count: info.track_count,
+            current_track: info.current_track,
+            tv_system: match info.tv_system {
+                nes_sim::TVSystem::PAL => "PAL".to_string(),
+                _ => "NTSC".to_string(),
+            },
+            chips: info.chip_names().into_iter().map(String::from).collect(),
+        }))
+    })
+}
+
+/// NSF切换曲目(1起,越界钳制);非NSF模式返回错误。
+#[tauri::command]
+pub fn nsf_select_track(track: u16) -> Result<(), String> {
+    with_runtime(|rt| {
+        if rt.nes_mut().nsf_select_track(track) {
+            Ok(())
+        } else {
+            Err("Not in NSF mode".to_string())
+        }
+    })
+}
+
 #[tauri::command]
 pub fn step_frame() -> Result<DebugInfo, String> {
     with_runtime(|rt| {

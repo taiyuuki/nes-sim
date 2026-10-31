@@ -11,7 +11,8 @@ A NES (Famicom) emulator core library written in Rust. Headless design decouples
 - **PPU rendering** — 256x240 resolution with sprite and background rendering, color emphasis ($2001 tint bits)
 - **Custom palettes** — load `.pal` files (FCEUX/Nestopia format, 64 or 512 colors) at runtime
 - **APU audio** — 5 standard channels (Pulse x2, Triangle, Noise, DMC)
-- **Expansion audio** — VRC6, Namco 163, Sunsoft 5B, MMC5
+- **Expansion audio** — VRC6, VRC7, FDS, Namco 163, Sunsoft 5B, MMC5
+- **NSF playback** — NES Sound Format music files with all expansion chips, track switching, metadata (title/artist/copyright)
 - **Mappers** — Coverage of MMC1/MMC3/VRC series/Namco/Taito/Sunsoft and other common mappers
 - **Multi-system support** — NTSC, PAL, DENDY
 - **Save states** — Custom binary format with mapper validation

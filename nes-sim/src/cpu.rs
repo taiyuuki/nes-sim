@@ -1055,6 +1055,40 @@ impl CPU {
         self.nmi = nmi;
     }
 
+    /// NSF INIT调用约定：`A`=曲目号(0起)、`X`=制式(0=NTSC,1=PAL)、`Y=0`、
+    /// I=1，栈指针复位到$01FF后压入返回哨兵，PC指向INIT例程。
+    pub(crate) fn nsf_call_init(
+        &mut self,
+        bus: &mut impl CPUBus,
+        target: u16,
+        song: u8,
+        pal: bool,
+        sentinel: u16,
+    ) {
+        self.a = song;
+        self.x = u8::from(pal);
+        self.y = 0;
+        self.p.i = true;
+        self.push_return_sentinel(bus, target, sentinel);
+    }
+
+    /// NSF PLAY调用：寄存器状态未定义（规范不保证），仅设置PC与栈哨兵。
+    pub(crate) fn nsf_call_play(&mut self, bus: &mut impl CPUBus, target: u16, sentinel: u16) {
+        self.p.i = true;
+        self.push_return_sentinel(bus, target, sentinel);
+    }
+
+    /// 栈复位到$01FF，压入哨兵返回地址（RTS弹出后PC=哨兵），跳转到目标。
+    fn push_return_sentinel(&mut self, bus: &mut impl CPUBus, target: u16, sentinel: u16) {
+        self.sp = 0xFF;
+        let ret = sentinel.wrapping_sub(1);
+        bus.cpu_write(0x0100 | self.sp as u16, (ret >> 8) as u8);
+        self.sp = 0xFE;
+        bus.cpu_write(0x0100 | self.sp as u16, (ret & 0xFF) as u8);
+        self.sp = 0xFD;
+        self.pc = target;
+    }
+
     #[cfg(test)]
     pub fn clocks(&self) -> u64 {
         self.clocks
@@ -1069,8 +1103,7 @@ impl CPU {
         self.instruction_counter
     }
 
-    #[cfg(any(test, feature = "debug"))]
-    pub fn pc(&self) -> u16 {
+    pub(crate) fn pc(&self) -> u16 {
         self.pc
     }
 

@@ -9,6 +9,7 @@ pub mod hash;
 pub mod headless;
 mod input;
 pub mod movie;
+mod nsf;
 mod ppu;
 mod ppu_memory;
 pub mod runtime;
@@ -28,6 +29,7 @@ pub use cartridge::{
 pub use cheat::{Cheat, CheatError};
 pub use input::{ControllerButton, ControllerState};
 pub use movie::{Movie, MovieError, MovieFrame};
+pub use nsf::{NsfInfo, is_nsf_image};
 pub use ppu::{FRAME_HEIGHT, FRAME_WIDTH};
 pub use runtime::{
     ExecutionTarget, FrontendInput, FrontendRuntime, RunMode, RuntimeSnapshot, RuntimeStatus,
@@ -36,6 +38,9 @@ pub use savestate::SaveStateError;
 use savestate::{StateReader, StateWriter};
 
 const PAL_CPU_SCHEDULE: [u8; 5] = [3, 3, 3, 3, 4];
+
+/// NSF INIT例程的CPU周期预算（约10帧；正常INIT远小于此）。
+const NSF_INIT_BUDGET_CYCLES: u64 = 300_000;
 
 /// 电影播放器状态（运行时配置，不参与存档）。
 struct MoviePlayer {
@@ -60,6 +65,11 @@ pub struct NES {
     movie_player: Option<MoviePlayer>,
     movie_recorder: Option<MovieRecorder>,
     recorded_movie: Option<Movie>,
+    /// NSF播放驱动（普通卡带为None）
+    nsf: Option<Box<nsf::NsfDriver>>,
+    /// NSF调用间隙挂起CPU（防止在哨兵地址执行垃圾代码）；
+    /// 非返回式PLAY进行中为false（CPU持续执行曲程序）。
+    nsf_halt_cpu: bool,
     #[cfg(feature = "debug")]
     breakpoints: Vec<Breakpoint>,
     #[cfg(feature = "debug")]
@@ -82,6 +92,8 @@ impl NES {
             movie_player: None,
             movie_recorder: None,
             recorded_movie: None,
+            nsf: None,
+            nsf_halt_cpu: false,
             #[cfg(feature = "debug")]
             breakpoints: Vec::new(),
             #[cfg(feature = "debug")]
@@ -98,6 +110,11 @@ impl NES {
         self.reset_cpu_schedule();
         self.cpu.reset(&mut self.bus);
         self.cpu.set_nmi(self.bus.ppu_nmi_line());
+        // NSF模式：RESET语义为当前曲目重头播放
+        if let Some(driver) = &self.nsf {
+            let track = driver.track;
+            self.nsf_start_track(track);
+        }
     }
 
     /// 模拟断电重启：CPU RAM 清零后复位。
@@ -110,6 +127,8 @@ impl NES {
 
     pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
         self.clear_movie_state();
+        self.nsf = None;
+        self.nsf_halt_cpu = false;
         self.bus.insert_cartridge(cartridge);
         self.reset_cpu_schedule();
         self.reset();
@@ -117,6 +136,8 @@ impl NES {
 
     pub fn load_cartridge_ines(&mut self, rom: &[u8]) -> Result<(), CartridgeError> {
         self.clear_movie_state();
+        self.nsf = None;
+        self.nsf_halt_cpu = false;
         self.bus.load_cartridge_ines(rom)?;
         self.reset_cpu_schedule();
         Ok(())
@@ -124,16 +145,52 @@ impl NES {
 
     pub fn load_cartridge_fds(&mut self, image: &[u8], bios: &[u8]) -> Result<(), CartridgeError> {
         self.clear_movie_state();
+        self.nsf = None;
+        self.nsf_halt_cpu = false;
         self.bus.load_rom(image, Some(bios))?;
         self.reset_cpu_schedule();
         Ok(())
     }
 
-    /// 按格式嗅探加载ROM（iNES或FDS镜像；FDS需要BIOS ROM数据）。
+    /// 按格式嗅探加载ROM（iNES/NSF/FDS镜像；FDS需要BIOS ROM数据）。
     pub fn load_rom(&mut self, rom: &[u8], bios: Option<&[u8]>) -> Result<(), CartridgeError> {
         self.clear_movie_state();
+        if nsf::is_nsf_image(rom) {
+            return self.load_nsf(rom);
+        }
+        self.nsf = None;
+        self.nsf_halt_cpu = false;
         self.bus.load_rom(rom, bios)?;
         self.reset_cpu_schedule();
+        Ok(())
+    }
+
+    /// 加载NSF并立即执行首曲INIT（曲号取头部起始曲）。
+    fn load_nsf(&mut self, rom: &[u8]) -> Result<(), CartridgeError> {
+        let header = nsf::parse_nsf(rom)?;
+        let cartridge = Cartridge::from_nsf(&header)?;
+        self.bus.insert_cartridge(cartridge);
+        self.reset_cpu_schedule();
+        self.nsf = None;
+        self.nsf_halt_cpu = false;
+        self.reset();
+        let tv = header.tv_system();
+        let cpu_hz = match tv {
+            TVSystem::NTSC | TVSystem::DENDY => apu::CPU_CLOCK_NTSC,
+            TVSystem::PAL => apu::CPU_CLOCK_PAL,
+        };
+        self.nsf = Some(Box::new(nsf::NsfDriver {
+            info: header.info(header.start_song),
+            init_addr: header.init_addr,
+            play_addr: header.play_addr,
+            track: header.start_song,
+            play_period_cycles: nsf::speed_us_to_cycles(header.play_speed_us(tv), cpu_hz),
+            play_acc: 0,
+            last_service: self.bus.apu_cycle_count(),
+            play_running: false,
+        }));
+        let start = header.start_song;
+        self.nsf_start_track(start);
         Ok(())
     }
 
@@ -259,7 +316,9 @@ impl NES {
                     .set_debug_mem_breakpoints(&self.cached_mem_breakpoints);
             }
 
-            self.cpu.clock(&mut self.bus);
+            if !self.nsf_halt_cpu {
+                self.cpu.clock(&mut self.bus);
+            }
 
             #[cfg(feature = "debug")]
             {
@@ -281,9 +340,149 @@ impl NES {
     }
 
     pub fn run_frame(&mut self) {
+        if self.nsf.is_some() {
+            self.run_nsf_frame();
+            return;
+        }
         let start_frame = self.frame_number();
         while self.frame_number() == start_frame {
             self.clock();
+        }
+    }
+
+    // ===== NSF 播放 =====
+
+    /// NSF元数据；非NSF模式返回None。
+    pub fn nsf_info(&self) -> Option<&nsf::NsfInfo> {
+        self.nsf.as_ref().map(|driver| &driver.info)
+    }
+
+    /// 当前NSF曲目（1起）；非NSF模式返回None。
+    pub fn nsf_track(&self) -> Option<u16> {
+        self.nsf.as_ref().map(|driver| driver.track)
+    }
+
+    /// 切换NSF曲目（1起，越界自动钳制）并重新INIT。
+    /// 非NSF模式返回false。
+    pub fn nsf_select_track(&mut self, track: u16) -> bool {
+        let Some(driver) = self.nsf.as_ref() else {
+            return false;
+        };
+        let track = track.clamp(1, driver.info.track_count);
+        self.nsf_start_track(track);
+        true
+    }
+
+    /// NSF切曲：规范初始序列（清RAM/APU/芯片、恢复bank）后调用INIT。
+    fn nsf_start_track(&mut self, track: u16) {
+        let (fds, pal, init_addr) = {
+            let driver = self.nsf.as_ref().expect("nsf_start_track without driver");
+            (
+                driver.info.chips & 0x04 != 0,
+                matches!(driver.info.tv_system, TVSystem::PAL),
+                driver.init_addr,
+            )
+        };
+        {
+            let driver = self.nsf.as_mut().unwrap();
+            driver.track = track;
+            driver.info.current_track = track;
+            driver.play_acc = 0;
+            driver.play_running = false;
+        }
+        self.bus.clear_apu_audio_samples();
+        self.bus.nsf_prepare_song(fds);
+        if init_addr != 0 {
+            self.nsf_halt_cpu = false;
+            self.cpu.nsf_call_init(
+                &mut self.bus,
+                init_addr,
+                (track - 1) as u8,
+                pal,
+                nsf::NSF_SENTINEL_ADDR,
+            );
+            // INIT预算耗尽（非返回式INIT）极罕见：交由PLAY接管
+            let returned = self.nsf_run_until_sentinel(NSF_INIT_BUDGET_CYCLES);
+            self.nsf_halt_cpu = returned;
+        } else {
+            self.nsf_halt_cpu = true;
+        }
+        let driver = self.nsf.as_mut().unwrap();
+        driver.last_service = self.bus.apu_cycle_count();
+    }
+
+    /// NSF一帧：跑完一个PPU帧后按微秒速度字结算PLAY调用。
+    fn run_nsf_frame(&mut self) {
+        let start_frame = self.frame_number();
+        while self.frame_number() == start_frame {
+            self.clock();
+        }
+        let (period, play_addr) = {
+            let driver = self.nsf.as_mut().expect("run_nsf_frame without driver");
+            let now = self.bus.apu_cycle_count();
+            driver.play_acc += (now - driver.last_service) as i64;
+            driver.last_service = now;
+            (driver.play_period_cycles as i64, driver.play_addr)
+        };
+        let budget = self.nsf.as_ref().unwrap().play_period_cycles * 3 + 20_000;
+        // 非返回式PLAY仍在执行：不重入，吸收多余计时
+        if self.nsf.as_ref().unwrap().play_running {
+            let driver = self.nsf.as_mut().unwrap();
+            driver.play_acc = driver.play_acc.min(period - 1);
+            return;
+        }
+        if play_addr == 0 {
+            return;
+        }
+        loop {
+            let due = {
+                let driver = self.nsf.as_ref().unwrap();
+                driver.play_acc >= period && !driver.play_running
+            };
+            if !due {
+                break;
+            }
+            {
+                let driver = self.nsf.as_mut().unwrap();
+                driver.play_acc -= period;
+            }
+            self.nsf_halt_cpu = false;
+            self.cpu
+                .nsf_call_play(&mut self.bus, play_addr, nsf::NSF_SENTINEL_ADDR);
+            let returned = self.nsf_run_until_sentinel(budget);
+            self.nsf_halt_cpu = returned;
+            {
+                let driver = self.nsf.as_mut().unwrap();
+                driver.play_running = !returned;
+                // 调用耗时从自由运行计时扣除（近似硬件持续计时）
+                let now = self.bus.apu_cycle_count();
+                let spent = (now - driver.last_service) as i64;
+                driver.play_acc -= spent.min(driver.play_acc);
+                driver.last_service = now;
+            }
+        }
+    }
+
+    /// 执行NSF例程直到PC回到哨兵（RTS返回）或预算耗尽。
+    /// 返回true=正常返回；false=预算耗尽（非返回式PLAY或损坏文件）。
+    fn nsf_run_until_sentinel(&mut self, budget_cycles: u64) -> bool {
+        let start = self.bus.apu_cycle_count();
+        loop {
+            let before_instruction = self.cpu.instruction_counter();
+            let before_master = self.master_clock;
+            while self.cpu.instruction_counter() == before_instruction {
+                self.clock();
+                if self.master_clock == before_master {
+                    // 调试暂停/断点短路了时钟：按已返回处理避免死循环
+                    return true;
+                }
+                if self.bus.apu_cycle_count().saturating_sub(start) > budget_cycles {
+                    return false;
+                }
+            }
+            if self.cpu.pc() == nsf::NSF_SENTINEL_ADDR {
+                return true;
+            }
         }
     }
 
@@ -404,6 +603,10 @@ impl NES {
             CoreCommand::FdsDisk(cmd) => {
                 self.fds_command(cmd);
                 CoreEvent::FdsDiskUpdated
+            }
+            CoreCommand::NsfSelectTrack(track) => {
+                self.nsf_select_track(track);
+                CoreEvent::None
             }
             CoreCommand::SetCheats(cheats) => {
                 self.set_cheats(cheats);
@@ -625,6 +828,16 @@ impl NES {
         writer.write_u64(self.cpu_schedule_index as u64);
         self.cpu.save_state(&mut writer);
         self.bus.save_state(&mut writer)?;
+        // NSF驱动计时块（旧版存档没有这段，读取侧按剩余字节探测）
+        if let Some(driver) = &self.nsf {
+            writer.write_bool(true);
+            writer.write_u16(driver.track);
+            writer.write_u64(driver.play_acc as u64);
+            writer.write_u64(driver.last_service);
+            writer.write_bool(driver.play_running);
+        } else {
+            writer.write_bool(false);
+        }
         Ok(writer.finish())
     }
 
@@ -637,6 +850,27 @@ impl NES {
         self.bus.load_state(&mut reader)?;
         self.cached_tv_system = self.bus.ppu().tv_system();
         self.cpu.set_nmi(self.bus.ppu_nmi_line());
+        // 追加的NSF块：旧版存档（非NSF机器写入）没有这部分
+        if !reader.is_empty() {
+            if reader.read_bool()? {
+                let track = reader.read_u16()?;
+                let play_acc = reader.read_u64()? as i64;
+                let last_service = reader.read_u64()?;
+                let play_running = reader.read_bool()?;
+                if let Some(driver) = self.nsf.as_mut() {
+                    driver.track = track;
+                    driver.info.current_track = track;
+                    driver.play_acc = play_acc;
+                    driver.last_service = last_service;
+                    driver.play_running = play_running;
+                }
+                // 调用间隙挂起；非返回式PLAY进行中则持续执行
+                self.nsf_halt_cpu = !play_running;
+            } else {
+                self.nsf = None;
+                self.nsf_halt_cpu = false;
+            }
+        }
         reader.finish()
     }
 

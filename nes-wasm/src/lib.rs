@@ -26,6 +26,39 @@ fn button_bits(button: &str) -> Option<u8> {
 
 const RGBA_LEN: usize = FRAME_WIDTH * FRAME_HEIGHT * 4;
 
+/// NSF元数据(仅加载NSF后可用)。
+#[wasm_bindgen(getter_with_clone)]
+pub struct NsfInfoJs {
+    pub name: String,
+    pub artist: String,
+    pub copyright: String,
+    pub track_count: u16,
+    pub start_track: u16,
+    pub current_track: u16,
+    /// "NTSC" | "PAL"
+    pub tv_system: String,
+    /// 扩展音源名列表(如 ["VRC6","N163"])
+    pub chips: Vec<String>,
+}
+
+impl From<&nes_sim::NsfInfo> for NsfInfoJs {
+    fn from(info: &nes_sim::NsfInfo) -> Self {
+        Self {
+            name: info.name.clone(),
+            artist: info.artist.clone(),
+            copyright: info.copyright.clone(),
+            track_count: info.track_count,
+            start_track: info.start_track,
+            current_track: info.current_track,
+            tv_system: match info.tv_system {
+                nes_sim::TVSystem::PAL => "PAL".to_string(),
+                _ => "NTSC".to_string(),
+            },
+            chips: info.chip_names().into_iter().map(String::from).collect(),
+        }
+    }
+}
+
 #[wasm_bindgen]
 pub struct NesWasm {
     nes: NES,
@@ -49,6 +82,21 @@ impl NesWasm {
     /// 按格式嗅探加载 iNES ROM(FDS 请用 `load_fds`)。
     pub fn load_rom(&mut self, rom: &[u8]) -> Result<(), JsError> {
         self.nes.load_rom(rom, None).map_err(js_err)
+    }
+
+    /// NSF元数据;未加载NSF返回None。
+    pub fn nsf_info(&self) -> Option<NsfInfoJs> {
+        self.nes.nsf_info().map(NsfInfoJs::from)
+    }
+
+    /// 当前NSF曲目号(1起);非NSF返回None。
+    pub fn nsf_track(&self) -> Option<u16> {
+        self.nes.nsf_track()
+    }
+
+    /// 切换NSF曲目(1起,越界钳制);非NSF返回false。
+    pub fn nsf_select_track(&mut self, track: u16) -> bool {
+        self.nes.nsf_select_track(track)
     }
 
     /// 加载 FDS 磁盘镜像(需提供 BIOS ROM 数据)。

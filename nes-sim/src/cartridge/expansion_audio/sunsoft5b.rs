@@ -186,4 +186,8 @@ impl ExpansionAudioChip for Sunsoft5bAudioChip {
     fn output_sample(&self) -> f32 {
         self.audio.borrow().output()
     }
+
+    fn reset(&mut self) {
+        *self.audio.borrow_mut() = Sunsoft5bAudio::new();
+    }
 }

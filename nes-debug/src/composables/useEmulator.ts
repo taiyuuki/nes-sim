@@ -1,10 +1,11 @@
 import { onMounted, onUnmounted, ref, shallowRef } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import type { DebugInfo, DisasmResult, FrameData, RunFrameResult } from '../types'
+import type { DebugInfo, DisasmResult, FrameData, NsfInfo, RunFrameResult } from '../types'
 
 const debugInfo = shallowRef<DebugInfo | null>(null)
 const disasmResult = shallowRef<DisasmResult | null>(null)
 const frameData = shallowRef<FrameData | null>(null)
+const nsfInfo = shallowRef<NsfInfo | null>(null)
 const paused = ref(true)
 const running = ref(false)
 const romPath = ref('')
@@ -42,9 +43,22 @@ export function useEmulator() {
             await invoke('load_rom', { path })
             romPath.value = path
             running.value = true
+            nsfInfo.value = await invoke<NsfInfo | null>('get_nsf_info')
             await invoke('set_paused', { paused: true })
             paused.value = true
             await refresh()
+        }
+        catch(e) {
+            error.value = String(e)
+        }
+    }
+
+    /** NSF切曲(1起,环形);非NSF模式无操作。 */
+    async function nsfSelectTrack(track: number) {
+        if (!nsfInfo.value) return
+        try {
+            await invoke('nsf_select_track', { track })
+            nsfInfo.value = await invoke<NsfInfo | null>('get_nsf_info')
         }
         catch(e) {
             error.value = String(e)
@@ -246,12 +260,14 @@ export function useEmulator() {
         debugInfo,
         disasmResult,
         frameData,
+        nsfInfo,
         paused,
         running,
         romPath,
         error,
         tick,
         loadRom,
+        nsfSelectTrack,
         reset,
         stepFrame,
         stepInstruction,

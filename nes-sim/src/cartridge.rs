@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 pub(crate) mod expansion_audio;
 mod mappers;
 
-use self::mappers::{MapperEnum, NoMapper, from_mapper_id, new_fds, parse_fds_sides};
+use self::mappers::{MapperEnum, NoMapper, from_mapper_id, new_fds, new_nsf, parse_fds_sides};
 pub(crate) use crate::apu::ExpansionAudioChip;
 use crate::savestate::{SaveStateError, StateReader, StateWriter};
 
@@ -107,6 +107,7 @@ pub enum CartridgeError {
     InvalidFds,
     FdsBiosMissing,
     FdsBiosInvalid,
+    InvalidNsf,
 }
 
 impl Display for CartridgeError {
@@ -118,6 +119,7 @@ impl Display for CartridgeError {
             Self::UnsupportedMapper(id) => write!(f, "mapper {} is not supported yet", id),
             Self::TruncatedData => f.write_str("ROM ended before PRG/CHR data was fully present"),
             Self::InvalidFds => f.write_str("disk image is not in FDS format"),
+            Self::InvalidNsf => f.write_str("file is not a valid NSF"),
             Self::FdsBiosMissing => f.write_str("FDS BIOS ROM (disksys.rom) is required"),
             Self::FdsBiosInvalid => f.write_str("FDS BIOS ROM must be exactly 8192 bytes"),
         }
@@ -458,12 +460,47 @@ impl Cartridge {
         })
     }
 
+    /// 由已解析的NSF头构建卡带（音乐数据bank布局 + 扩展音源）。
+    pub(crate) fn from_nsf(nsf_header: &crate::nsf::NsfHeader) -> Result<Self, CartridgeError> {
+        let (mapper, expansion_chips) = new_nsf(nsf_header)?;
+
+        // NSF沿用iNES mapper 31（NSF式bank切换）作savestate校验编号；
+        // 制式按头部PAL/NTSC位。
+        let mut header = CartridgeHeader::from_no_header();
+        header.mapper_id = 31;
+        header.tv_system = nsf_header.tv_system();
+
+        // 校验和按音乐数据（去128字节头）计算
+        let mut md5 = crate::hash::Md5::new();
+        let mut crc32 = crate::hash::Crc32::new();
+        md5.update(&nsf_header.data);
+        crc32.update(&nsf_header.data);
+
+        Ok(Self {
+            mapper: MapperEnum::Nsf(mapper),
+            expansion_chips,
+            header,
+            rom_md5: Some(md5.finalize()),
+            rom_crc32: Some(crc32.finalize()),
+        })
+    }
+
     pub fn mirroring(&self) -> Mirroring {
         self.mapper.mirroring()
     }
 
     pub fn tv_system(&self) -> TVSystem {
         self.header.tv_system
+    }
+
+    /// 是否为NSF卡带。
+    pub fn is_nsf(&self) -> bool {
+        matches!(self.mapper, MapperEnum::Nsf(_))
+    }
+
+    /// NSF切曲复位：恢复初始bank窗口、清wram/EXRAM（非NSF为空操作）。
+    pub fn nsf_prepare_song(&mut self) {
+        self.mapper.nsf_prepare_song()
     }
 
     /// PRG‖CHR 拼接的 MD5（FCEUX 口径）；无卡/FDS 为 None。

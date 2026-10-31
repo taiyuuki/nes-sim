@@ -82,3 +82,13 @@ export interface AudioData {
     samples:     number[];
     sample_rate: number;
 }
+
+export interface NsfInfo {
+    name:         string;
+    artist:       string;
+    copyright:    string;
+    track_count:  number;
+    current_track: number;
+    tv_system:    string;
+    chips:        string[];
+}

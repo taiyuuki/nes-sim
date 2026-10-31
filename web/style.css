@@ -595,3 +595,77 @@ body.touch .site-footer { margin-bottom: 210px; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 .toast.error { border-color: var(--red); color: #ffb3b6; }
+
+/* ── NSF 播放器面板 ─────────────────────────────────── */
+
+.nsf-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-raise);
+  margin-top: 10px;
+}
+
+.nsf-meta { flex: 1 1 220px; min-width: 0; }
+
+.nsf-name {
+  font-family: var(--font-px);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--gold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nsf-sub {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nsf-sub .nsf-dot { margin: 0 6px; }
+
+.nsf-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-px);
+  font-size: 10px;
+}
+
+.nsf-ctrl button {
+  width: 34px;
+  height: 28px;
+  font-family: var(--font-px);
+  font-size: 10px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.nsf-ctrl button:hover { border-color: var(--gold); color: var(--gold); }
+
+.nsf-track { color: var(--ink); min-width: 7ch; text-align: center; }
+
+.nsf-time { color: var(--green); min-width: 5ch; }
+
+.nsf-chips { display: flex; gap: 6px; flex-basis: 100%; }
+
+.nsf-chips .chip {
+  font-family: var(--font-px);
+  font-size: 8px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--ink-dim);
+}

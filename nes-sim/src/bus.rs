@@ -46,6 +46,8 @@ pub struct NESBus {
     cpu_open_bus: u8,
     cheats: Vec<Cheat>,
     cheat_table: CheatTable,
+    /// NSF模式：屏蔽$2000-$3FFF的PPU访问（NSF不产生画面，防止误触发NMI）
+    nsf_mode: bool,
     #[cfg(feature = "debug")]
     debug_mem_breakpoints: Vec<Breakpoint>,
     #[cfg(feature = "debug")]
@@ -65,6 +67,7 @@ impl NESBus {
             cpu_open_bus: 0,
             cheats: Vec::new(),
             cheat_table: CheatTable::default(),
+            nsf_mode: false,
             #[cfg(feature = "debug")]
             debug_mem_breakpoints: Vec::new(),
             #[cfg(feature = "debug")]
@@ -100,10 +103,34 @@ impl NESBus {
         let tv_system = cartridge.tv_system();
         self.ppu.set_parameters(tv_system);
         self.apu.set_tv_system(tv_system);
+        // 上一张卡的扩展芯片不再生效
+        self.apu.clear_expansion_chips();
+        self.nsf_mode = cartridge.is_nsf();
         let chips = cartridge.take_expansion_audio_chips();
         self.ppu_memory.insert_cartridge(cartridge);
         for chip in chips {
             self.apu.add_expansion_chip(chip);
+        }
+    }
+
+    /// NSF切曲准备：清CPU RAM、恢复初始bank窗口、清wram/EXRAM、
+    /// 复位APU 2A03与扩展芯片并写入规范要求的初始寄存器序列。
+    pub fn nsf_prepare_song(&mut self, fds_chip: bool) {
+        self.ram = [0; 0x800];
+        self.ppu_memory.cartridge_nsf_prepare_song();
+        self.apu.reset();
+        self.apu.reset_expansion_chips();
+        // 规范初始序列：$4000-$4013清零、$4015=$00→$0F、$4017=$40
+        for addr in 0x4000..=0x4013 {
+            self.cpu_write_internal(addr, 0x00, 0);
+        }
+        self.cpu_write_internal(0x4015, 0x00, 0);
+        self.cpu_write_internal(0x4015, 0x0F, 0);
+        self.cpu_write_internal(0x4017, 0x40, 0);
+        if fds_chip {
+            // FDS惯例初始：音量/包络（FCEUX口径）
+            self.cpu_write_internal(0x4089, 0x80, 0);
+            self.cpu_write_internal(0x408A, 0xE8, 0);
         }
     }
 
@@ -115,7 +142,12 @@ impl NESBus {
 
     /// 按格式嗅探加载ROM；FDS镜像需要额外的BIOS ROM数据。
     pub fn load_rom(&mut self, rom: &[u8], bios: Option<&[u8]>) -> Result<(), CartridgeError> {
-        if is_fds_image(rom) {
+        if crate::nsf::is_nsf_image(rom) {
+            let header = crate::nsf::parse_nsf(rom)?;
+            let cartridge = Cartridge::from_nsf(&header)?;
+            self.insert_cartridge(cartridge);
+            Ok(())
+        } else if is_fds_image(rom) {
             let bios = bios.ok_or(CartridgeError::FdsBiosMissing)?;
             let cartridge = Cartridge::from_fds(rom, bios)?;
             self.insert_cartridge(cartridge);
@@ -247,6 +279,11 @@ impl NESBus {
 
     pub fn apu_irq_line(&self) -> bool {
         self.apu.irq_line()
+    }
+
+    /// 上电起累计的CPU周期数（含NSF挂起期间；播放计时用）。
+    pub fn apu_cycle_count(&self) -> u64 {
+        self.apu.cycle_count()
     }
 
     pub fn cartridge_irq_line(&self) -> bool {
@@ -393,6 +430,8 @@ impl NESBus {
 
         match addr {
             0x0000..=0x1FFF => self.latched_cpu_read(self.ram[(addr & 0x7FF) as usize]),
+            // NSF模式屏蔽PPU寄存器（读开放总线）
+            0x2000..=0x3FFF if self.nsf_mode => self.latched_cpu_read(self.cpu_open_bus),
             0x2000..=0x3FFF => {
                 let ppu = &mut self.ppu;
                 let ppu_memory = &mut self.ppu_memory;
@@ -431,6 +470,8 @@ impl NESBus {
         self.check_mem_breakpoint(addr, true);
         match addr {
             0x0000..=0x1FFF => self.ram[(addr & 0x7FF) as usize] = data,
+            // NSF模式屏蔽PPU寄存器（写忽略）
+            0x2000..=0x3FFF if self.nsf_mode => {}
             0x2000..=0x3FFF => {
                 let ppu = &mut self.ppu;
                 let ppu_memory = &mut self.ppu_memory;

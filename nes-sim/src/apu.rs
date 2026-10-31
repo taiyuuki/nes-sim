@@ -11,9 +11,9 @@ use noise::NoiseChannel;
 use pulse::PulseChannel;
 use triangle::TriangleChannel;
 
-const CPU_CLOCK_NTSC: u64 = 1_789_773;
-const CPU_CLOCK_PAL: u64 = 1_662_607;
-const CPU_CLOCK_DENDY: u64 = 1_773_447;
+pub(crate) const CPU_CLOCK_NTSC: u64 = 1_789_773;
+pub(crate) const CPU_CLOCK_PAL: u64 = 1_662_607;
+pub(crate) const CPU_CLOCK_DENDY: u64 = 1_773_447;
 const DEFAULT_SAMPLE_RATE: u32 = 44_100;
 
 /// 帧序列器位置计数模型：事件在帧内固定位置触发（CPU周期，相对$4017复位生效点）。
@@ -67,6 +67,8 @@ pub trait ExpansionAudioChip {
     fn output_sample(&self) -> f32 {
         0.0
     }
+    /// 复位芯片状态（NSF切曲用；普通卡带不走这条路径）。
+    fn reset(&mut self) {}
 }
 
 pub struct APU {
@@ -157,6 +159,24 @@ impl APU {
     pub fn add_expansion_chip(&mut self, chip: Box<dyn ExpansionAudioChip>) {
         self.has_expansions = true;
         self.expansions.push(chip);
+    }
+
+    /// 换卡时清空上一张卡的扩展芯片。
+    pub fn clear_expansion_chips(&mut self) {
+        self.expansions.clear();
+        self.has_expansions = false;
+    }
+
+    /// 复位全部扩展芯片（NSF切曲用）。
+    pub fn reset_expansion_chips(&mut self) {
+        for chip in &mut self.expansions {
+            chip.reset();
+        }
+    }
+
+    /// 上电起累计的CPU周期数（含NSF挂起期间；播放计时用）。
+    pub(crate) fn cycle_count(&self) -> u64 {
+        self.apu_cycle
     }
 
     pub fn set_tv_system(&mut self, tv: TVSystem) {
