@@ -1,5 +1,5 @@
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
+use nes_audio::{AUDIO_MAX_BUFFER_MS, AUDIO_TARGET_BUFFER_MS, AudioPlayer};
 use nes_sim::video::{Palette, VideoBuffer, frame_to_argb32_into_with};
 use nes_sim::{
     ControllerButton, ControllerState, CoreCommand, ExecutionTarget, FdsDiskCommand, FrontendInput,
@@ -9,11 +9,8 @@ use std::collections::VecDeque;
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const AUDIO_TARGET_BUFFER_MS: usize = 50;
-const AUDIO_MAX_BUFFER_MS: usize = 200;
 const AUDIO_CATCHUP_MAX_FRAMES: usize = 5;
 /// 回退快照采集间隔（帧）：约0.5秒一份
 const REWIND_INTERVAL_FRAMES: u32 = 30;
@@ -333,7 +330,7 @@ fn main() -> ExitCode {
             AUDIO_TARGET_BUFFER_MS,
             player.target_queue_len(),
             AUDIO_MAX_BUFFER_MS,
-            player.max_queue_samples,
+            player.max_queue_samples(),
             AUDIO_CATCHUP_MAX_FRAMES,
         );
 
@@ -760,7 +757,7 @@ fn main() -> ExitCode {
             player.push_samples(snapshot.audio.samples, snapshot.audio.sample_rate);
 
             // 如果还未开始播放（例如从暂停恢复），启动播放
-            if !player.playback_started && matches!(snapshot.status.mode, RunMode::Running) {
+            if !player.playback_started() && matches!(snapshot.status.mode, RunMode::Running) {
                 player.start_playback();
             }
 
@@ -906,343 +903,6 @@ fn tv_frame_period(tv: TVSystem) -> Duration {
         TVSystem::PAL | TVSystem::DENDY => Duration::from_micros(19_997),
     }
 }
-
-struct AudioPlayer {
-    output_sample_rate: u32,
-    target_queue_samples: usize,
-    max_queue_samples: usize,
-    resampler: Mutex<StreamingLinearResampler>,
-    output_state: Arc<Mutex<AudioOutputState>>,
-    stream: cpal::Stream,
-    playback_started: bool,
-}
-
-struct AudioOutputState {
-    queue: VecDeque<f32>,
-    last_sample: f32,
-    underrun_count: u64,
-    underrun_samples: u64,
-    underrun_last_report: Instant,
-}
-
-impl AudioPlayer {
-    fn new(_target_sample_rate: u32) -> Result<Self, String> {
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or_else(|| "no default audio output device".to_string())?;
-        let default_config = device
-            .default_output_config()
-            .map_err(|error| format!("failed to query default output config: {error}"))?;
-        let channels = usize::from(default_config.channels());
-        let device_sample_rate = default_config.sample_rate();
-        let target_queue_samples = device_sample_rate as usize * AUDIO_TARGET_BUFFER_MS / 1000;
-        let max_queue_samples = device_sample_rate as usize * AUDIO_MAX_BUFFER_MS / 1000;
-        let resampler = Mutex::new(StreamingLinearResampler::new(device_sample_rate));
-        let output_state = Arc::new(Mutex::new(AudioOutputState {
-            queue: VecDeque::new(),
-            last_sample: 0.0,
-            underrun_count: 0,
-            underrun_samples: 0,
-            underrun_last_report: Instant::now(),
-        }));
-        let output_state_for_stream = Arc::clone(&output_state);
-        let error_callback = |error| eprintln!("audio stream error: {error}");
-
-        let stream = match default_config.sample_format() {
-            cpal::SampleFormat::F32 => device
-                .build_output_stream(
-                    default_config.config(),
-                    move |data: &mut [f32], _| {
-                        write_audio_data(data, channels, &output_state_for_stream)
-                    },
-                    error_callback,
-                    None,
-                )
-                .map_err(|error| format!("failed to build f32 audio stream: {error}"))?,
-            cpal::SampleFormat::I16 => device
-                .build_output_stream(
-                    default_config.config(),
-                    move |data: &mut [i16], _| {
-                        write_audio_data_i16(data, channels, &output_state_for_stream)
-                    },
-                    error_callback,
-                    None,
-                )
-                .map_err(|error| format!("failed to build i16 audio stream: {error}"))?,
-            cpal::SampleFormat::U16 => device
-                .build_output_stream(
-                    default_config.config(),
-                    move |data: &mut [u16], _| {
-                        write_audio_data_u16(data, channels, &output_state_for_stream)
-                    },
-                    error_callback,
-                    None,
-                )
-                .map_err(|error| format!("failed to build u16 audio stream: {error}"))?,
-            sample_format => {
-                return Err(format!(
-                    "unsupported audio sample format: {sample_format:?}"
-                ));
-            }
-        };
-        Ok(Self {
-            output_sample_rate: device_sample_rate,
-            target_queue_samples,
-            max_queue_samples,
-            resampler,
-            output_state,
-            stream,
-            playback_started: false,
-        })
-    }
-
-    fn output_sample_rate(&self) -> u32 {
-        self.output_sample_rate
-    }
-
-    fn target_queue_len(&self) -> usize {
-        self.target_queue_samples
-    }
-
-    fn start_playback(&mut self) {
-        if !self.playback_started {
-            if let Err(e) = self.stream.play() {
-                eprintln!("failed to start audio stream: {e}");
-            }
-            self.playback_started = true;
-        }
-    }
-
-    fn stop_playback(&mut self) {
-        if self.playback_started {
-            if let Err(e) = self.stream.pause() {
-                eprintln!("failed to pause audio stream: {e}");
-            }
-            self.playback_started = false;
-        }
-        // 清空音频队列
-        if let Ok(mut output_state) = self.output_state.lock() {
-            output_state.queue.clear();
-        }
-    }
-
-    fn queue_len(&self) -> usize {
-        self.output_state.lock().map_or(0, |s| s.queue.len())
-    }
-
-    fn push_samples(&self, samples: &[f32], source_sample_rate: u32) {
-        if samples.is_empty() {
-            return;
-        }
-
-        // 静音阈值：低于此值的样本被截断为 0，避免浮点噪声
-        const SILENCE_THRESHOLD: f32 = 1e-5;
-
-        if let Ok(mut output_state) = self.output_state.lock() {
-            if source_sample_rate == self.output_sample_rate {
-                for &sample in samples {
-                    let sample = sample.clamp(-1.0, 1.0);
-                    output_state
-                        .queue
-                        .push_back(if sample.abs() < SILENCE_THRESHOLD {
-                            0.0
-                        } else {
-                            sample
-                        });
-                }
-            } else if let Ok(mut resampler) = self.resampler.lock() {
-                let resampled = resampler.resample_chunk(samples, source_sample_rate);
-                for sample in resampled {
-                    let sample = sample.clamp(-1.0, 1.0);
-                    output_state
-                        .queue
-                        .push_back(if sample.abs() < SILENCE_THRESHOLD {
-                            0.0
-                        } else {
-                            sample
-                        });
-                }
-            }
-
-            while output_state.queue.len() > self.max_queue_samples {
-                output_state.queue.pop_front();
-            }
-        }
-    }
-
-    fn is_queue_low(&self) -> bool {
-        if let Ok(output_state) = self.output_state.lock() {
-            output_state.queue.len() < self.target_queue_samples
-        } else {
-            false
-        }
-    }
-
-    // fn underrun_stats(&self) -> Option<(u64, u64)> {
-    //     if let Ok(mut output_state) = self.output_state.lock() {
-    //         let stats = (output_state.underrun_count, output_state.underrun_samples);
-    //         output_state.underrun_count = 0;
-    //         output_state.underrun_samples = 0;
-    //         Some(stats)
-    //     } else {
-    //         None
-    //     }
-    // }
-}
-
-struct StreamingLinearResampler {
-    target_rate: u32,
-    source_rate: u32,
-    step: f64,
-    history: VecDeque<f32>,
-    history_start_index: i64,
-    latest_input_index: i64,
-    next_output_position: f64,
-}
-
-impl StreamingLinearResampler {
-    fn new(target_rate: u32) -> Self {
-        Self {
-            target_rate,
-            source_rate: 0,
-            step: 1.0,
-            history: VecDeque::new(),
-            history_start_index: 0,
-            latest_input_index: -1,
-            next_output_position: 0.0,
-        }
-    }
-
-    fn reset(&mut self, source_rate: u32) {
-        self.source_rate = source_rate;
-        self.step = source_rate as f64 / self.target_rate as f64;
-        self.history.clear();
-        self.history_start_index = 0;
-        self.latest_input_index = -1;
-        self.next_output_position = 0.0;
-    }
-
-    fn resample_chunk(&mut self, samples: &[f32], source_rate: u32) -> Vec<f32> {
-        if samples.is_empty() || source_rate == 0 || self.target_rate == 0 {
-            return Vec::new();
-        }
-
-        if self.source_rate != source_rate || self.history.is_empty() {
-            self.reset(source_rate);
-        }
-
-        for &sample in samples {
-            self.latest_input_index += 1;
-            self.history.push_back(sample);
-        }
-
-        let mut output = Vec::new();
-        while self.can_emit_sample() {
-            output.push(self.current_output_sample());
-            self.next_output_position += self.step;
-            self.discard_consumed_history();
-        }
-
-        output
-    }
-
-    fn can_emit_sample(&self) -> bool {
-        self.latest_input_index > self.next_output_position.floor() as i64
-    }
-
-    fn current_output_sample(&self) -> f32 {
-        let index = self.next_output_position.floor() as i64;
-        let frac = (self.next_output_position - index as f64) as f32;
-        let a = self.history[(index - self.history_start_index) as usize];
-        let b = self.history[(index + 1 - self.history_start_index) as usize];
-        a + (b - a) * frac
-    }
-
-    fn discard_consumed_history(&mut self) {
-        let keep_from = self.next_output_position.floor() as i64;
-        while self.history_start_index < keep_from {
-            let _ = self.history.pop_front();
-            self.history_start_index += 1;
-        }
-    }
-}
-
-fn write_audio_data(
-    output: &mut [f32],
-    channels: usize,
-    output_state: &Arc<Mutex<AudioOutputState>>,
-) {
-    // 更快的衰减，更快到达静音
-    const UNDERRUN_DECAY: f32 = 0.85;
-    const SILENCE_EPSILON: f32 = 1e-5;
-    let mut next_sample = 0.0;
-    if let Ok(mut output_state) = output_state.lock() {
-        for frame in output.chunks_mut(channels) {
-            next_sample = if let Some(sample) = output_state.queue.pop_front() {
-                sample
-            } else {
-                output_state.underrun_count += 1;
-                output_state.underrun_samples += 1;
-                let decayed = output_state.last_sample * UNDERRUN_DECAY;
-                if decayed.abs() < SILENCE_EPSILON {
-                    0.0
-                } else {
-                    decayed
-                }
-            };
-            output_state.last_sample = next_sample;
-            for sample in frame {
-                *sample = next_sample;
-            }
-        }
-
-        // 每秒打印一次 underrun 统计
-        if output_state.underrun_count > 0
-            && output_state.underrun_last_report.elapsed() >= Duration::from_secs(1)
-        {
-            eprintln!(
-                "AUDIO UNDERRUN: {} callbacks, {} samples dropped, queue: {} samples",
-                output_state.underrun_count,
-                output_state.underrun_samples,
-                output_state.queue.len()
-            );
-            output_state.underrun_count = 0;
-            output_state.underrun_samples = 0;
-            output_state.underrun_last_report = Instant::now();
-        }
-    } else {
-        for sample in output.iter_mut() {
-            *sample = next_sample;
-        }
-    }
-}
-
-fn write_audio_data_i16(
-    output: &mut [i16],
-    channels: usize,
-    output_state: &Arc<Mutex<AudioOutputState>>,
-) {
-    let mut mono = vec![0.0; output.len()];
-    write_audio_data(&mut mono, channels, output_state);
-    for (dst, src) in output.iter_mut().zip(mono) {
-        *dst = (src * f32::from(i16::MAX)) as i16;
-    }
-}
-
-fn write_audio_data_u16(
-    output: &mut [u16],
-    channels: usize,
-    output_state: &Arc<Mutex<AudioOutputState>>,
-) {
-    let mut mono = vec![0.0; output.len()];
-    write_audio_data(&mut mono, channels, output_state);
-    for (dst, src) in output.iter_mut().zip(mono) {
-        let normalized = (src * 0.5 + 0.5).clamp(0.0, 1.0);
-        *dst = (normalized * f32::from(u16::MAX)) as u16;
-    }
-}
-
 /// 单个手柄的键位映射。
 struct KeyMapping {
     a: Key,
@@ -1523,6 +1183,3 @@ fn update_window_title(
     );
     window.set_title(&title);
 }
-
-#[cfg(test)]
-mod tests;

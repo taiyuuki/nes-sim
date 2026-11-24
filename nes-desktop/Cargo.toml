@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 nes-sim.workspace = true
+nes-audio = { path = "../nes-audio" }
 cpal.workspace = true
 minifb.workspace = true
 rfd = "0.17.2"

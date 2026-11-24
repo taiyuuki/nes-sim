@@ -57,6 +57,8 @@ nes.clear_audio_samples();
 nes-sim/            Core library (zero dependencies)
 nes-desktop/        Desktop frontend (minifb + cpal)
 nes-wasm/           WebAssembly bindings (wasm-bindgen, npm: nes-wasm)
+nes-audio/          Shared cpal audio output (used by desktop frontends)
+nes-compat/         ROM library browser & compatibility test bench (egui)
 web/                Browser demo (static site, no JS toolchain)
 nes-debug/          Debugger frontend (Tauri + Vue 3)
 ```

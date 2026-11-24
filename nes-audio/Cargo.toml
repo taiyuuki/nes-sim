@@ -1,0 +1,13 @@
+[package]
+name = "nes-audio"
+version = "0.1.0"
+description = "cpal audio output player shared by nes-sim frontends"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+cpal.workspace = true

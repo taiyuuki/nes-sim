@@ -57,6 +57,8 @@ nes.clear_audio_samples();
 nes-sim/            核心库（零依赖）
 nes-desktop/        桌面前端（minifb + cpal）
 nes-wasm/           WebAssembly 绑定（wasm-bindgen，npm 包 nes-wasm）
+nes-audio/          前端共享的 cpal 音频输出（nes-desktop / nes-compat 共用）
+nes-compat/         ROM 库浏览与兼容性测试台（egui）
 web/                网页演示（纯静态，无需 JS 构建工具）
 nes-debug/          调试器前端（Tauri + Vue 3）
 ```

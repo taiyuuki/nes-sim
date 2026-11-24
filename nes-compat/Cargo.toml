@@ -1,0 +1,24 @@
+[package]
+name = "nes-compat"
+version = "0.1.0"
+description = "ROM library browser and compatibility test bench for nes-sim"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# eframe 0.37 要求 rustc 1.95，高于 workspace 的 1.88
+rust-version = "1.95"
+publish = false
+
+[dependencies]
+nes-sim.workspace = true
+nes-audio = { path = "../nes-audio" }
+eframe = "0.37"
+egui = "0.37"
+rusqlite = { version = "0.42", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+rfd = "0.18"
+
+[package.metadata.scripts]
+run-compat = 'cargo run --release -p nes-compat'
